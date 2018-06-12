@@ -1,0 +1,7 @@
+[package]
+name = "sawtooth-pbft"
+version = "0.1.0"
+authors = ["Bitwise IO, Inc"]
+
+[dependencies]
+sawtooth_sdk = { git = "https://github.com/hyperledger/sawtooth-core.git" }
