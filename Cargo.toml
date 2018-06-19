@@ -21,6 +21,8 @@ authors = ["Bitwise IO, Inc"]
 [dependencies]
 sawtooth_sdk = { git = "https://github.com/aludvik/sawtooth-core.git", branch = "raft-prototype-demo" }
 simple_logger = "0.5.0"
+serde_json = "1"
+hex = "0.3"
 protobuf = "2"
 clap = "2.31"
 log = "0.4"
