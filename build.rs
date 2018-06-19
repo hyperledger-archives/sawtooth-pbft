@@ -29,9 +29,7 @@ fn main() {
     // Run protoc
     protoc_rust::run(protoc_rust::Args {
         out_dir: "src/protos",
-        input: &[
-            "protos/pbft_message.proto",
-        ],
+        input: &["protos/pbft_message.proto"],
         includes: &["protos"],
         customize: Customize {
             ..Default::default()

@@ -41,20 +41,19 @@ fn main() {
         .get_matches();
 
     let log_level = match matches.occurrences_of("verbose") {
-        0 =>  log::Level::Warn,
-        1 =>  log::Level::Info,
-        2 =>  log::Level::Debug,
-        3 | _ =>  log::Level::Trace,
+        0 => log::Level::Warn,
+        1 => log::Level::Info,
+        2 => log::Level::Debug,
+        3 | _ => log::Level::Trace,
     };
 
     let endpoint = String::from(
         matches
-        .value_of("connect")
-        .unwrap_or("tcp://localhost:5050")
+            .value_of("connect")
+            .unwrap_or("tcp://localhost:5050"),
     );
 
-    let id = value_t!(matches.value_of("ID"), u64)
-        .unwrap_or_else(|e| e.exit());
+    let id = value_t!(matches.value_of("ID"), u64).unwrap_or_else(|e| e.exit());
 
     simple_logger::init_with_level(log_level).unwrap();
 
