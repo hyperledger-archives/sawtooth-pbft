@@ -19,15 +19,19 @@
 extern crate clap;
 #[macro_use]
 extern crate log;
+extern crate hex;
 extern crate protobuf;
 extern crate sawtooth_sdk;
+extern crate serde_json;
 extern crate simple_logger;
 
 use std::process;
 
 use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
 
+mod config;
 mod engine;
+mod protos;
 
 fn main() {
     let matches = clap_app!(sawtooth_pbft =>
