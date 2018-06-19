@@ -35,7 +35,11 @@ impl PbftConfig {
     }
 }
 
-pub fn load_pbft_config(node_id: u64, block_id: BlockId, service: &mut Box<Service>) -> PbftConfig {
+pub fn load_pbft_config(
+    block_id: BlockId,
+    service: &mut Box<Service>,
+) -> PbftConfig {
+
     let mut config = PbftConfig::default();
 
     let sawtooth_settings: HashMap<String, String> = service
@@ -58,8 +62,6 @@ pub fn load_pbft_config(node_id: u64, block_id: BlockId, service: &mut Box<Servi
             )
         })
         .collect();
-
-    let ids: Vec<u64> = peers.values().cloned().collect();
 
     config.peers = peers;
 

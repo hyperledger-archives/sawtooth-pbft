@@ -29,9 +29,13 @@ use std::process;
 
 use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
 
-mod config;
+mod pbft_log;
 mod engine;
 mod protos;
+mod node;
+mod timeout;
+mod config;
+mod ticker;
 
 fn main() {
     let matches = clap_app!(sawtooth_pbft =>
@@ -63,12 +67,12 @@ fn main() {
 
     info!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
 
-    let raft_engine = engine::PbftEngine::new(id);
+    let pbft_engine = engine::PbftEngine::new(id);
 
     let (driver, _stop) = ZmqDriver::new();
 
     info!("PBFT Node {} connecting to '{}'", &id, &endpoint);
-    driver.start(&endpoint, raft_engine).unwrap_or_else(|err| {
+    driver.start(&endpoint, pbft_engine).unwrap_or_else(|err| {
         error!("{}", err);
         process::exit(1);
     });
