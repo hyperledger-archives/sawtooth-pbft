@@ -21,9 +21,7 @@ use std::time::Duration;
 
 use sawtooth_sdk::consensus::{engine::*, service::Service};
 
-use node::{
-    PbftNode,
-};
+use node::PbftNode;
 
 use config;
 use ticker;
@@ -62,7 +60,9 @@ impl Engine for PbftEngine {
         info!("Peers: {:?}", config.peers);
 
         // TODO: move to node
-        service.initialize_block(None).unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+        service
+            .initialize_block(None)
+            .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
 
         let mut node = PbftNode::new(self.id, config.peers, service);
 

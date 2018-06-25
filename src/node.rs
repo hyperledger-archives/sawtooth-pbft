@@ -21,34 +21,24 @@ use protobuf::Message;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use std::fmt;
 use std::convert::From;
+use std::fmt;
 
 use pbft_log::PbftLog;
+use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId, PeerMessage};
 use sawtooth_sdk::consensus::service::Service;
-use sawtooth_sdk::consensus::engine::{
-    PeerMessage,
-    Block,
-    BlockId,
-    PeerId,
-    Error as EngineError,
-};
 
-use protos::pbft_message::{
-    PbftBlock,
-    PbftMessage,
-    PbftMessageInfo,
-};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
 
 // Possible roles for a node
-// Primary is the only node who is allowed to commit to the blockchain
+// Primary is in charge of making consensus decisions
 #[derive(PartialEq)]
 enum PbftNodeRole {
     Primary,
     Secondary,
 }
 
-// Messages related to the multicast protocol
+// Messages related to the multicast protocol, in order
 #[derive(Debug, PartialEq, PartialOrd)]
 enum PbftMulticastType {
     Unset,
@@ -68,7 +58,7 @@ impl<'a> From<&'a str> for PbftMulticastType {
             _ => {
                 warn!("Unhandled multicast message type: {}", s);
                 PbftMulticastType::Unset
-            },
+            }
         }
     }
 }
@@ -85,7 +75,6 @@ impl<'a> From<&'a PbftMulticastType> for String {
     }
 }
 
-
 // Stages of the PBFT algorithm
 #[derive(Debug, PartialEq, PartialOrd)]
 enum PbftStage {
@@ -101,6 +90,7 @@ enum PbftStage {
 // The actual node
 pub struct PbftNode {
     id: u64,
+    seq_num: u64,
     stage: PbftStage,
     service: Box<Service>,
     role: PbftNodeRole,
@@ -138,6 +128,7 @@ impl PbftNode {
 
         PbftNode {
             id: id,
+            seq_num: 0,
             stage: PbftStage::NotStarted,
             role: if &id == current_primary {
                 PbftNodeRole::Primary
@@ -148,7 +139,6 @@ impl PbftNode {
             service: service,
             msg_log: PbftLog::new(),
             unread_queue: VecDeque::new(), // TODO: Move this to message log?
-
         }
     }
 
@@ -166,7 +156,7 @@ impl PbftNode {
                     .unwrap_or_else(|err| {
                         error!("Couldn't deserialize message: {}", err);
                         panic!();
-                });
+                    });
 
                 // Don't process message if we're not ready for it.
                 // i.e. Don't process prepare messages if we're not in the PbftStage::Preparing
@@ -177,7 +167,9 @@ impl PbftNode {
                         debug!(
                             "{}: !!!!!! [Node {:02}]: {:?} (in mode {:?})",
                             self,
-                            self._get_node_id(PeerId::from(deser_msg.get_block().clone().signer_id)),
+                            self._get_node_id(PeerId::from(
+                                deser_msg.get_block().clone().signer_id
+                            )),
                             msg_type,
                             self.stage,
                         );
@@ -201,8 +193,7 @@ impl PbftNode {
                         self._broadcast_pbft_message(
                             PbftMulticastType::Prepare,
                             1,
-                            1,
-                            (*deser_msg.get_block()).clone()
+                            (*deser_msg.get_block()).clone(),
                         );
                     }
                     PbftMulticastType::Prepare => {
@@ -210,7 +201,10 @@ impl PbftNode {
                         self.stage = PbftStage::Checking;
 
                         debug!("{}: ------ Checking blocks", self);
-                        self.service.check_blocks(vec![BlockId::from(deser_msg.get_block().clone().block_id)])
+                        self.service
+                            .check_blocks(vec![
+                                BlockId::from(deser_msg.get_block().clone().block_id),
+                            ])
                             .expect("Failed to check blocks");
                     }
                     PbftMulticastType::Commit => {
@@ -220,8 +214,7 @@ impl PbftNode {
                         self._broadcast_pbft_message(
                             PbftMulticastType::CommitFinal,
                             1,
-                            1,
-                            (*deser_msg.get_block()).clone()
+                            (*deser_msg.get_block()).clone(),
                         );
                     }
                     PbftMulticastType::CommitFinal => {
@@ -233,14 +226,18 @@ impl PbftNode {
                                 self,
                                 BlockId::from(deser_msg.get_block().block_id.clone())
                             );
-                            self.service.commit_block(
-                                    BlockId::from(deser_msg.get_block().block_id.clone())
-                                )
+                            self.service
+                                .commit_block(BlockId::from(deser_msg.get_block().block_id.clone()))
                                 .expect("Failed to commit block");
                         }
                     }
                     PbftMulticastType::Unset => warn!("Message type Unset"),
                 }
+
+                // Add message to the log
+                self.msg_log.add_message(deser_msg);
+
+                debug!("{}", self.msg_log);
             }
             t => warn!("Message type {:?} not implemented", t),
         }
@@ -254,33 +251,40 @@ impl PbftNode {
 
         self.stage = PbftStage::PrePreparing;
         // TODO: Check validity of block
-        // TODO: keep track of seq number and view in Node
+        // TODO: keep track of view in Node
         if self.role == PbftNodeRole::Primary {
             self._broadcast_pbft_message(
                 PbftMulticastType::PrePrepare,
                 1,
-                1,
-                pbft_block_from_block(block)
+                pbft_block_from_block(block),
             );
         }
     }
 
     // Handle a block commit from the Validator
-    // If we're a primary, do nothing??
+    // If we're a primary, initialize a new block
     // If we're a secondary, commit the block in the message
     pub fn on_block_commit(&mut self, block_id: BlockId) {
         if self.stage == PbftStage::Committing {
             match self.role {
                 PbftNodeRole::Primary => {
                     // Initialize block if we're ready to do so
-                    debug!("{}: <<<<<< BlockCommit and initializing new one: {:?}", self, block_id);
-                    self.service.initialize_block(None)
+                    debug!(
+                        "{}: <<<<<< BlockCommit and initializing new one: {:?}",
+                        self, block_id
+                    );
+                    self.service
+                        .initialize_block(None)
                         .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
                     self.stage = PbftStage::NotStarted;
                 }
                 PbftNodeRole::Secondary => {
-                    debug!("{}: <<<<<< BlockCommit and committing: {:?}", self, block_id);
-                    self.service.commit_block(block_id)
+                    debug!(
+                        "{}: <<<<<< BlockCommit and committing: {:?}",
+                        self, block_id
+                    );
+                    self.service
+                        .commit_block(block_id)
                         .unwrap_or_else(|err| error!("Couldn't commit block: {}", err));
                 }
             }
@@ -295,7 +299,8 @@ impl PbftNode {
         self.stage = PbftStage::Committing;
 
         // TODO: remove panic?
-        let valid_blocks: Vec<Block> = self.service.get_blocks(vec![block_id])
+        let valid_blocks: Vec<Block> = self.service
+            .get_blocks(vec![block_id])
             .unwrap_or_else(|err| panic!("Couldn't get block: {:?}", err))
             .into_iter()
             .map(|(_block_id, block)| block)
@@ -306,8 +311,7 @@ impl PbftNode {
         self._broadcast_pbft_message(
             PbftMulticastType::Commit,
             1,
-            1,
-            pbft_block_from_block(valid_blocks[0].clone())
+            pbft_block_from_block(valid_blocks[0].clone()),
         );
     }
 
@@ -315,7 +319,9 @@ impl PbftNode {
         debug!("{}: tried to update working block", self);
         if self.role == PbftNodeRole::Primary {
             if self.stage == PbftStage::Finished {
-                self.service.initialize_block(None)
+                self.seq_num += 1;
+                self.service
+                    .initialize_block(None)
                     .expect("Couldn't initialize_block");
                 self.stage = PbftStage::NotStarted;
             }
@@ -323,10 +329,10 @@ impl PbftNode {
                 match self.service.finalize_block(vec![]) {
                     Ok(block_id) => {
                         debug!("{}: Publishing block {:?}", self, block_id);
-                    },
+                    }
                     Err(EngineError::BlockNotReady) => {
                         debug!("{}: Block not ready", self);
-                    },
+                    }
                     Err(err) => panic!("Failed to finalize block: {:?}", err),
                 }
             }
@@ -349,7 +355,7 @@ impl PbftNode {
             PbftMulticastType::Prepare => Some(PbftStage::Preparing),
             PbftMulticastType::Commit => Some(PbftStage::Committing),
             PbftMulticastType::CommitFinal => Some(PbftStage::FinalCommitting),
-            _ => None
+            _ => None,
         };
 
         if let Some(stage) = corresponding_stage {
@@ -388,8 +394,7 @@ impl PbftNode {
         &mut self,
         msg_type: PbftMulticastType,
         view: u64,
-        seq_num: u64,
-        block: PbftBlock
+        block: PbftBlock,
     ) {
         // Make sure that we should be sending messages of this type
         if msg_type != self._sending_message_type() {
@@ -397,11 +402,12 @@ impl PbftNode {
             return;
         }
 
-        let msg_bytes = make_msg_bytes(make_msg_info(&msg_type, view, seq_num), block);
+        let msg_bytes = make_msg_bytes(make_msg_info(&msg_type, view, self.seq_num), block);
 
         // TODO: self.stage should probably have a mutex around it.
         // Broadcast to peers
-        self.service.broadcast(String::from(&msg_type).as_str(), msg_bytes.clone())
+        self.service
+            .broadcast(String::from(&msg_type).as_str(), msg_bytes.clone())
             .unwrap_or_else(|err| error!("Couldn't broadcast: {}", err));
         debug!("{}: >>>>>> {:?}", self, msg_type);
 
@@ -413,7 +419,6 @@ impl PbftNode {
         debug!("{}: >self> {:?}", self, msg_type);
         self.on_peer_message(peer_msg);
     }
-
 }
 
 // TODO: break these out into better places

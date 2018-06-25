@@ -35,11 +35,7 @@ impl PbftConfig {
     }
 }
 
-pub fn load_pbft_config(
-    block_id: BlockId,
-    service: &mut Box<Service>,
-) -> PbftConfig {
-
+pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftConfig {
     let mut config = PbftConfig::default();
 
     let sawtooth_settings: HashMap<String, String> = service

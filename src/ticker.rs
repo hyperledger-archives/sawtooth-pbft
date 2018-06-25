@@ -15,7 +15,7 @@
  * ------------------------------------------------------------------------------
  */
 
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 /// Encapsulates doing some work every time a timeout has elapsed
 pub struct Ticker {
