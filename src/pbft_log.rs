@@ -15,33 +15,25 @@
  * -----------------------------------------------------------------------------
  */
 
+use hex;
 use protos::pbft_message::{PbftMessage, PbftNewView, PbftViewChange};
-use std::error::Error;
 use std::fmt;
 
-use hex;
+const MAX_LOG_SIZE: u64 = 1000;
 
-#[derive(Debug)]
-pub struct PbftLogError;
-
-impl Error for PbftLogError {
-    // TODO: Fill this out
-    fn description(&self) -> &str {
-        "Log error"
-    }
-}
-
-impl fmt::Display for PbftLogError {
-    // TODO: Fill this out
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.description())
-    }
-}
-
+// Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
+    // Generic messages (BlockNew, PrePrepare, Prepare, Commit, CommitFinal, Checkpoint)
     messages: Vec<PbftMessage>,
+
+    // View change related messages
     view_changes: Vec<PbftViewChange>,
     new_views: Vec<PbftNewView>,
+
+    // Watermarks (minimum/maximum sequence numbers)
+    // Ensures log does not get too large
+    low_water_mark: u64,
+    high_water_mark: u64,
 }
 
 impl fmt::Display for PbftLog {
@@ -75,55 +67,58 @@ impl PbftLog {
             messages: vec![],
             view_changes: vec![],
             new_views: vec![],
+            low_water_mark: 0,
+            high_water_mark: MAX_LOG_SIZE,
         }
     }
 
     // Methods for dealing with PbftMessages
-    pub fn add_message(&mut self, msg: PbftMessage) -> Result<(), PbftLogError> {
-        self.messages.push(msg);
-        Ok(())
+    pub fn add_message(&mut self, msg: PbftMessage) {
+        if msg.get_info().get_seq_num() < self.high_water_mark
+            || msg.get_info().get_seq_num() >= self.low_water_mark
+        {
+            self.messages.push(msg);
+        } else {
+            warn!(
+                "Not adding message with sequencenumber {}; outside of log bounds ({}, {})",
+                msg.get_info().get_seq_num(),
+                self.low_water_mark,
+                self.high_water_mark,
+            );
+        }
     }
 
-    pub fn get_messages_of_type(
-        &self,
-        msg_type: &str,
-        sequence_number: u64,
-    ) -> Result<Vec<&PbftMessage>, PbftLogError> {
-        let msgs: Vec<&PbftMessage> = self.messages
+    pub fn get_messages_of_type(&self, msg_type: &str, sequence_number: u64) -> Vec<&PbftMessage> {
+        self.messages
             .iter()
             .filter(|&msg| {
                 (*msg).get_info().get_msg_type() == msg_type
                     && (*msg).get_info().get_seq_num() == sequence_number
             })
-            .collect();
-        Ok(msgs)
+            .collect()
     }
 
     // Methods for dealing with PbftViewChanges
-    pub fn add_view_change(&mut self, vc: PbftViewChange) -> Result<(), PbftLogError> {
+    pub fn add_view_change(&mut self, vc: PbftViewChange) {
         self.view_changes.push(vc);
-        Ok(())
     }
 
-    pub fn get_view_change(&self, sequence_number: u64) -> Result<Vec<&PbftMessage>, PbftLogError> {
-        let msgs: Vec<&PbftMessage> = self.messages
+    pub fn get_view_change(&self, sequence_number: u64) -> Vec<&PbftMessage> {
+        self.messages
             .iter()
             .filter(|&msg| (*msg).get_info().get_seq_num() == sequence_number)
-            .collect();
-        Ok(msgs)
+            .collect()
     }
 
     // Methods for dealing with PbftNewViews
-    pub fn add_new_view(&mut self, vc: PbftViewChange) -> Result<(), PbftLogError> {
+    pub fn add_new_view(&mut self, vc: PbftViewChange) {
         self.view_changes.push(vc);
-        Ok(())
     }
 
-    pub fn get_new_view(&self, sequence_number: u64) -> Result<Vec<&PbftMessage>, PbftLogError> {
-        let msgs: Vec<&PbftMessage> = self.messages
+    pub fn get_new_view(&self, sequence_number: u64) -> Vec<&PbftMessage> {
+        self.messages
             .iter()
             .filter(|&msg| (*msg).get_info().get_seq_num() == sequence_number)
-            .collect();
-        Ok(msgs)
+            .collect()
     }
 }

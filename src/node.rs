@@ -40,36 +40,46 @@ enum PbftNodeRole {
 
 // Messages related to the multicast protocol, in order
 #[derive(Debug, PartialEq, PartialOrd)]
-enum PbftMulticastType {
+enum PbftMessageType {
     Unset,
+
+    // Basic message types for the multicast protocol
     PrePrepare,
     Prepare,
     Commit,
     CommitFinal,
+
+    // Auxiliary PBFT messages
+    BlockNew,
+    Checkpoint,
+    ViewChange,
+    NewView,
 }
 
-impl<'a> From<&'a str> for PbftMulticastType {
+impl<'a> From<&'a str> for PbftMessageType {
     fn from(s: &'a str) -> Self {
         match s {
-            "pre_prepare" => PbftMulticastType::PrePrepare,
-            "prepare" => PbftMulticastType::Prepare,
-            "commit" => PbftMulticastType::Commit,
-            "commit_final" => PbftMulticastType::CommitFinal,
+            "pre_prepare" => PbftMessageType::PrePrepare,
+            "prepare" => PbftMessageType::Prepare,
+            "commit" => PbftMessageType::Commit,
+            "commit_final" => PbftMessageType::CommitFinal,
+            "block_new" => PbftMessageType::BlockNew,
             _ => {
                 warn!("Unhandled multicast message type: {}", s);
-                PbftMulticastType::Unset
+                PbftMessageType::Unset
             }
         }
     }
 }
 
-impl<'a> From<&'a PbftMulticastType> for String {
-    fn from(mc_type: &'a PbftMulticastType) -> String {
+impl<'a> From<&'a PbftMessageType> for String {
+    fn from(mc_type: &'a PbftMessageType) -> String {
         match mc_type {
-            PbftMulticastType::PrePrepare => String::from("pre_prepare"),
-            PbftMulticastType::Prepare => String::from("prepare"),
-            PbftMulticastType::Commit => String::from("commit"),
-            PbftMulticastType::CommitFinal => String::from("commit_final"),
+            PbftMessageType::PrePrepare => String::from("pre_prepare"),
+            PbftMessageType::Prepare => String::from("prepare"),
+            PbftMessageType::Commit => String::from("commit"),
+            PbftMessageType::CommitFinal => String::from("commit_final"),
+            PbftMessageType::BlockNew => String::from("block_new"),
             _ => String::from("unset"),
         }
     }
@@ -90,7 +100,8 @@ enum PbftStage {
 // The actual node
 pub struct PbftNode {
     id: u64,
-    seq_num: u64,
+    seq_num: u64, // TODO: change this to an option (only the primary should consider/assign sequence numbers)
+    view: u64,
     stage: PbftStage,
     service: Box<Service>,
     role: PbftNodeRole,
@@ -129,6 +140,7 @@ impl PbftNode {
         PbftNode {
             id: id,
             seq_num: 0,
+            view: 1,
             stage: PbftStage::NotStarted,
             role: if &id == current_primary {
                 PbftNodeRole::Primary
@@ -150,7 +162,7 @@ impl PbftNode {
 
         match msg_type {
             "pre_prepare" | "prepare" | "commit" | "commit_final" => {
-                let mc_type = PbftMulticastType::from(msg_type);
+                let mc_type = PbftMessageType::from(msg_type);
 
                 let deser_msg = protobuf::parse_from_bytes::<PbftMessage>(&msg.content)
                     .unwrap_or_else(|err| {
@@ -186,17 +198,52 @@ impl PbftNode {
                 );
 
                 match mc_type {
-                    PbftMulticastType::PrePrepare => {
-                        // TODO check legitimacy of pre_prepare messages
+                    PbftMessageType::PrePrepare => {
+                        let info = deser_msg.get_info();
+
+                        if info.get_view() != self.view {
+                            // TODO: return after cleaning up and resetting state (?)
+                            error!("View mismatch: {} != {}", info.get_view(), self.view);
+                            return;
+                        }
+
+                        // Immutably borrow self for a limited time
+                        {
+                            // Check that this PrePrepare doesn't already exist
+                            let existing_pre_prep_msgs = self.msg_log
+                                .get_messages_of_type("pre_prepare", info.get_seq_num());
+
+                            if existing_pre_prep_msgs.len() > 0 {
+                                error!(
+                                    "A PrePrepare message already exists with this sequence number"
+                                );
+                                return;
+                            }
+
+                            // Check that incoming PrePrepare matches original BlockNew
+                            let block_new_msgs = self.msg_log.get_messages_of_type(
+                                "block_new",
+                                deser_msg.get_info().get_seq_num(),
+                            );
+
+                            if block_new_msgs.len() > 1
+                                || block_new_msgs[0].get_block() != deser_msg.get_block()
+                            {
+                                error!("Block mismatch");
+                                return;
+                            }
+                        }
+
+                        // TODO: Check water marks (low and high)
+
                         self.stage = PbftStage::Preparing;
 
                         self._broadcast_pbft_message(
-                            PbftMulticastType::Prepare,
-                            1,
+                            PbftMessageType::Prepare,
                             (*deser_msg.get_block()).clone(),
                         );
                     }
-                    PbftMulticastType::Prepare => {
+                    PbftMessageType::Prepare => {
                         // TODO check prepared predicate
                         self.stage = PbftStage::Checking;
 
@@ -207,17 +254,16 @@ impl PbftNode {
                             ])
                             .expect("Failed to check blocks");
                     }
-                    PbftMulticastType::Commit => {
+                    PbftMessageType::Commit => {
                         self.stage = PbftStage::FinalCommitting;
 
                         // TODO: check committed predicate
                         self._broadcast_pbft_message(
-                            PbftMulticastType::CommitFinal,
-                            1,
+                            PbftMessageType::CommitFinal,
                             (*deser_msg.get_block()).clone(),
                         );
                     }
-                    PbftMulticastType::CommitFinal => {
+                    PbftMessageType::CommitFinal => {
                         self.stage = PbftStage::Finished; // TODO: This will need to be changed
 
                         if self.role == PbftNodeRole::Primary {
@@ -231,7 +277,7 @@ impl PbftNode {
                                 .expect("Failed to commit block");
                         }
                     }
-                    PbftMulticastType::Unset => warn!("Message type Unset"),
+                    _ => warn!("Message type not implemented"),
                 }
 
                 // Add message to the log
@@ -243,21 +289,31 @@ impl PbftNode {
         }
     }
 
-    // Handle a new block from the Validator
-    // Create a new working block on the working block queue and kick off the consensus algorithm
+    // Creates a new working block on the working block queue and kick off the consensus algorithm
     // by broadcasting a "pre_prepare" message to peers
+    //
+    // Assumes the validator has checked that the block signature is valid, and that it is to
+    // be built on top of the current chain head.
     pub fn on_block_new(&mut self, block: Block) {
-        info!("{}: <<<<<< BlockNew: {:?}", self, block.block_id);
+        info!("{}: <<<<<< BlockNew: {:?}", self, block.block_id.clone());
+
+        let pbft_block = pbft_block_from_block(block.clone());
+
+        let mut msg = PbftMessage::new();
+        msg.set_info(make_msg_info(
+            &PbftMessageType::BlockNew,
+            self.view,
+            self.seq_num,
+        ));
+        msg.set_block(pbft_block.clone());
+
+        self.msg_log.add_message(msg);
 
         self.stage = PbftStage::PrePreparing;
-        // TODO: Check validity of block
+
         // TODO: keep track of view in Node
         if self.role == PbftNodeRole::Primary {
-            self._broadcast_pbft_message(
-                PbftMulticastType::PrePrepare,
-                1,
-                pbft_block_from_block(block),
-            );
+            self._broadcast_pbft_message(PbftMessageType::PrePrepare, pbft_block_from_block(block));
         }
     }
 
@@ -309,8 +365,7 @@ impl PbftNode {
         assert_eq!(valid_blocks.len(), 1);
 
         self._broadcast_pbft_message(
-            PbftMulticastType::Commit,
-            1,
+            PbftMessageType::Commit,
             pbft_block_from_block(valid_blocks[0].clone()),
         );
     }
@@ -349,12 +404,12 @@ impl PbftNode {
 
     // Checks to see if a message type is acceptable to receive, in this node's
     // current stage.
-    fn _check_ready_for_msg(&self, msg_type: &PbftMulticastType) -> bool {
+    fn _check_ready_for_msg(&self, msg_type: &PbftMessageType) -> bool {
         let corresponding_stage = match msg_type {
-            PbftMulticastType::PrePrepare => Some(PbftStage::PrePreparing),
-            PbftMulticastType::Prepare => Some(PbftStage::Preparing),
-            PbftMulticastType::Commit => Some(PbftStage::Committing),
-            PbftMulticastType::CommitFinal => Some(PbftStage::FinalCommitting),
+            PbftMessageType::PrePrepare => Some(PbftStage::PrePreparing),
+            PbftMessageType::Prepare => Some(PbftStage::Preparing),
+            PbftMessageType::Commit => Some(PbftStage::Committing),
+            PbftMessageType::CommitFinal => Some(PbftStage::FinalCommitting),
             _ => None,
         };
 
@@ -367,13 +422,13 @@ impl PbftNode {
     }
 
     // Tells what kind of message we're supposed to be sending right now
-    fn _sending_message_type(&self) -> PbftMulticastType {
+    fn _sending_message_type(&self) -> PbftMessageType {
         match self.stage {
-            PbftStage::PrePreparing => PbftMulticastType::PrePrepare,
-            PbftStage::Preparing => PbftMulticastType::Prepare,
-            PbftStage::Committing => PbftMulticastType::Commit,
-            PbftStage::FinalCommitting => PbftMulticastType::CommitFinal,
-            _ => PbftMulticastType::Unset,
+            PbftStage::PrePreparing => PbftMessageType::PrePrepare,
+            PbftStage::Preparing => PbftMessageType::Prepare,
+            PbftStage::Committing => PbftMessageType::Commit,
+            PbftStage::FinalCommitting => PbftMessageType::CommitFinal,
+            _ => PbftMessageType::Unset,
         }
     }
 
@@ -390,19 +445,14 @@ impl PbftNode {
         matching_node_ids[0]
     }
 
-    fn _broadcast_pbft_message(
-        &mut self,
-        msg_type: PbftMulticastType,
-        view: u64,
-        block: PbftBlock,
-    ) {
+    fn _broadcast_pbft_message(&mut self, msg_type: PbftMessageType, block: PbftBlock) {
         // Make sure that we should be sending messages of this type
         if msg_type != self._sending_message_type() {
             debug!("{}: xxxxxx {:?} not sending", self, msg_type);
             return;
         }
 
-        let msg_bytes = make_msg_bytes(make_msg_info(&msg_type, view, self.seq_num), block);
+        let msg_bytes = make_msg_bytes(make_msg_info(&msg_type, self.view, self.seq_num), block);
 
         // TODO: self.stage should probably have a mutex around it.
         // Broadcast to peers
@@ -422,7 +472,7 @@ impl PbftNode {
 }
 
 // TODO: break these out into better places
-fn make_msg_info(msg_type: &PbftMulticastType, view: u64, seq_num: u64) -> PbftMessageInfo {
+fn make_msg_info(msg_type: &PbftMessageType, view: u64, seq_num: u64) -> PbftMessageInfo {
     let mut info = PbftMessageInfo::new();
     info.set_msg_type(String::from(msg_type));
     info.set_view(view);
@@ -445,5 +495,6 @@ fn pbft_block_from_block(block: Block) -> PbftBlock {
     pbft_block.set_block_id(Vec::<u8>::from(block.block_id));
     pbft_block.set_signer_id(Vec::<u8>::from(block.signer_id));
     pbft_block.set_block_num(block.block_num);
+    pbft_block.set_summary(block.summary);
     pbft_block
 }
