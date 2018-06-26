@@ -16,8 +16,13 @@
  */
 
 use hex;
-use protos::pbft_message::{PbftMessage, PbftNewView, PbftViewChange};
+use std::collections::VecDeque;
 use std::fmt;
+
+use sawtooth_sdk::consensus::engine::PeerMessage;
+
+use message_type::PbftMessageType;
+use protos::pbft_message::{PbftMessage, PbftNewView, PbftViewChange};
 
 const MAX_LOG_SIZE: u64 = 1000;
 
@@ -34,6 +39,9 @@ pub struct PbftLog {
     // Ensures log does not get too large
     low_water_mark: u64,
     high_water_mark: u64,
+
+    // Unread messages that this node wasn't ready for
+    unread_queue: VecDeque<PeerMessage>,
 }
 
 impl fmt::Display for PbftLog {
@@ -57,7 +65,13 @@ impl fmt::Display for PbftLog {
                 )
             })
             .collect();
-        write!(f, "\nPbftLog:\n{}", msg_string_vec.join("\n"))
+        write!(
+            f,
+            "\nPbftLog ({}, {}):\n{}",
+            self.low_water_mark,
+            self.high_water_mark,
+            msg_string_vec.join("\n")
+        )
     }
 }
 
@@ -69,6 +83,7 @@ impl PbftLog {
             new_views: vec![],
             low_water_mark: 0,
             high_water_mark: MAX_LOG_SIZE,
+            unread_queue: VecDeque::new(),
         }
     }
 
@@ -88,11 +103,15 @@ impl PbftLog {
         }
     }
 
-    pub fn get_messages_of_type(&self, msg_type: &str, sequence_number: u64) -> Vec<&PbftMessage> {
+    pub fn get_messages_of_type(
+        &self,
+        msg_type: &PbftMessageType,
+        sequence_number: u64,
+    ) -> Vec<&PbftMessage> {
         self.messages
             .iter()
             .filter(|&msg| {
-                (*msg).get_info().get_msg_type() == msg_type
+                (*msg).get_info().get_msg_type() == String::from(msg_type)
                     && (*msg).get_info().get_seq_num() == sequence_number
             })
             .collect()
@@ -103,8 +122,8 @@ impl PbftLog {
         self.view_changes.push(vc);
     }
 
-    pub fn get_view_change(&self, sequence_number: u64) -> Vec<&PbftMessage> {
-        self.messages
+    pub fn get_view_change(&self, sequence_number: u64) -> Vec<&PbftViewChange> {
+        self.view_changes
             .iter()
             .filter(|&msg| (*msg).get_info().get_seq_num() == sequence_number)
             .collect()
@@ -115,10 +134,18 @@ impl PbftLog {
         self.view_changes.push(vc);
     }
 
-    pub fn get_new_view(&self, sequence_number: u64) -> Vec<&PbftMessage> {
-        self.messages
+    pub fn get_new_view(&self, sequence_number: u64) -> Vec<&PbftNewView> {
+        self.new_views
             .iter()
             .filter(|&msg| (*msg).get_info().get_seq_num() == sequence_number)
             .collect()
+    }
+
+    pub fn add_unread(&mut self, msg: PeerMessage) {
+        self.unread_queue.push_back(msg);
+    }
+
+    pub fn pop_unread(&mut self) -> Option<PeerMessage> {
+        self.unread_queue.pop_front()
     }
 }
