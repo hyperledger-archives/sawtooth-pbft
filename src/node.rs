@@ -18,7 +18,7 @@
 use protobuf;
 use protobuf::Message;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use std::convert::From;
 use std::fmt;
@@ -54,12 +54,16 @@ enum PbftStage {
 // The actual node
 pub struct PbftNode {
     id: u64,
-    seq_num: u64, // TODO: change this to an option (only the primary should consider/assign sequence numbers)
+
+    // Always starts at 0; representative of unknown sequence number.
+    seq_num: u64,
+
     view: u64,
     stage: PbftStage,
     service: Box<Service>,
     role: PbftNodeRole,
     network_node_ids: HashMap<u64, PeerId>,
+    f: u64, // The maximum number of faulty nodes in the network
     msg_log: PbftLog,
 }
 
@@ -100,6 +104,7 @@ impl PbftNode {
             } else {
                 PbftNodeRole::Secondary
             },
+            f: ((peer_id_map.len() - 1) / 3) as u64,
             network_node_ids: peer_id_map,
             service: service,
             msg_log: PbftLog::new(),
@@ -132,12 +137,12 @@ impl PbftNode {
                             "{}: !!!!!! [Node {:02}]: {:?} (in mode {:?})",
                             self,
                             self._get_node_id(PeerId::from(
-                                deser_msg.get_block().clone().signer_id
+                                deser_msg.get_info().get_signer_id().to_vec()
                             )),
                             msg_type,
                             self.stage,
                         );
-                        self.msg_log.add_unread(msg);
+                        // self.msg_log.add_unread(msg);
                     }
                     return;
                 }
@@ -145,7 +150,7 @@ impl PbftNode {
                 info!(
                     "{}: <<<<<< [Node {:02}]: {:?}",
                     self,
-                    self._get_node_id(PeerId::from(deser_msg.get_block().clone().signer_id)),
+                    self._get_node_id(PeerId::from(deser_msg.get_info().get_signer_id().to_vec())),
                     msg.message_type,
                 );
 
@@ -161,43 +166,95 @@ impl PbftNode {
 
                         // Immutably borrow self for a limited time
                         {
-                            // Check that this PrePrepare doesn't already exist
-                            let existing_pre_prep_msgs = self.msg_log.get_messages_of_type(
-                                &PbftMessageType::PrePrepare,
-                                info.get_seq_num(),
-                            );
-
-                            if existing_pre_prep_msgs.len() > 0 {
-                                error!(
-                                    "A PrePrepare message already exists with this sequence number"
+                            {
+                                // Check that this PrePrepare doesn't already exist
+                                let existing_pre_prep_msgs = self.msg_log.get_messages_of_type(
+                                    &PbftMessageType::PrePrepare,
+                                    info.get_seq_num(),
                                 );
-                                return;
+
+                                if existing_pre_prep_msgs.len() > 0 {
+                                    error!("A PrePrepare message already exists with this sequence number");
+                                    return;
+                                }
                             }
 
-                            // Check that incoming PrePrepare matches original BlockNew
-                            let block_new_msgs = self.msg_log.get_messages_of_type(
-                                &PbftMessageType::BlockNew,
-                                deser_msg.get_info().get_seq_num(),
-                            );
-
-                            if block_new_msgs.len() > 1
-                                || block_new_msgs[0].get_block() != deser_msg.get_block()
                             {
-                                error!("Block mismatch");
-                                return;
+                                // Check that incoming PrePrepare matches original BlockNew
+                                let block_new_msgs = self.msg_log.get_messages_of_type(
+                                    &PbftMessageType::BlockNew,
+                                    deser_msg.get_info().get_seq_num(),
+                                );
+
+                                if block_new_msgs.len() > 1
+                                    || block_new_msgs[0].get_block() != deser_msg.get_block()
+                                {
+                                    error!("Block mismatch");
+                                    return;
+                                }
+                            }
+
+                            // TODO: Not sure if this is actually the way this is supposed to
+                            // happen. Theoretically, primaries should be the only ones that care
+                            // about sequence numbers
+                            //
+                            // Should the sequence number just be the block number?
+                            if self.role == PbftNodeRole::Primary {
+                                // Check that incoming PrePrepare matches original BlockNew
+                                let block_new_msgs = self.msg_log.get_messages_of_type(
+                                    &PbftMessageType::BlockNew,
+                                    info.get_seq_num(),
+                                );
+
+                                if block_new_msgs.len() != 1 {
+                                    error!(
+                                        "Wrong number of BlockNew messages in this sequence (expected 1, got {})",
+                                        block_new_msgs.len()
+                                    );
+                                    return;
+                                }
+
+                                if block_new_msgs[0].get_block() != deser_msg.get_block() {
+                                    error!(
+                                        "Block mismatch\nBlock1: {:?}\nBlock2: {:?}",
+                                        block_new_msgs[0],
+                                        deser_msg.get_block()
+                                    );
+                                    return;
+                                }
+                            } else {
+                                // Set this secondary's sequence number from the PrePrepare message
+                                // (this was originally set by the primary)...
+                                self.seq_num = info.get_seq_num();
+
+                                // ...then update the BlockNew message we received with the correct
+                                // sequence number
+                                let num_updated = self.msg_log
+                                    .fix_seq_nums(&PbftMessageType::BlockNew, info.get_seq_num());
+                                debug!("The log updated {} BlockNew messages", num_updated);
                             }
                         }
-
+                        // Add message to the log
+                        // TODO: Putting log add here is necessary because on_peer_message gets
+                        // called again inside of _broadcast_pbft_message
+                        self.msg_log.add_message(deser_msg.clone());
                         self.stage = PbftStage::Preparing;
 
                         self._broadcast_pbft_message(
+                            info.get_seq_num(),
                             PbftMessageType::Prepare,
                             (*deser_msg.get_block()).clone(),
                         );
                     }
                     PbftMessageType::Prepare => {
-                        // TODO check prepared predicate
+                        // Add message to the log
+                        self.msg_log.add_message(deser_msg.clone());
                         self.stage = PbftStage::Checking;
+
+                        if !self._prepared(&deser_msg) {
+                            error!("`prepared` predicate is false!");
+                            return;
+                        }
 
                         debug!("{}: ------ Checking blocks", self);
                         self.service
@@ -207,18 +264,42 @@ impl PbftNode {
                             .expect("Failed to check blocks");
                     }
                     PbftMessageType::Commit => {
+                        // Add message to the log
+                        self.msg_log.add_message(deser_msg.clone());
                         self.stage = PbftStage::FinalCommitting;
 
-                        // TODO: check committed predicate
+                        if !self._committed(&deser_msg) {
+                            error!("`committed` predicate is false!");
+                            return;
+                        }
+
                         self._broadcast_pbft_message(
+                            deser_msg.get_info().get_seq_num(),
                             PbftMessageType::CommitFinal,
                             (*deser_msg.get_block()).clone(),
                         );
                     }
                     PbftMessageType::CommitFinal => {
+                        // Add message to the log
+                        self.msg_log.add_message(deser_msg.clone());
                         self.stage = PbftStage::Finished; // TODO: This will need to be changed
 
                         if self.role == PbftNodeRole::Primary {
+                            let commit_final_msgs = self.msg_log.get_messages_of_type(
+                                &PbftMessageType::CommitFinal,
+                                deser_msg.get_info().get_seq_num(),
+                            );
+
+                            // TODO: check that messages are unique
+                            if commit_final_msgs.len() < (self.f + 1) as usize {
+                                error!(
+                                    "Not enough CommitFinal messages (have {}, need {})",
+                                    commit_final_msgs.len(),
+                                    self.f + 1
+                                );
+                                return;
+                            }
+
                             debug!(
                                 "{}: Primary committing block {:?}",
                                 self,
@@ -231,11 +312,6 @@ impl PbftNode {
                     }
                     _ => warn!("Message type not implemented"),
                 }
-
-                // Add message to the log
-                self.msg_log.add_message(deser_msg);
-
-                debug!("{}", self.msg_log);
             }
             t => warn!("Message type {:?} not implemented", t),
         }
@@ -252,11 +328,25 @@ impl PbftNode {
         let pbft_block = pbft_block_from_block(block.clone());
 
         let mut msg = PbftMessage::new();
-        msg.set_info(make_msg_info(
-            &PbftMessageType::BlockNew,
-            self.view,
-            self.seq_num,
-        ));
+        if self.role == PbftNodeRole::Primary {
+            if self.seq_num == 0 {
+                self.seq_num = 1;
+            }
+            msg.set_info(make_msg_info(
+                &PbftMessageType::BlockNew,
+                self.view,
+                self.seq_num, // primary knows the proper sequence number
+                self.network_node_ids[&self.id].clone(),
+            ));
+        } else {
+            msg.set_info(make_msg_info(
+                &PbftMessageType::BlockNew,
+                self.view,
+                0, // default to unset; change it later when we receive PrePrepare
+                self.network_node_ids[&self.id].clone(),
+            ));
+        }
+
         msg.set_block(pbft_block.clone());
 
         self.msg_log.add_message(msg);
@@ -265,7 +355,8 @@ impl PbftNode {
 
         // TODO: keep track of view in Node
         if self.role == PbftNodeRole::Primary {
-            self._broadcast_pbft_message(PbftMessageType::PrePrepare, pbft_block_from_block(block));
+            let s = self.seq_num;
+            self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block);
         }
     }
 
@@ -316,7 +407,9 @@ impl PbftNode {
 
         assert_eq!(valid_blocks.len(), 1);
 
+        let s = self.seq_num; // By now, secondaries have the proper seq number
         self._broadcast_pbft_message(
+            s,
             PbftMessageType::Commit,
             pbft_block_from_block(valid_blocks[0].clone()),
         );
@@ -342,6 +435,10 @@ impl PbftNode {
                     }
                     Err(err) => panic!("Failed to finalize block: {:?}", err),
                 }
+            }
+        } else {
+            if self.stage == PbftStage::Finished {
+                self.stage = PbftStage::NotStarted;
             }
         }
     }
@@ -397,14 +494,101 @@ impl PbftNode {
         matching_node_ids[0]
     }
 
-    fn _broadcast_pbft_message(&mut self, msg_type: PbftMessageType, block: PbftBlock) {
+    // "prepared" predicate
+    fn _prepared(&self, deser_msg: &PbftMessage) -> bool {
+        let info = deser_msg.get_info();
+        let block_new_msgs = self.msg_log
+            .get_messages_of_type(&PbftMessageType::BlockNew, info.get_seq_num());
+        if block_new_msgs.len() != 1 {
+            error!(
+                "Received {} BlockNew messages in this sequence, expected 1",
+                block_new_msgs.len()
+            );
+            return false;
+        }
+
+        let pre_prep_msgs = self.msg_log
+            .get_messages_of_type(&PbftMessageType::PrePrepare, info.get_seq_num());
+        if pre_prep_msgs.len() != 1 {
+            error!(
+                "Received {} PrePrepare messages in this sequence, expected 1",
+                pre_prep_msgs.len()
+            );
+            return false;
+        }
+
+        let prep_msgs = self.msg_log
+            .get_messages_of_type(&PbftMessageType::Prepare, info.get_seq_num());
+
+        // Make sure they're all from different nodes and that they match
+        let mut received_from: HashSet<&[u8]> = HashSet::new();
+        let mut different_prepared_msgs = 0;
+        for prep_msg in prep_msgs.iter() {
+            // Make sure the contents match
+            if !messages_match(prep_msg, pre_prep_msgs[0])
+                || !messages_match(prep_msg, block_new_msgs[0])
+            {
+                error!("Prepare message mismatch");
+                return false;
+            }
+
+            // If the signer is NOT already in the set
+            if received_from.insert(prep_msg.get_block().get_signer_id()) {
+                different_prepared_msgs += 1;
+            }
+        }
+
+        if different_prepared_msgs < 2 * self.f + 1 {
+            error!(
+                "Not enough Prepare messages (have {}, need {})",
+                different_prepared_msgs,
+                2 * self.f + 1
+            );
+            return false;
+        }
+
+        true
+    }
+
+    // "committed" predicate
+    fn _committed(&self, deser_msg: &PbftMessage) -> bool {
+        let commit_msgs = self.msg_log
+            .get_messages_of_type(&PbftMessageType::Commit, deser_msg.get_info().get_seq_num());
+
+        // TODO: Check that commit messages are from different nodes
+        if commit_msgs.len() < (2 * self.f + 1) as usize {
+            error!(
+                "Not enough Commit messages (have {}, need {})",
+                commit_msgs.len(),
+                2 * self.f + 1
+            );
+            return false;
+        }
+
+        self._prepared(deser_msg)
+    }
+
+    fn _broadcast_pbft_message(
+        &mut self,
+        seq_num: u64,
+        msg_type: PbftMessageType,
+        block: PbftBlock,
+    ) {
         // Make sure that we should be sending messages of this type
         if msg_type != self._sending_message_type() {
             debug!("{}: xxxxxx {:?} not sending", self, msg_type);
             return;
         }
 
-        let msg_bytes = make_msg_bytes(make_msg_info(&msg_type, self.view, self.seq_num), block);
+        let msg_bytes = make_msg_bytes(
+            make_msg_info(
+                &msg_type,
+                self.view,
+                seq_num,
+                self.network_node_ids[&self.id].clone(),
+            ),
+            block,
+        );
 
         // TODO: self.stage should probably have a mutex around it.
         // Broadcast to peers
@@ -424,11 +608,24 @@ impl PbftNode {
 }
 
 // TODO: break these out into better places
-fn make_msg_info(msg_type: &PbftMessageType, view: u64, seq_num: u64) -> PbftMessageInfo {
+fn messages_match(m1: &PbftMessage, m2: &PbftMessage) -> bool {
+    let (info1, info2) = (m1.get_info(), m2.get_info());
+
+    info1.get_view() == info2.get_view() && info1.get_seq_num() == info2.get_seq_num()
+        && m1.get_block() == m2.get_block()
+}
+
+fn make_msg_info(
+    msg_type: &PbftMessageType,
+    view: u64,
+    seq_num: u64,
+    signer_id: PeerId,
+) -> PbftMessageInfo {
     let mut info = PbftMessageInfo::new();
     info.set_msg_type(String::from(msg_type));
     info.set_view(view);
     info.set_seq_num(seq_num);
+    info.set_signer_id(Vec::<u8>::from(signer_id));
     info
 }
 

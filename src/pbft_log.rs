@@ -93,9 +93,10 @@ impl PbftLog {
             || msg.get_info().get_seq_num() >= self.low_water_mark
         {
             self.messages.push(msg);
+            debug!("Added to log\n{}", self);
         } else {
             warn!(
-                "Not adding message with sequencenumber {}; outside of log bounds ({}, {})",
+                "Not adding message with sequence number {}; outside of log bounds ({}, {})",
                 msg.get_info().get_seq_num(),
                 self.low_water_mark,
                 self.high_water_mark,
@@ -115,6 +116,22 @@ impl PbftLog {
                     && (*msg).get_info().get_seq_num() == sequence_number
             })
             .collect()
+    }
+
+    // Fix sequence numbers of generic messages that are defaulted to zero
+    pub fn fix_seq_nums(&mut self, msg_type: &PbftMessageType, new_sequence_number: u64) -> usize {
+        let mut changed_msgs = 0;
+        for m in &mut self.messages {
+            let mut info = m.get_info().clone();
+            if m.get_info().get_msg_type() == String::from(msg_type)
+                && m.get_info().get_seq_num() == 0
+            {
+                info.set_seq_num(new_sequence_number);
+            }
+            m.set_info(info);
+            changed_msgs += 1;
+        }
+        changed_msgs
     }
 
     // Methods for dealing with PbftViewChanges
