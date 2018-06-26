@@ -34,8 +34,7 @@ mod engine;
 mod node;
 mod pbft_log;
 mod protos;
-mod ticker;
-mod timeout;
+mod timing;
 
 fn main() {
     let matches = clap_app!(sawtooth_pbft =>
