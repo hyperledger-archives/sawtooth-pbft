@@ -282,33 +282,31 @@ impl PbftNode {
                     PbftMessageType::CommitFinal => {
                         // Add message to the log
                         self.msg_log.add_message(deser_msg.clone());
-                        self.stage = PbftStage::Finished; // TODO: This will need to be changed
+                        self.stage = PbftStage::Finished;
 
-                        if self.role == PbftNodeRole::Primary {
-                            let commit_final_msgs = self.msg_log.get_messages_of_type(
-                                &PbftMessageType::CommitFinal,
-                                deser_msg.get_info().get_seq_num(),
+                        let commit_final_msgs = self.msg_log.get_messages_of_type(
+                            &PbftMessageType::CommitFinal,
+                            deser_msg.get_info().get_seq_num(),
+                        );
+
+                        // TODO: check that messages are unique
+                        if commit_final_msgs.len() < (self.f + 1) as usize {
+                            error!(
+                                "Not enough CommitFinal messages (have {}, need {})",
+                                commit_final_msgs.len(),
+                                self.f + 1
                             );
-
-                            // TODO: check that messages are unique
-                            if commit_final_msgs.len() < (self.f + 1) as usize {
-                                error!(
-                                    "Not enough CommitFinal messages (have {}, need {})",
-                                    commit_final_msgs.len(),
-                                    self.f + 1
-                                );
-                                return;
-                            }
-
-                            debug!(
-                                "{}: Primary committing block {:?}",
-                                self,
-                                BlockId::from(deser_msg.get_block().block_id.clone())
-                            );
-                            self.service
-                                .commit_block(BlockId::from(deser_msg.get_block().block_id.clone()))
-                                .expect("Failed to commit block");
+                            return;
                         }
+
+                        debug!(
+                            "{}: Committing block {:?}",
+                            self,
+                            BlockId::from(deser_msg.get_block().block_id.clone())
+                        );
+                        self.service
+                            .commit_block(BlockId::from(deser_msg.get_block().block_id.clone()))
+                            .expect("Failed to commit block");
                     }
                     _ => warn!("Message type not implemented"),
                 }
