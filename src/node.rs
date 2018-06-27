@@ -71,8 +71,7 @@ impl PbftNode {
 
                 let deser_msg = protobuf::parse_from_bytes::<PbftMessage>(&msg.content)
                     .unwrap_or_else(|err| {
-                        error!("Couldn't deserialize message: {}", err);
-                        panic!();
+                        panic!("Couldn't deserialize message: {}", err);
                     });
 
                 // Don't process message if we're not ready for it.
@@ -327,10 +326,9 @@ impl PbftNode {
         info!("{}: <<<<<< BlockValid: {:?}", self, block_id);
         self.state.advance_phase();
 
-        // TODO: remove panic?
         let valid_blocks: Vec<Block> = self.service
             .get_blocks(vec![block_id])
-            .unwrap_or_else(|err| panic!("Couldn't get block: {:?}", err))
+            .unwrap_or(HashMap::new())
             .into_iter()
             .map(|(_block_id, block)| block)
             .collect();
@@ -388,9 +386,6 @@ impl PbftNode {
         let prep_msgs = self.msg_log
             .get_messages_of_type(&PbftMessageType::Prepare, info.get_seq_num());
 
-        // Make sure they're all from different nodes and that they match
-        let mut received_from: HashSet<&[u8]> = HashSet::new();
-        let mut different_prepared_msgs = 0;
         for prep_msg in prep_msgs.iter() {
             // Make sure the contents match
             if !messages_match(prep_msg, pre_prep_msgs[0])
@@ -399,12 +394,9 @@ impl PbftNode {
                 error!("Prepare message mismatch");
                 return false;
             }
-
-            // If the signer is NOT already in the set
-            if received_from.insert(prep_msg.get_block().get_signer_id()) {
-                different_prepared_msgs += 1;
-            }
         }
+
+        let different_prepared_msgs = num_unique_signers(&prep_msgs);
 
         if different_prepared_msgs < 2 * self.state.f + 1 {
             error!(
@@ -423,8 +415,9 @@ impl PbftNode {
         let commit_msgs = self.msg_log
             .get_messages_of_type(&PbftMessageType::Commit, deser_msg.get_info().get_seq_num());
 
-        // TODO: Check that commit messages are from different nodes
-        if commit_msgs.len() < (2 * self.state.f + 1) as usize {
+        let different_commit_msgs = num_unique_signers(&commit_msgs);
+
+        if different_commit_msgs < 2 * self.state.f + 1 {
             error!(
                 "Not enough Commit messages (have {}, need {})",
                 commit_msgs.len(),
@@ -513,4 +506,17 @@ fn pbft_block_from_block(block: Block) -> PbftBlock {
     pbft_block.set_block_num(block.block_num);
     pbft_block.set_summary(block.summary);
     pbft_block
+}
+
+// Make sure messages are all from different nodes
+fn num_unique_signers(msg_list: &Vec<&PbftMessage>) -> u64 {
+    let mut received_from: HashSet<&[u8]> = HashSet::new();
+    let mut different_prepared_msgs = 0;
+    for b in msg_list {
+        // If the signer is NOT already in the set
+        if received_from.insert(b.get_block().get_signer_id()) {
+            different_prepared_msgs += 1;
+        }
+    }
+    different_prepared_msgs as u64
 }
