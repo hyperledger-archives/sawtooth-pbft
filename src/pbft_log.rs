@@ -39,9 +39,6 @@ pub struct PbftLog {
     // Ensures log does not get too large
     low_water_mark: u64,
     high_water_mark: u64,
-
-    // Unread messages that this node wasn't ready for
-    unread_queue: VecDeque<PeerMessage>,
 }
 
 impl fmt::Display for PbftLog {
@@ -83,7 +80,6 @@ impl PbftLog {
             new_views: vec![],
             low_water_mark: 0,
             high_water_mark: MAX_LOG_SIZE,
-            unread_queue: VecDeque::new(),
         }
     }
 
@@ -93,7 +89,7 @@ impl PbftLog {
             || msg.get_info().get_seq_num() >= self.low_water_mark
         {
             self.messages.push(msg);
-            debug!("Added to log\n{}", self);
+            debug!("{}", self);
         } else {
             warn!(
                 "Not adding message with sequence number {}; outside of log bounds ({}, {})",
@@ -156,13 +152,5 @@ impl PbftLog {
             .iter()
             .filter(|&msg| (*msg).get_info().get_seq_num() == sequence_number)
             .collect()
-    }
-
-    pub fn add_unread(&mut self, msg: PeerMessage) {
-        self.unread_queue.push_back(msg);
-    }
-
-    pub fn pop_unread(&mut self) -> Option<PeerMessage> {
-        self.unread_queue.pop_front()
     }
 }

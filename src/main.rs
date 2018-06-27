@@ -35,6 +35,7 @@ mod message_type;
 mod node;
 mod pbft_log;
 mod protos;
+mod state;
 mod timing;
 
 fn main() {

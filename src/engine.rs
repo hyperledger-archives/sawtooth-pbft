@@ -59,21 +59,15 @@ impl Engine for PbftEngine {
 
         info!("Peers: {:?}", config.peers);
 
-        // TODO: move to node
         service
             .initialize_block(None)
             .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
 
         let mut node = PbftNode::new(self.id, config.peers, service);
 
-        // TODO: separate pull some functionality from node into this file, and
-        // separate/encapsulate out the service
-        //
         // Event loop. Keep going until we receive a shutdown message.
         loop {
             let incoming_message = updates.recv_timeout(MESSAGE_TIMEOUT);
-
-            node.retry_unread();
 
             match incoming_message {
                 Ok(Update::BlockNew(block)) => node.on_block_new(block),
