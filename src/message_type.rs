@@ -33,6 +33,18 @@ pub enum PbftMessageType {
     NewView,
 }
 
+impl PbftMessageType {
+    pub fn is_multicast(&self) -> bool {
+        match self {
+            PbftMessageType::PrePrepare
+            | PbftMessageType::Prepare
+            | PbftMessageType::Commit
+            | PbftMessageType::CommitFinal => true,
+            _ => false,
+        }
+    }
+}
+
 impl<'a> From<&'a str> for PbftMessageType {
     fn from(s: &'a str) -> Self {
         match s {
