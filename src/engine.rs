@@ -17,23 +17,12 @@
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
-use std::time::Duration;
-
 use sawtooth_sdk::consensus::{engine::*, service::Service};
 
 use node::PbftNode;
 
 use config;
 use timing;
-
-// How long to wait in between trying to publish blocks
-const BLOCK_DURATION: Duration = Duration::from_millis(2000);
-
-// How many requests in between each checkpoint
-const CHECKPOINT_PERIOD: u64 = 100;
-
-// How long to wait for a message to arrive
-const MESSAGE_TIMEOUT: Duration = Duration::from_millis(10);
 
 pub struct PbftEngine {
     id: u64,
@@ -53,21 +42,22 @@ impl Engine for PbftEngine {
         chain_head: Block,
         _peers: Vec<PeerInfo>,
     ) {
-        let mut working_ticker = timing::Ticker::new(BLOCK_DURATION);
-
+        // Load on-chain settings
         let config = config::load_pbft_config(chain_head.block_id, &mut service);
 
-        info!("Peers: {:?}", config.peers);
+        let mut working_ticker = timing::Ticker::new(config.block_duration);
+
+        info!("Configuration: {:#?}", config);
 
         service
             .initialize_block(None)
             .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
 
-        let mut node = PbftNode::new(self.id, config.peers, service);
+        let mut node = PbftNode::new(self.id, &config, service);
 
         // Event loop. Keep going until we receive a shutdown message.
         loop {
-            let incoming_message = updates.recv_timeout(MESSAGE_TIMEOUT);
+            let incoming_message = updates.recv_timeout(config.message_timeout);
 
             match incoming_message {
                 Ok(Update::BlockNew(block)) => node.on_block_new(block),

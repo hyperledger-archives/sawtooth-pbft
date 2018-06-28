@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 use sawtooth_sdk::consensus::engine::PeerId;
 
+use config::PbftConfig;
 use message_type::PbftMessageType;
 
 // Possible roles for a node
@@ -67,15 +68,17 @@ pub struct PbftState {
 }
 
 impl PbftState {
-    pub fn new(id: u64, peers: HashMap<PeerId, u64>) -> Self {
-        let peer_id_map: HashMap<u64, PeerId> = peers
+    pub fn new(id: u64, config: &PbftConfig) -> Self {
+        let peer_id_map: HashMap<u64, PeerId> = config
+            .peers
             .clone()
             .into_iter()
             .map(|(peer_id, node_id)| (node_id, peer_id))
             .collect();
 
         // TODO: update this to reflect view
-        let current_primary = peers
+        let current_primary = config
+            .peers
             .iter()
             .map(|(_peer_id, node_id)| node_id)
             .min()

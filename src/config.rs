@@ -20,17 +20,38 @@ use serde_json;
 
 use std::collections::HashMap;
 
+use std::time::Duration;
+
+use std::fmt;
+
 use sawtooth_sdk::consensus::{engine::{BlockId, PeerId}, service::Service};
 
 #[derive(Debug)]
 pub struct PbftConfig {
+    // Peers that this node is connected to
     pub peers: HashMap<PeerId, u64>,
+
+    // How long to wait in between trying to publish blocks
+    pub block_duration: Duration,
+
+    // How long to wait for a message to arrive
+    pub message_timeout: Duration,
+
+    // How many requests in between each checkpoint
+    pub checkpoint_period: u64,
+
+    // How large the PbftLog is allowed to get
+    pub max_log_size: u64,
 }
 
 impl PbftConfig {
     pub fn default() -> Self {
         PbftConfig {
             peers: HashMap::new(),
+            block_duration: Duration::from_millis(2000),
+            message_timeout: Duration::from_millis(10),
+            checkpoint_period: 100,
+            max_log_size: 1000,
         }
     }
 }
@@ -39,9 +60,19 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftCo
     let mut config = PbftConfig::default();
 
     let sawtooth_settings: HashMap<String, String> = service
-        .get_settings(block_id, vec!["sawtooth.consensus.pbft.peers".into()])
+        .get_settings(
+            block_id,
+            vec![
+                String::from("sawtooth.consensus.pbft.peers"),
+                String::from("sawtooth.consensus.pbft.block_duration"),
+                String::from("sawtooth.consensus.pbft.checkpoint_period"),
+                String::from("sawtooth.consensus.pbft.message_timeout"),
+                String::from("sawtooth.consensus.pbft.max_log_size"),
+            ],
+        )
         .expect("Failed to get on-chain settings");
 
+    // Get the peers associated with this node (including ourselves)
     let peers_string = sawtooth_settings
         .get("sawtooth.consensus.pbft.peers")
         .expect("'sawtooth.consensus.pbft.peers' must be set");
@@ -60,6 +91,30 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftCo
         .collect();
 
     config.peers = peers;
+
+    // Get various durations
+    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.block_duration") {
+        if let Ok(block_duration) = s.parse() {
+            config.block_duration = Duration::from_millis(block_duration);
+        }
+    }
+    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.message_timeout") {
+        if let Ok(message_timeout) = s.parse() {
+            config.message_timeout = Duration::from_millis(message_timeout);
+        }
+    }
+
+    // Get various integer constants
+    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.checkpoint_period") {
+        if let Ok(checkpoint_period) = s.parse() {
+            config.checkpoint_period = checkpoint_period;
+        }
+    }
+    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.max_log_size") {
+        if let Ok(max_log_size) = s.parse() {
+            config.max_log_size = max_log_size;
+        }
+    }
 
     config
 }

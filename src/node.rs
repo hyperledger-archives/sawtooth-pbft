@@ -16,7 +16,7 @@
  */
 
 use protobuf;
-use protobuf::Message;
+use protobuf::{Message, ProtobufError};
 
 use std::collections::{HashMap, HashSet};
 
@@ -26,6 +26,7 @@ use std::fmt;
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId, PeerMessage};
 use sawtooth_sdk::consensus::service::Service;
 
+use config::PbftConfig;
 use message_type::PbftMessageType;
 use pbft_log::PbftLog;
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
@@ -51,11 +52,11 @@ impl fmt::Display for PbftNode {
 }
 
 impl PbftNode {
-    pub fn new(id: u64, peers: HashMap<PeerId, u64>, service: Box<Service>) -> Self {
+    pub fn new(id: u64, config: &PbftConfig, service: Box<Service>) -> Self {
         PbftNode {
-            state: PbftState::new(id, peers),
+            state: PbftState::new(id, config),
             service: service,
-            msg_log: PbftLog::new(),
+            msg_log: PbftLog::new(config),
         }
     }
 
@@ -69,16 +70,18 @@ impl PbftNode {
             "PrePrepare" | "Prepare" | "Commit" | "CommitFinal" => {
                 let mc_type = PbftMessageType::from(msg_type);
 
-                let deser_msg = protobuf::parse_from_bytes::<PbftMessage>(&msg.content)
-                    .unwrap_or_else(|err| {
-                        panic!("Couldn't deserialize message: {}", err);
-                    });
+                let deser_msg = protobuf::parse_from_bytes::<PbftMessage>(&msg.content);
+                if let Err(e) = deser_msg {
+                    error!("Couldn't deserialize message: {}", e);
+                    return;
+                }
+                let deser_msg = deser_msg.unwrap();
 
                 // Don't process message if we're not ready for it.
                 // i.e. Don't process prepare messages if we're not in the PbftPhase::Preparing
                 let expecting_type = self.state.check_msg_type();
                 if expecting_type != mc_type {
-                    info!(
+                    debug!(
                         "{}: !!!!!! [Node {:02}]: {:?} (in mode {:?})",
                         self,
                         self.state
@@ -449,7 +452,7 @@ impl PbftNode {
                 self.state.get_own_peer_id(),
             ),
             block,
-        );
+        ).unwrap();
 
         // Broadcast to peers
         self.service
@@ -489,14 +492,12 @@ fn make_msg_info(
     info
 }
 
-fn make_msg_bytes(info: PbftMessageInfo, block: PbftBlock) -> Vec<u8> {
+fn make_msg_bytes(info: PbftMessageInfo, block: PbftBlock) -> Result<Vec<u8>, ProtobufError> {
     let mut msg = PbftMessage::new();
     msg.set_info(info);
     msg.set_block(block);
 
-    msg.write_to_bytes().unwrap_or_else(|err| {
-        panic!("Couldn't serialize commit message: {}", err);
-    })
+    msg.write_to_bytes()
 }
 
 fn pbft_block_from_block(block: Block) -> PbftBlock {
