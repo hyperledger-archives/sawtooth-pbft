@@ -33,6 +33,7 @@ pub enum PbftError {
     BlockMismatch(PbftBlock, PbftBlock),
     MessageMismatch(PbftMessageType),
     ViewMismatch(usize, usize),
+    Timeout,
 }
 
 impl Error for PbftError {
@@ -45,6 +46,7 @@ impl Error for PbftError {
             BlockMismatch(_, _) => "BlockMismatch",
             MessageMismatch(_) => "MessageMismatch",
             ViewMismatch(_, _) => "ViewMismatch",
+            Timeout => "Timeout",
         }
     }
 }
@@ -69,6 +71,7 @@ impl fmt::Display for PbftError {
             PbftError::BlockMismatch(exp, got) => {
                 write!(f, "Block mismatch: {:?} != {:?}", exp, got)
             }
+            PbftError::Timeout => write!(f, "didn't receive any message"),
         }
     }
 }

@@ -31,6 +31,10 @@ pub enum PbftMessageType {
     Checkpoint,
     ViewChange,
     NewView,
+
+    // Heartbeat ping message; primary uses this to tell nodes that it's still alive so they don't ViewChange
+    // When sent, bytes in message represent the signer's PeerId
+    Pulse,
 }
 
 impl PbftMessageType {
@@ -42,6 +46,14 @@ impl PbftMessageType {
             | PbftMessageType::CommitFinal => true,
             _ => false,
         }
+    }
+
+    pub fn is_view_change(&self) -> bool {
+        self == &PbftMessageType::ViewChange
+    }
+
+    pub fn is_pulse(&self) -> bool {
+        self == &PbftMessageType::Pulse
     }
 }
 
@@ -56,8 +68,9 @@ impl<'a> From<&'a str> for PbftMessageType {
             "ViewChange" => PbftMessageType::ViewChange,
             "NewView" => PbftMessageType::NewView,
             "Checkpoint" => PbftMessageType::Checkpoint,
+            "Pulse" => PbftMessageType::Pulse,
             _ => {
-                warn!("Unhandled multicast message type: {}", s);
+                warn!("Unhandled PBFT message type: {}", s);
                 PbftMessageType::Unset
             }
         }

@@ -24,13 +24,17 @@ use node::PbftNode;
 use config;
 use timing;
 
+use error::PbftError;
+
 pub struct PbftEngine {
     id: u64,
 }
 
 impl PbftEngine {
     pub fn new(id: u64) -> Self {
-        PbftEngine { id: id }
+        PbftEngine {
+            id: id,
+        }
     }
 }
 
@@ -47,9 +51,9 @@ impl Engine for PbftEngine {
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
 
-        info!("Configuration: {:#?}", config);
-
         let mut node = PbftNode::new(self.id, &config, service);
+
+        info!("Starting state: {:#?}", node.state);
 
         // Event loop. Keep going until we receive a shutdown message.
         loop {
@@ -61,20 +65,28 @@ impl Engine for PbftEngine {
                 Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id),
                 Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(message),
                 Ok(Update::Shutdown) => break,
-                Err(RecvTimeoutError::Timeout) => Ok(()),
+                Err(RecvTimeoutError::Timeout) => Err(PbftError::Timeout),
                 Err(RecvTimeoutError::Disconnected) => {
                     error!("Disconnected from validator");
                     break;
                 }
                 _ => Ok(unimplemented!()),
             } {
-                error!("{}", e);
+                // Do nothing for Timeout errors
+                match e {
+                    PbftError::Timeout => (),
+                    _ => error!("{}", e),
+                }
             }
 
-            // TODO: fill out this method
             working_ticker.tick(|| {
                 node.update_working_block();
             });
+
+            // Check to see if timeout has expired; initiate ViewChange if necessary
+            if node.check_timeout_expired() {
+                node.start_view_change().unwrap_or_else(|e| error!("{}", e));
+            }
         }
     }
 

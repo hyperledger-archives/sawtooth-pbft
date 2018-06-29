@@ -35,6 +35,10 @@ pub struct PbftConfig {
     // How long to wait for a message to arrive
     pub message_timeout: Duration,
 
+    // How long to wait to initiate a ViewChange if we suspect the primary's faulty
+    // Should be longer than block_duration
+    pub view_change_timeout: Duration,
+
     // How many requests in between each checkpoint
     pub checkpoint_period: u64,
 
@@ -48,6 +52,7 @@ impl PbftConfig {
             peers: HashMap::new(),
             block_duration: Duration::from_millis(2000),
             message_timeout: Duration::from_millis(10),
+            view_change_timeout: Duration::from_millis(4000),
             checkpoint_period: 100,
             max_log_size: 1000,
         }
@@ -64,6 +69,7 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftCo
                 String::from("sawtooth.consensus.pbft.peers"),
                 String::from("sawtooth.consensus.pbft.block_duration"),
                 String::from("sawtooth.consensus.pbft.checkpoint_period"),
+                String::from("sawtooth.consensus.pbft.view_change_timeout"),
                 String::from("sawtooth.consensus.pbft.message_timeout"),
                 String::from("sawtooth.consensus.pbft.max_log_size"),
             ],
@@ -99,6 +105,11 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftCo
     if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.message_timeout") {
         if let Ok(message_timeout) = s.parse() {
             config.message_timeout = Duration::from_millis(message_timeout);
+        }
+    }
+    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.view_change_timeout") {
+        if let Ok(view_change_timeout) = s.parse() {
+            config.view_change_timeout = Duration::from_millis(view_change_timeout);
         }
     }
 

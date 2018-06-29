@@ -72,7 +72,7 @@ message PbftViewChange {
   // `PrePrepare` message and `2f` `Prepare` messages for each `BlockNew`
   // message with a sequence number greater than `sequence_number`
   // Used to help construct `PbftNewView` `pre_prepare_messages`
-  PrepareMessagePair prepare_messages = 3;
+  repeated PrepareMessagePair prepare_messages = 3;
 }
 
 

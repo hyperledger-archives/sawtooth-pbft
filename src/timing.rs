@@ -41,12 +41,14 @@ impl Ticker {
     }
 }
 
+#[derive(Debug)]
 enum TimeoutState {
     Active,
     Expired,
 }
 
 // Check back on this timer every so often to see if it's expired
+#[derive(Debug)]
 pub struct Timeout {
     state: TimeoutState,
     duration: Duration,
@@ -70,5 +72,11 @@ impl Timeout {
             TimeoutState::Active => false,
             TimeoutState::Expired => true,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.state = TimeoutState::Active;
+        self.duration = self.duration;
+        self.start = Instant::now();
     }
 }

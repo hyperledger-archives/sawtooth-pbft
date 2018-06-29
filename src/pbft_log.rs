@@ -44,22 +44,16 @@ pub struct PbftLog {
 
 impl fmt::Display for PbftLog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let msg_string_vec: Vec<String> = self.messages
+        let msg_string_vec: Vec<String> = self.view_changes
             .iter()
-            .map(|msg: &PbftMessage| -> String {
+            .map(|msg: &PbftViewChange| -> String {
                 let info = msg.get_info();
-                let block = msg.get_block();
                 format!(
-                    "    {{ {}, view: {}, seq: {} }}
-        block_num: {}
-        block_id: {}
-        signer: {}",
+                    "    {{ {}, view: {}, seq: {}, signer: {} }}",
                     info.get_msg_type(),
                     info.get_view(),
                     info.get_seq_num(),
-                    block.get_block_num(),
-                    hex::encode(block.get_block_id()),
-                    hex::encode(block.get_signer_id()),
+                    hex::encode(info.get_signer_id()),
                 )
             })
             .collect();
