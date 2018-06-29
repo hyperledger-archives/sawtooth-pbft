@@ -59,18 +59,20 @@ impl Engine for PbftEngine {
         loop {
             let incoming_message = updates.recv_timeout(config.message_timeout);
 
-            match incoming_message {
+            if let Err(e) = match incoming_message {
                 Ok(Update::BlockNew(block)) => node.on_block_new(block),
                 Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id),
                 Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id),
                 Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(message),
                 Ok(Update::Shutdown) => break,
-                Err(RecvTimeoutError::Timeout) => (),
+                Err(RecvTimeoutError::Timeout) => Ok(()),
                 Err(RecvTimeoutError::Disconnected) => {
                     error!("Disconnected from validator");
                     break;
                 }
-                _ => unimplemented!(), // TODO: implement BlockInvalid?
+                _ => Ok(unimplemented!()),
+            } {
+                error!("{}", e);
             }
 
             // TODO: fill out this method

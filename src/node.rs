@@ -29,6 +29,7 @@ use sawtooth_sdk::consensus::service::Service;
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
 
 use config::PbftConfig;
+use error::PbftError;
 use message_type::PbftMessageType;
 use pbft_log::PbftLog;
 use state::{PbftPhase, PbftState};
@@ -63,7 +64,7 @@ impl PbftNode {
 
     // Handle a peer message from another PbftNode
     // This method controls the PBFT multicast protocol (PrePrepare, Prepare, Commit, CommitFinal).
-    pub fn on_peer_message(&mut self, msg: PeerMessage) {
+    pub fn on_peer_message(&mut self, msg: PeerMessage) -> Result<(), PbftError> {
         let msg_type = msg.message_type.clone();
         let msg_type = PbftMessageType::from(msg_type.as_str());
 
@@ -71,8 +72,7 @@ impl PbftNode {
         if msg_type.is_multicast() {
             let deser_msg = protobuf::parse_from_bytes::<PbftMessage>(&msg.content);
             if let Err(e) = deser_msg {
-                error!("Couldn't deserialize message: {}", e);
-                return;
+                return Err(PbftError::SerializationError(e));
             }
             let deser_msg = deser_msg.unwrap();
 
@@ -88,7 +88,7 @@ impl PbftNode {
                     msg_type,
                     self.state.phase,
                 );
-                return;
+                return Ok(());
             }
 
             info!(
@@ -105,8 +105,10 @@ impl PbftNode {
 
                     if info.get_view() != self.state.view {
                         // TODO: return after cleaning up and resetting state (?)
-                        error!("View mismatch: {} != {}", info.get_view(), self.state.view);
-                        return;
+                        return Err(PbftError::ViewMismatch(
+                            info.get_view() as usize,
+                            self.state.view as usize,
+                        ));
                     }
 
                     // Immutably borrow self for a limited time
@@ -116,42 +118,43 @@ impl PbftNode {
                             .get_messages_of_type(&PbftMessageType::PrePrepare, info.get_seq_num());
 
                         if existing_pre_prep_msgs.len() > 0 {
-                            error!("A PrePrepare message already exists with this sequence number");
-                            return;
+                            return Err(PbftError::MessageExists(PbftMessageType::PrePrepare));
                         }
                     }
-                    // TODO: Should the sequence number just be the block number?
-                    if self.state.is_primary() {
-                        // Check that incoming PrePrepare matches original BlockNew
-                        let block_new_msgs = self.msg_log
-                            .get_messages_of_type(&PbftMessageType::BlockNew, info.get_seq_num());
-
-                        if block_new_msgs.len() != 1 {
-                            error!(
-                                "Wrong number of BlockNew messages in this sequence (expected 1, got {})",
-                                block_new_msgs.len()
-                                );
-                            return;
-                        }
-
-                        if block_new_msgs[0].get_block() != deser_msg.get_block() {
-                            error!(
-                                "Block mismatch\nBlock1: {:?}\nBlock2: {:?}",
-                                block_new_msgs[0],
-                                deser_msg.get_block()
+                    {
+                        // TODO: Should the sequence number just be the block number?
+                        if self.state.is_primary() {
+                            // Check that incoming PrePrepare matches original BlockNew
+                            let block_new_msgs = self.msg_log.get_messages_of_type(
+                                &PbftMessageType::BlockNew,
+                                info.get_seq_num(),
                             );
-                            return;
-                        }
-                    } else {
-                        // Set this secondary's sequence number from the PrePrepare message
-                        // (this was originally set by the primary)...
-                        self.state.seq_num = info.get_seq_num();
 
-                        // ...then update the BlockNew message we received with the correct
-                        // sequence number
-                        let num_updated = self.msg_log
-                            .fix_seq_nums(&PbftMessageType::BlockNew, info.get_seq_num());
-                        info!("The log updated {} BlockNew messages", num_updated);
+                            if block_new_msgs.len() != 1 {
+                                return Err(PbftError::WrongNumMessages(
+                                    PbftMessageType::BlockNew,
+                                    1,
+                                    block_new_msgs.len(),
+                                ));
+                            }
+
+                            if block_new_msgs[0].get_block() != deser_msg.get_block() {
+                                return Err(PbftError::BlockMismatch(
+                                    block_new_msgs[0].get_block().clone(),
+                                    deser_msg.get_block().clone(),
+                                ));
+                            }
+                        } else {
+                            // Set this secondary's sequence number from the PrePrepare message
+                            // (this was originally set by the primary)...
+                            self.state.seq_num = info.get_seq_num();
+
+                            // ...then update the BlockNew message we received with the correct
+                            // sequence number
+                            let num_updated = self.msg_log
+                                .fix_seq_nums(&PbftMessageType::BlockNew, info.get_seq_num());
+                            info!("The log updated {} BlockNew messages", num_updated);
+                        }
                     }
 
                     // Add message to the log
@@ -164,7 +167,7 @@ impl PbftNode {
                         info.get_seq_num(),
                         PbftMessageType::Prepare,
                         (*deser_msg.get_block()).clone(),
-                    );
+                    )?;
                 }
 
                 PbftMessageType::Prepare => {
@@ -172,10 +175,7 @@ impl PbftNode {
                     self.msg_log.add_message(deser_msg.clone());
                     self.state.advance_phase();
 
-                    if !self._prepared(&deser_msg) {
-                        error!("`prepared` predicate is false!");
-                        return;
-                    }
+                    self._prepared(&deser_msg)?;
 
                     info!("{}: ------ Checking blocks", self);
                     self.service
@@ -188,16 +188,13 @@ impl PbftNode {
                     self.msg_log.add_message(deser_msg.clone());
                     self.state.advance_phase();
 
-                    if !self._committed(&deser_msg) {
-                        error!("`committed` predicate is false!");
-                        return;
-                    }
+                    self._committed(&deser_msg)?;
 
                     self._broadcast_pbft_message(
                         deser_msg.get_info().get_seq_num(),
                         PbftMessageType::CommitFinal,
                         (*deser_msg.get_block()).clone(),
-                    );
+                    )?;
                 }
 
                 PbftMessageType::CommitFinal => {
@@ -212,12 +209,11 @@ impl PbftNode {
 
                     // TODO: check that messages are unique
                     if commit_final_msgs.len() < (self.state.f + 1) as usize {
-                        error!(
-                            "Not enough CommitFinal messages (have {}, need {})",
+                        return Err(PbftError::WrongNumMessages(
+                            PbftMessageType::CommitFinal,
+                            (self.state.f + 1) as usize,
                             commit_final_msgs.len(),
-                            self.state.f + 1
-                        );
-                        return;
+                        ));
                     }
 
                     info!(
@@ -234,6 +230,8 @@ impl PbftNode {
                 _ => warn!("Message type not implemented"),
             }
         } // if msg_type.is_multicast()
+
+        Ok(())
     }
 
     // Creates a new working block on the working block queue and kicks off the consensus algorithm
@@ -241,8 +239,8 @@ impl PbftNode {
     //
     // Assumes the validator has checked that the block signature is valid, and that it is to
     // be built on top of the current chain head.
-    pub fn on_block_new(&mut self, block: Block) {
-        info!("{}: <<<<<< BlockNew: {:?}", self, block.block_id.clone());
+    pub fn on_block_new(&mut self, block: Block) -> Result<(), PbftError> {
+        info!("{}: <<<<<< BlockNew: {:?}", self, block.block_id);
 
         let pbft_block = pbft_block_from_block(block.clone());
 
@@ -274,14 +272,16 @@ impl PbftNode {
         // TODO: keep track of view in Node
         if self.state.is_primary() {
             let s = self.state.seq_num;
-            self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block);
+            self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block)?;
         }
+
+        Ok(())
     }
 
     // Handle a block commit from the Validator
     // If we're a primary, initialize a new block
     // For both node roles, change phase back to NotStarted
-    pub fn on_block_commit(&mut self, block_id: BlockId) {
+    pub fn on_block_commit(&mut self, block_id: BlockId) -> Result<(), PbftError> {
         if self.state.phase == PbftPhase::Finished {
             if self.state.is_primary() {
                 // Initialize block if we're ready to do so
@@ -296,11 +296,13 @@ impl PbftNode {
             }
             self.state.advance_phase();
         }
+
+        Ok(())
     }
 
     // Handle a valid block notice
     // This message comes after check_blocks is called
-    pub fn on_block_valid(&mut self, block_id: BlockId) {
+    pub fn on_block_valid(&mut self, block_id: BlockId) -> Result<(), PbftError> {
         info!("{}: <<<<<< BlockValid: {:?}", self, block_id);
         self.state.advance_phase();
 
@@ -318,7 +320,9 @@ impl PbftNode {
             s,
             PbftMessageType::Commit,
             pbft_block_from_block(valid_blocks[0].clone()),
-        );
+        )?;
+
+        Ok(())
     }
 
     // The primary tries to finalize a block every so often
@@ -339,26 +343,26 @@ impl PbftNode {
     }
 
     // "prepared" predicate
-    fn _prepared(&self, deser_msg: &PbftMessage) -> bool {
+    fn _prepared(&self, deser_msg: &PbftMessage) -> Result<(), PbftError> {
         let info = deser_msg.get_info();
         let block_new_msgs = self.msg_log
             .get_messages_of_type(&PbftMessageType::BlockNew, info.get_seq_num());
         if block_new_msgs.len() != 1 {
-            error!(
-                "Received {} BlockNew messages in this sequence, expected 1",
-                block_new_msgs.len()
-            );
-            return false;
+            return Err(PbftError::WrongNumMessages(
+                PbftMessageType::BlockNew,
+                1,
+                block_new_msgs.len(),
+            ));
         }
 
         let pre_prep_msgs = self.msg_log
             .get_messages_of_type(&PbftMessageType::PrePrepare, info.get_seq_num());
         if pre_prep_msgs.len() != 1 {
-            error!(
-                "Received {} PrePrepare messages in this sequence, expected 1",
-                pre_prep_msgs.len()
-            );
-            return false;
+            return Err(PbftError::WrongNumMessages(
+                PbftMessageType::PrePrepare,
+                1,
+                pre_prep_msgs.len(),
+            ));
         }
 
         let prep_msgs = self.msg_log
@@ -369,39 +373,36 @@ impl PbftNode {
             if !messages_match(prep_msg, pre_prep_msgs[0])
                 || !messages_match(prep_msg, block_new_msgs[0])
             {
-                error!("Prepare message mismatch");
-                return false;
+                return Err(PbftError::MessageMismatch(PbftMessageType::Prepare));
             }
         }
 
         let different_prepared_msgs = num_unique_signers(&prep_msgs);
 
         if different_prepared_msgs < 2 * self.state.f + 1 {
-            error!(
-                "Not enough Prepare messages (have {}, need {})",
-                different_prepared_msgs,
-                2 * self.state.f + 1
-            );
-            return false;
+            return Err(PbftError::WrongNumMessages(
+                PbftMessageType::Prepare,
+                (2 * self.state.f + 1) as usize,
+                different_prepared_msgs as usize,
+            ));
         }
 
-        true
+        Ok(())
     }
 
     // "committed" predicate
-    fn _committed(&self, deser_msg: &PbftMessage) -> bool {
+    fn _committed(&self, deser_msg: &PbftMessage) -> Result<(), PbftError> {
         let commit_msgs = self.msg_log
             .get_messages_of_type(&PbftMessageType::Commit, deser_msg.get_info().get_seq_num());
 
         let different_commit_msgs = num_unique_signers(&commit_msgs);
 
         if different_commit_msgs < 2 * self.state.f + 1 {
-            error!(
-                "Not enough Commit messages (have {}, need {})",
+            return Err(PbftError::WrongNumMessages(
+                PbftMessageType::Prepare,
+                (2 * self.state.f + 1) as usize,
                 commit_msgs.len(),
-                2 * self.state.f + 1
-            );
-            return false;
+            ));
         }
 
         self._prepared(deser_msg)
@@ -413,11 +414,11 @@ impl PbftNode {
         seq_num: u64,
         msg_type: PbftMessageType,
         block: PbftBlock,
-    ) {
+    ) -> Result<(), PbftError> {
         // Make sure that we should be sending messages of this type
         if msg_type != self.state.check_msg_type() {
             info!("{}: xxxxxx {:?} not sending", self, msg_type);
-            return;
+            return Ok(());
         }
 
         let msg_bytes = make_msg_bytes(
@@ -442,7 +443,7 @@ impl PbftNode {
             content: msg_bytes.clone(),
         };
         info!("{}: >self> {:?}", self, msg_type);
-        self.on_peer_message(peer_msg);
+        self.on_peer_message(peer_msg)
     }
 }
 

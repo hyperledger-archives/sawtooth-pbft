@@ -22,8 +22,6 @@ use std::collections::HashMap;
 
 use std::time::Duration;
 
-use std::fmt;
-
 use sawtooth_sdk::consensus::{engine::{BlockId, PeerId}, service::Service};
 
 #[derive(Debug)]
