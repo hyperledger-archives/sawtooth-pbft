@@ -49,10 +49,6 @@ impl Engine for PbftEngine {
 
         info!("Configuration: {:#?}", config);
 
-        service
-            .initialize_block(None)
-            .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
-
         let mut node = PbftNode::new(self.id, &config, service);
 
         // Event loop. Keep going until we receive a shutdown message.

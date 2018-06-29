@@ -55,11 +55,20 @@ impl fmt::Display for PbftNode {
 
 impl PbftNode {
     pub fn new(id: u64, config: &PbftConfig, service: Box<Service>) -> Self {
-        PbftNode {
+        let mut n = PbftNode {
             state: PbftState::new(id, config),
             service: service,
             msg_log: PbftLog::new(config),
+        };
+
+        // Primary initializes a block
+        if n.state.is_primary() {
+            n.service
+                .initialize_block(None)
+                .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
         }
+
+        n
     }
 
     // Handle a peer message from another PbftNode
