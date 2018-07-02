@@ -120,6 +120,7 @@ impl PbftState {
         match self.phase {
             PbftPhase::PrePreparing => PbftMessageType::PrePrepare,
             PbftPhase::Preparing => PbftMessageType::Prepare,
+            PbftPhase::Checking => PbftMessageType::Prepare,
             PbftPhase::Committing => PbftMessageType::Commit,
             PbftPhase::FinalCommitting => PbftMessageType::CommitFinal,
             _ => PbftMessageType::Unset,

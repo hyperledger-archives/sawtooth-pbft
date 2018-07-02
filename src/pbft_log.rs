@@ -17,9 +17,9 @@
 
 use std::fmt;
 
-use protos::pbft_message::{PbftMessage, PbftNewView, PbftViewChange};
-
 use hex;
+
+use protos::pbft_message::{PbftMessage, PbftNewView, PbftViewChange};
 
 use config::PbftConfig;
 use message_type::PbftMessageType;
@@ -44,9 +44,12 @@ pub struct PbftLog {
 
 impl fmt::Display for PbftLog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let msg_string_vec: Vec<String> = self.view_changes
+        // let msg_string_vec: Vec<String> = self.view_changes
+            // .iter()
+            // .map(|msg: &PbftViewChange| -> String {
+        let msg_string_vec: Vec<String> = self.messages
             .iter()
-            .map(|msg: &PbftViewChange| -> String {
+            .map(|msg: &PbftMessage| -> String {
                 let info = msg.get_info();
                 format!(
                     "    {{ {}, view: {}, seq: {}, signer: {} }}",

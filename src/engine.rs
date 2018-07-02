@@ -80,12 +80,14 @@ impl Engine for PbftEngine {
             }
 
             working_ticker.tick(|| {
-                node.update_working_block();
+                if let Err(e) = node.update_working_block() {
+                    error!("{}", e);
+                }
             });
 
             // Check to see if timeout has expired; initiate ViewChange if necessary
             if node.check_timeout_expired() {
-                node.start_view_change().unwrap_or_else(|e| error!("{}", e));
+                node.start_view_change().unwrap_or_else(|e| error!("Couldn't start view change: {}", e));
             }
         }
     }

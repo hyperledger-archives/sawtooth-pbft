@@ -82,6 +82,7 @@ impl PbftNode {
     // This method controls the PBFT multicast protocol (PrePrepare, Prepare, Commit, CommitFinal).
     pub fn on_peer_message(&mut self, msg: PeerMessage) -> Result<(), PbftError> {
         let msg_type = msg.message_type.clone();
+        debug!("{}: RECEIVED MESSAGE {}", self, msg_type);
         let msg_type = PbftMessageType::from(msg_type.as_str());
 
         // Handle a multicast protocol message
@@ -183,7 +184,7 @@ impl PbftNode {
                     // TODO: Putting log add here is necessary because on_peer_message gets
                     // called again inside of _broadcast_pbft_message
                     self.msg_log.add_message(deser_msg.clone());
-                    self.state.advance_phase();
+                    self.state.phase = PbftPhase::Preparing;
 
                     self._broadcast_pbft_message(
                         info.get_seq_num(),
@@ -195,9 +196,10 @@ impl PbftNode {
                 PbftMessageType::Prepare => {
                     // Add message to the log
                     self.msg_log.add_message(deser_msg.clone());
-                    self.state.advance_phase();
 
                     self._prepared(&deser_msg)?;
+
+                    self.state.phase = PbftPhase::Checking;
 
                     info!("{}: ------ Checking blocks", self);
                     self.service
@@ -208,9 +210,10 @@ impl PbftNode {
                 PbftMessageType::Commit => {
                     // Add message to the log
                     self.msg_log.add_message(deser_msg.clone());
-                    self.state.advance_phase();
 
                     self._committed(&deser_msg)?;
+
+                    self.state.phase = PbftPhase::FinalCommitting;
 
                     self._broadcast_pbft_message(
                         deser_msg.get_info().get_seq_num(),
@@ -222,7 +225,6 @@ impl PbftNode {
                 PbftMessageType::CommitFinal => {
                     // Add message to the log
                     self.msg_log.add_message(deser_msg.clone());
-                    self.state.advance_phase();
 
                     let commit_final_msgs = self.msg_log.get_messages_of_type(
                         &PbftMessageType::CommitFinal,
@@ -230,13 +232,16 @@ impl PbftNode {
                     );
 
                     // TODO: check that messages are unique
-                    if commit_final_msgs.len() < (self.state.f + 1) as usize {
+                    let diff_commit_final_msgs = num_unique_signers(&commit_final_msgs);
+                    if diff_commit_final_msgs < self.state.f + 1 {
                         return Err(PbftError::WrongNumMessages(
                             PbftMessageType::CommitFinal,
                             (self.state.f + 1) as usize,
-                            commit_final_msgs.len(),
+                            diff_commit_final_msgs as usize,
                         ));
                     }
+
+                    self.state.phase = PbftPhase::Finished;
 
                     info!(
                         "{}: Committing block {:?}",
@@ -252,7 +257,6 @@ impl PbftNode {
                 _ => warn!("Message type not implemented"),
             }
         } else if msg_type.is_view_change() {
-            // TODO: Network still functions with only one node... Shouldn't do that
             info!("{}: Received ViewChange message", self);
 
             let deser_msg = protobuf::parse_from_bytes::<PbftViewChange>(&msg.content);
@@ -262,9 +266,6 @@ impl PbftNode {
             let deser_msg = deser_msg.unwrap();
 
             self.msg_log.add_view_change(deser_msg.clone());
-
-            let vc_msgs = self.msg_log
-                .get_view_change(deser_msg.get_info().get_seq_num());
 
             {
                 let vc_msgs = self.msg_log
@@ -280,6 +281,33 @@ impl PbftNode {
             }
             // TODO: broadcast NewView here and change view
 
+            // Advance this node's view
+            self.state.view += 1;
+
+            // ViewChange messages
+            let mut vc_msgs: Vec<PbftViewChange> = vec![];
+
+            // PrePrepare messages - requests that need to get re-processed
+            let mut pre_prep_msgs: Vec<PbftMessage> = vec![];
+
+            let info = make_msg_info(
+                &PbftMessageType::NewView,
+                self.state.view,
+                self.state.seq_num,
+                self.state.get_own_peer_id()
+            );
+
+            let mut nv_msg = PbftNewView::new();
+            nv_msg.set_info(info);
+            nv_msg.set_view_change_messages(RepeatedField::from_vec(vc_msgs));
+            nv_msg.set_pre_prepare_messages(RepeatedField::from_vec(pre_prep_msgs));
+
+            let msg_bytes = nv_msg.write_to_bytes().map_err(|e| PbftError::SerializationError(e));
+
+            match msg_bytes {
+                Err(e) => return Err(e),
+                Ok(bytes) => self._broadcast_message(&PbftMessageType::NewView, &bytes),
+            };
         } else if msg_type.is_pulse() {
             // Directly deserialize into PeerId
             let primary = PeerId::from(msg.content);
@@ -326,7 +354,7 @@ impl PbftNode {
         msg.set_block(pbft_block.clone());
 
         self.msg_log.add_message(msg);
-        self.state.advance_phase();
+        self.state.phase = PbftPhase::PrePreparing;
 
         // TODO: keep track of view in Node
         if self.state.is_primary() {
@@ -353,7 +381,7 @@ impl PbftNode {
                     .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
                 self.state.seq_num += 1;
             }
-            self.state.advance_phase();
+            self.state.phase = PbftPhase::NotStarted;
         }
 
         Ok(())
@@ -363,7 +391,7 @@ impl PbftNode {
     // This message comes after check_blocks is called
     pub fn on_block_valid(&mut self, block_id: BlockId) -> Result<(), PbftError> {
         info!("{}: <<<<<< BlockValid: {:?}", self, block_id);
-        self.state.advance_phase();
+        self.state.phase = PbftPhase::Committing;
 
         let valid_blocks: Vec<Block> = self.service
             .get_blocks(vec![block_id])
@@ -385,7 +413,7 @@ impl PbftNode {
     }
 
     // The primary tries to finalize a block every so often
-    pub fn update_working_block(&mut self) {
+    pub fn update_working_block(&mut self) -> Result<(), PbftError> {
         if self.state.is_primary() {
             // First, get our PeerId
             let peer_id = self.state.get_own_peer_id();
@@ -395,7 +423,7 @@ impl PbftNode {
             self._broadcast_message(
                 &PbftMessageType::Pulse,
                 &Vec::<u8>::from(peer_id),
-            );
+            )?;
 
             // Try to finalize a block
             if self.state.phase == PbftPhase::NotStarted {
@@ -410,6 +438,8 @@ impl PbftNode {
                 }
             }
         }
+
+        Ok(())
     }
 
     // Check to see the state of the primary timeout
@@ -509,9 +539,9 @@ impl PbftNode {
 
         if different_commit_msgs < 2 * self.state.f + 1 {
             return Err(PbftError::WrongNumMessages(
-                PbftMessageType::Prepare,
+                PbftMessageType::Commit,
                 (2 * self.state.f + 1) as usize,
-                commit_msgs.len(),
+                different_commit_msgs as usize,
             ));
         }
 
@@ -607,12 +637,12 @@ fn pbft_block_from_block(block: Block) -> PbftBlock {
 // Make sure messages are all from different nodes
 fn num_unique_signers(msg_list: &Vec<&PbftMessage>) -> u64 {
     let mut received_from: HashSet<&[u8]> = HashSet::new();
-    let mut different_prepared_msgs = 0;
+    let mut diff_msgs = 0;
     for b in msg_list {
         // If the signer is NOT already in the set
-        if received_from.insert(b.get_block().get_signer_id()) {
-            different_prepared_msgs += 1;
+        if received_from.insert(b.get_info().get_signer_id()) {
+            diff_msgs += 1;
         }
     }
-    different_prepared_msgs as u64
+    diff_msgs as u64
 }
