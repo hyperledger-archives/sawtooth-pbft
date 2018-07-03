@@ -56,6 +56,10 @@ impl PbftMessageType {
         self == &PbftMessageType::NewView
     }
 
+    pub fn is_checkpoint(&self) -> bool {
+        self == &PbftMessageType::Checkpoint
+    }
+
     pub fn is_pulse(&self) -> bool {
         self == &PbftMessageType::Pulse
     }

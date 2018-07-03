@@ -44,6 +44,12 @@ pub struct PbftLog {
     // Maximum log size, defined from on-chain settings
     max_log_size: u64,
 
+    // How many cycles through the algorithm we've done (BlockNew messages)
+    cycles: u64,
+
+    // How many cycles in between checkpoints
+    checkpoint_period: u64,
+
     // Unread messages
     unreads: VecDeque<PeerMessage>,
 }
@@ -83,6 +89,8 @@ impl PbftLog {
             view_changes: vec![],
             new_views: vec![],
             low_water_mark: 0,
+            cycles: 0,
+            checkpoint_period: config.checkpoint_period,
             high_water_mark: config.max_log_size,
             max_log_size: config.max_log_size,
             unreads: VecDeque::new(),
@@ -94,6 +102,9 @@ impl PbftLog {
         if msg.get_info().get_seq_num() < self.high_water_mark
             || msg.get_info().get_seq_num() >= self.low_water_mark
         {
+            if PbftMessageType::from(msg.get_info().get_msg_type()) == PbftMessageType::BlockNew {
+                self.cycles += 1;
+            }
             self.messages.push(msg);
             debug!("{}", self);
         } else {
@@ -158,6 +169,19 @@ impl PbftLog {
             .iter()
             .filter(|&msg| (*msg).get_info().get_seq_num() == sequence_number)
             .collect()
+    }
+
+    // Is this node ready for a checkpoint?
+    pub fn at_checkpoint(&self) -> bool {
+        self.cycles > self.checkpoint_period
+    }
+
+    // Garbage collect the log
+    pub fn garbage_collect(&mut self, stable_checkpoint: u64) {
+        // For now, just update low/high water marks
+        self.low_water_mark = stable_checkpoint;
+        self.high_water_mark = self.low_water_mark + self.max_log_size;
+        self.cycles = 0;
     }
 
     pub fn push_unread(&mut self, msg: PeerMessage) {

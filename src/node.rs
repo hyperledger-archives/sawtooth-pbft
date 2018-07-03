@@ -40,7 +40,7 @@ use state::{PbftMode, PbftPhase, PbftState};
 pub struct PbftNode {
     service: Box<Service>,
     pub state: PbftState,
-    msg_log: PbftLog,
+    pub msg_log: PbftLog,
 }
 
 impl fmt::Display for PbftNode {
@@ -208,12 +208,13 @@ impl PbftNode {
 
                     self._prepared(&deser_msg)?;
 
-                    self.state.phase = PbftPhase::Checking;
-
-                    info!("{}: ------ Checking blocks", self);
-                    self.service
-                        .check_blocks(vec![BlockId::from(deser_msg.get_block().clone().block_id)])
-                        .expect("Failed to check blocks");
+                    if self.state.phase != PbftPhase::Checking {
+                        self.state.phase = PbftPhase::Checking;
+                        info!("{}: ------ Checking blocks", self);
+                        self.service
+                            .check_blocks(vec![BlockId::from(deser_msg.get_block().clone().block_id)])
+                            .expect("Failed to check blocks");
+                    }
                 }
 
                 PbftMessageType::Commit => {
@@ -283,7 +284,7 @@ impl PbftNode {
                             PbftMessageType::ViewChange,
                             (2 * self.state.f + 1) as usize,
                             vc_msgs.len(),
-                            ));
+                    ));
                 }
             }
             // TODO: broadcast NewView here and change view
@@ -334,6 +335,32 @@ impl PbftNode {
             info!("{}: Received NewView message", self);
             // TODO: Here is where we should restart the multicast protocol for messages since the
             // last stable checkpoint
+        } else if msg_type.is_checkpoint() {
+            info!("{}: Received Checkpoint message", self);
+
+            let deser_msg = protobuf::parse_from_bytes::<PbftMessage>(&msg.content);
+            if let Err(e) = deser_msg {
+                return Err(PbftError::SerializationError(e));
+            }
+            let deser_msg = deser_msg.unwrap();
+
+            // Add message to the log
+            self.msg_log.add_message(deser_msg.clone());
+
+            {
+                let cp_msgs = self.msg_log.get_messages_of_type(&PbftMessageType::Checkpoint,
+                                                                deser_msg.get_info().get_seq_num());
+                // TODO: Check for uniqueness
+                if cp_msgs.len() < (2 * self.state.f + 1) as usize {
+                    return Err(PbftError::WrongNumMessages(
+                            PbftMessageType::Checkpoint,
+                            (2 * self.state.f + 1) as usize,
+                            cp_msgs.len(),
+                    ));
+                }
+            }
+            info!("{}: Reached stable checkpoint; garbage collecting logs", self);
+            self.msg_log.garbage_collect(deser_msg.get_info().get_seq_num());
         } else if msg_type.is_pulse() {
             // Directly deserialize into PeerId
             let primary = PeerId::from(msg.content);
@@ -382,7 +409,6 @@ impl PbftNode {
         self.msg_log.add_message(msg);
         self.state.phase = PbftPhase::PrePreparing;
 
-        // TODO: keep track of view in Node
         if self.state.is_primary() {
             let s = self.state.seq_num;
             self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block)?;
@@ -473,6 +499,14 @@ impl PbftNode {
         self.state.timeout.is_expired()
     }
 
+    // Start the checkpoint process
+    pub fn start_checkpoint(&mut self) -> Result<(), PbftError> {
+        info!("{}: Starting checkpoint", self);
+        // TODO: Construct actual block
+        let s = self.state.seq_num;
+        self._broadcast_pbft_message(s, PbftMessageType::Checkpoint, PbftBlock::new())
+    }
+
     pub fn retry_unread(&mut self) -> Result<(), PbftError> {
         if let Some(msg) = self.msg_log.pop_unread() {
             info!("{}: Popping unread {}", self, msg.message_type);
@@ -483,6 +517,9 @@ impl PbftNode {
     }
 
     // Initiate a view change (this node suspects that the primary is faulty)
+    //
+    // Drop everything when we're doing a view change - nodes will not process any peer messages
+    // until the view change is complete.
     pub fn start_view_change(&mut self) -> Result<(), PbftError> {
         if self.state.mode == PbftMode::ViewChange {
             return Ok(());
@@ -590,8 +627,9 @@ impl PbftNode {
         msg_type: PbftMessageType,
         block: PbftBlock,
     ) -> Result<(), PbftError> {
+        let expected_type = self.state.check_msg_type();
         // Make sure that we should be sending messages of this type
-        if msg_type != self.state.check_msg_type() {
+        if expected_type != PbftMessageType::Unset && msg_type != expected_type {
             info!("{}: xxxxxx {:?} not sending", self, msg_type);
             return Ok(());
         }
