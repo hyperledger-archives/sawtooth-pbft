@@ -16,10 +16,13 @@
  */
 
 use std::fmt;
+use std::collections::VecDeque;
 
 use hex;
 
 use protos::pbft_message::{PbftMessage, PbftNewView, PbftViewChange};
+
+use sawtooth_sdk::consensus::engine::PeerMessage;
 
 use config::PbftConfig;
 use message_type::PbftMessageType;
@@ -40,6 +43,9 @@ pub struct PbftLog {
 
     // Maximum log size, defined from on-chain settings
     max_log_size: u64,
+
+    // Unread messages
+    unreads: VecDeque<PeerMessage>,
 }
 
 impl fmt::Display for PbftLog {
@@ -79,6 +85,7 @@ impl PbftLog {
             low_water_mark: 0,
             high_water_mark: config.max_log_size,
             max_log_size: config.max_log_size,
+            unreads: VecDeque::new(),
         }
     }
 
@@ -151,5 +158,13 @@ impl PbftLog {
             .iter()
             .filter(|&msg| (*msg).get_info().get_seq_num() == sequence_number)
             .collect()
+    }
+
+    pub fn push_unread(&mut self, msg: PeerMessage) {
+        self.unreads.push_back(msg);
+    }
+
+    pub fn pop_unread(&mut self) -> Option<PeerMessage> {
+        self.unreads.pop_front()
     }
 }

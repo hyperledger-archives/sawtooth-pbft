@@ -89,6 +89,8 @@ impl Engine for PbftEngine {
             if node.check_timeout_expired() {
                 node.start_view_change().unwrap_or_else(|e| error!("Couldn't start view change: {}", e));
             }
+
+            node.retry_unread().unwrap_or_else(|e| error!("Couldn't retry unread: {}", e));
         }
     }
 

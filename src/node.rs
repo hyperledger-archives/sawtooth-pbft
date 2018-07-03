@@ -111,19 +111,23 @@ impl PbftNode {
                 debug!(
                     "{}: !!!!!! [Node {:02}]: {:?} (in mode {:?})",
                     self,
-                    self.state
-                        .get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
-                    msg_type,
-                    self.state.phase,
+                    self.state.get_node_id_from_bytes(
+                            deser_msg.get_info().get_signer_id()),
+                            msg_type,
+                            self.state.phase,
                 );
+
+                if expecting_type != PbftMessageType::Unset && msg_type > expecting_type {
+                    info!("{}: Pushing unread {:?}", self, msg_type);
+                    self.msg_log.push_unread(msg);
+                }
                 return Ok(());
             }
 
             info!(
                 "{}: <<<<<< [Node {:02}]: {:?}",
                 self,
-                self.state
-                    .get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
+                self.state.get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
                 msg.message_type,
             );
 
@@ -467,6 +471,15 @@ impl PbftNode {
     // Check to see the state of the primary timeout
     pub fn check_timeout_expired(&mut self) -> bool {
         self.state.timeout.is_expired()
+    }
+
+    pub fn retry_unread(&mut self) -> Result<(), PbftError> {
+        if let Some(msg) = self.msg_log.pop_unread() {
+            info!("{}: Popping unread {}", self, msg.message_type);
+            self.on_peer_message(msg)?
+        }
+
+        Ok(())
     }
 
     // Initiate a view change (this node suspects that the primary is faulty)
