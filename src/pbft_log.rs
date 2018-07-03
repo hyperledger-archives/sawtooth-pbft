@@ -134,10 +134,10 @@ impl PbftLog {
         self.view_changes.push(vc);
     }
 
-    pub fn get_view_change(&self, sequence_number: u64) -> Vec<&PbftViewChange> {
+    pub fn get_view_change(&self, old_view: u64) -> Vec<&PbftViewChange> {
         self.view_changes
             .iter()
-            .filter(|&msg| (*msg).get_info().get_seq_num() == sequence_number)
+            .filter(|&msg| (*msg).get_info().get_view() == old_view)
             .collect()
     }
 
