@@ -87,6 +87,11 @@ impl PbftNode {
 
         // Handle a multicast protocol message
         if msg_type.is_multicast() {
+            // Only deal with multicast messages in Normal mode
+            if self.state.mode != PbftMode::Normal {
+                return Ok(());
+            }
+
             let deser_msg = protobuf::parse_from_bytes::<PbftMessage>(&msg.content);
             if let Err(e) = deser_msg {
                 return Err(PbftError::SerializationError(e));
@@ -231,7 +236,6 @@ impl PbftNode {
                         deser_msg.get_info().get_seq_num(),
                     );
 
-                    // TODO: check that messages are unique
                     let diff_commit_final_msgs = num_unique_signers(&commit_final_msgs);
                     if diff_commit_final_msgs < self.state.f + 1 {
                         return Err(PbftError::WrongNumMessages(
@@ -280,8 +284,23 @@ impl PbftNode {
             }
             // TODO: broadcast NewView here and change view
 
-            // Advance this node's view
+            // Advance this node's view and upgrade it to primary, if its ID is correct
             self.state.view += 1;
+            info!("{}: Updating to view and resetting timeout {}", self, self.state.view);
+            self.state.timeout.reset();
+            self.state.mode = PbftMode::Normal;
+
+            if self.state.get_own_peer_id() == self.state.get_primary_peer_id() {
+                self.state.upgrade_role();
+
+                // If we're the new primary, need to clean up the block mess from the view change
+                self.service.cancel_block();
+                self.service
+                    .initialize_block(None)
+                    .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+            } else {
+                self.state.downgrade_role();
+            }
 
             // ViewChange messages
             let mut vc_msgs: Vec<PbftViewChange> = vec![];
@@ -307,6 +326,10 @@ impl PbftNode {
                 Err(e) => return Err(e),
                 Ok(bytes) => self._broadcast_message(&PbftMessageType::NewView, &bytes),
             };
+        } else if msg_type.is_new_view() {
+            info!("{}: Received NewView message", self);
+            // TODO: Here is where we should restart the multicast protocol for messages since the
+            // last stable checkpoint
         } else if msg_type.is_pulse() {
             // Directly deserialize into PeerId
             let primary = PeerId::from(msg.content);

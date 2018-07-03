@@ -148,12 +148,22 @@ impl PbftState {
 
     pub fn get_primary_peer_id(&self) -> PeerId {
         let primary_node_id = self.view % (self.network_node_ids.len() as u64);
-        self.network_node_ids[&primary_node_id].clone() // TODO: remove unwrap
+        self.network_node_ids[&primary_node_id].clone()
     }
 
     // Tell if this node is currently a primary
     pub fn is_primary(&self) -> bool {
         self.role == PbftNodeRole::Primary
+    }
+
+    // Upgrade this node to primary
+    pub fn upgrade_role(&mut self) {
+        self.role = PbftNodeRole::Primary;
+    }
+
+    // Downgrade this node to secondary
+    pub fn downgrade_role(&mut self) {
+        self.role = PbftNodeRole::Secondary;
     }
 
     // Go to the next phase and return the phase we're at now

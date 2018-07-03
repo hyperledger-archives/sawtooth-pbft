@@ -52,6 +52,10 @@ impl PbftMessageType {
         self == &PbftMessageType::ViewChange
     }
 
+    pub fn is_new_view(&self) -> bool {
+        self == &PbftMessageType::NewView
+    }
+
     pub fn is_pulse(&self) -> bool {
         self == &PbftMessageType::Pulse
     }
