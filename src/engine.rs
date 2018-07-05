@@ -26,6 +26,10 @@ use timing;
 
 use error::PbftError;
 
+use std::fs;
+use std::fs::File;
+use std::io::prelude::*;
+
 pub struct PbftEngine {
     id: u64,
 }
@@ -54,6 +58,11 @@ impl Engine for PbftEngine {
         let mut node = PbftNode::new(self.id, &config, service);
 
         info!("Starting state: {:#?}", node.state);
+
+        let mut mod_file = File::create(format!("state_{}.txt", self.id).as_str()).unwrap();
+        mod_file
+            .write_all(&format!("{:#?}", node.state).into_bytes())
+            .unwrap();
 
         // Event loop. Keep going until we receive a shutdown message.
         loop {
@@ -87,14 +96,17 @@ impl Engine for PbftEngine {
 
             // Check to see if timeout has expired; initiate ViewChange if necessary
             if node.check_timeout_expired() {
-                node.start_view_change().unwrap_or_else(|e| error!("Couldn't start view change: {}", e));
+                node.start_view_change()
+                    .unwrap_or_else(|e| error!("Couldn't start view change: {}", e));
             }
 
             if node.msg_log.at_checkpoint() {
-                node.start_checkpoint().unwrap_or_else(|e| error!("Couldn't start checkpoint: {}", e));
+                node.start_checkpoint()
+                    .unwrap_or_else(|e| error!("Couldn't start checkpoint: {}", e));
             }
 
-            node.retry_unread().unwrap_or_else(|e| error!("Couldn't retry unread: {}", e));
+            node.retry_unread()
+                .unwrap_or_else(|e| error!("Couldn't retry unread: {}", e));
         }
     }
 

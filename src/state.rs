@@ -43,10 +43,11 @@ pub enum PbftPhase {
     Finished,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum PbftMode {
     Normal,
     ViewChange,
+    Checkpointing,
 }
 
 // Information about the PBFT algorithm's state
@@ -68,8 +69,9 @@ pub struct PbftState {
     // Is this node primary or secondary?
     role: PbftNodeRole,
 
-    // Normal operation or view change
+    // Normal operation, view change, or checkpointing. Previous mode is stored when checkpointing
     pub mode: PbftMode,
+    pub pre_checkpoint_mode: PbftMode,
 
     // Map of peers in the network, including ourselves
     network_node_ids: HashMap<u64, PeerId>,
@@ -109,6 +111,7 @@ impl PbftState {
                 PbftNodeRole::Secondary
             },
             mode: PbftMode::Normal,
+            pre_checkpoint_mode: PbftMode::Normal,
             f: f,
             network_node_ids: peer_id_map,
             timeout: Timeout::new(config.view_change_timeout.clone()),
