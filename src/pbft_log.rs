@@ -194,9 +194,9 @@ impl PbftLog {
                 && m.get_info().get_seq_num() == 0
             {
                 info.set_seq_num(new_sequence_number);
+                m.set_info(info);
+                changed_msgs += 1;
             }
-            m.set_info(info);
-            changed_msgs += 1;
         }
         changed_msgs
     }

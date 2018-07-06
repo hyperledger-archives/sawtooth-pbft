@@ -184,7 +184,6 @@ impl PbftNode {
 
                             // ...then update the BlockNew message we received with the correct
                             // sequence number
-                            // TODO: This is sometimes not 1? (like 12 for instance)
                             let num_updated = self.msg_log
                                 .fix_seq_nums(&PbftMessageType::BlockNew, info.get_seq_num());
                             info!("The log updated {} BlockNew messages", num_updated);
