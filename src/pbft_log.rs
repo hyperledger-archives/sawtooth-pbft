@@ -29,6 +29,7 @@ use message_type::PbftMessageType;
 
 // TODO: move this somewhere else
 // State keeps track of the last stable checkpoint
+#[derive(Clone)]
 pub struct PbftStableCheckpoint {
     pub seq_num: u64,
     pub checkpoint_messages: Vec<PbftMessage>,
@@ -46,6 +47,12 @@ impl<'a> PbftGetInfo<'a> for &'a PbftMessage {
 }
 
 impl<'a> PbftGetInfo<'a> for &'a PbftViewChange {
+    fn get_msg_info(&self) -> &'a PbftMessageInfo {
+        self.get_info()
+    }
+}
+
+impl<'a> PbftGetInfo<'a> for &'a PbftNewView {
     fn get_msg_info(&self) -> &'a PbftMessageInfo {
         self.get_info()
     }
@@ -83,7 +90,7 @@ pub struct PbftLog {
 
 impl fmt::Display for PbftLog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let msg_string_vec: Vec<String> = self.messages
+        let mut msg_string_vec: Vec<String> = self.messages
             .iter()
             .map(|msg: &PbftMessage| -> String {
                 let info = msg.get_info();
@@ -96,6 +103,34 @@ impl fmt::Display for PbftLog {
                 )
             })
             .collect();
+            msg_string_vec.extend(
+                self.view_changes
+                    .iter()
+                    .map(|msg: &PbftViewChange| -> String {
+                        let info = msg.get_info();
+                        format!(
+                            "    {{ {}, view: {}, seq: {}, signer: {} }}",
+                            info.get_msg_type(),
+                            info.get_view(),
+                            info.get_seq_num(),
+                            hex::encode(info.get_signer_id()),
+                        )
+                    })
+            );
+            msg_string_vec.extend(
+                self.new_views
+                    .iter()
+                    .map(|msg: &PbftNewView| -> String {
+                        let info = msg.get_info();
+                        format!(
+                            "    {{ {}, view: {}, seq: {}, signer: {} }}",
+                            info.get_msg_type(),
+                            info.get_view(),
+                            info.get_seq_num(),
+                            hex::encode(info.get_signer_id()),
+                        )
+                    })
+            );
         write!(
             f,
             "\nPbftLog ({}, {}):\n{}",
@@ -159,6 +194,23 @@ impl PbftLog {
             .collect()
     }
 
+    // Get the PrePrepare messages that were executed since the last stable checkpoint
+    pub fn get_untrusted_pre_prepares(&self) -> Vec<&PbftMessage> {
+        self.messages
+            .iter()
+            .filter(|&msg| {
+                let info = (*msg).get_info();
+                let cp_seq_num = if let Some(ref cp) = self.latest_stable_checkpoint {
+                    cp.seq_num
+                } else {
+                    0
+                };
+                info.get_msg_type() == String::from(&PbftMessageType::PrePrepare)
+                    && info.get_seq_num() > cp_seq_num
+            })
+            .collect()
+    }
+
     pub fn get_message_infos(
         &self,
         msg_type: &PbftMessageType,
@@ -175,6 +227,14 @@ impl PbftLog {
             }
         }
         for msg in self.view_changes.iter() {
+            let info = msg.get_info();
+            if info.get_msg_type() == String::from(msg_type)
+                && info.get_seq_num() == sequence_number && info.get_view() == view
+            {
+                infos.push(info);
+            }
+        }
+        for msg in self.new_views.iter() {
             let info = msg.get_info();
             if info.get_msg_type() == String::from(msg_type)
                 && info.get_seq_num() == sequence_number && info.get_view() == view
@@ -214,8 +274,8 @@ impl PbftLog {
     }
 
     // Methods for dealing with PbftNewViews
-    pub fn add_new_view(&mut self, vc: PbftViewChange) {
-        self.view_changes.push(vc);
+    pub fn add_new_view(&mut self, vc: PbftNewView) {
+        self.new_views.push(vc);
     }
 
     pub fn get_new_view(&self, sequence_number: u64) -> Vec<&PbftNewView> {

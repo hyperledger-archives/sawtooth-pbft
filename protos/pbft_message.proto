@@ -63,16 +63,10 @@ message PbftViewChange {
   // checkpoint mentioned in info's `sequence_number`
   repeated PbftMessage checkpoint_messages = 2;
 
-  message PrepareMessagePair {
-    PbftMessage pre_prepare_message = 1;
-
-    repeated PbftMessage prepare_messages = 2;
-  }
-
-  // `PrePrepare` message and `2f` `Prepare` messages for each `BlockNew`
-  // message with a sequence number greater than `sequence_number`
-  // Used to help construct `PbftNewView` `pre_prepare_messages`
-  repeated PrepareMessagePair prepare_messages = 3;
+  // `PrePrepare` messages with a sequence numbers greater than
+  // the last stable checkpoint.
+  // Used to help construct `PbftNewView`
+  repeated PbftMessage pre_prepare_messages = 3;
 }
 
 

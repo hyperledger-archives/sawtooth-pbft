@@ -27,13 +27,12 @@ use std::fmt;
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId, PeerMessage};
 use sawtooth_sdk::consensus::service::Service;
 
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange,
-                           PbftViewChange_PrepareMessagePair as PrepareMessagePair};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange};
 
 use config::PbftConfig;
 use error::PbftError;
 use message_type::PbftMessageType;
-use pbft_log::{PbftGetInfo, PbftLog};
+use pbft_log::{PbftGetInfo, PbftLog, PbftStableCheckpoint};
 use state::{PbftMode, PbftPhase, PbftState};
 
 // The actual node
@@ -50,6 +49,7 @@ impl fmt::Display for PbftNode {
             PbftMode::Normal => "N",
             PbftMode::Checkpointing => "C",
             PbftMode::ViewChange => "V",
+            PbftMode::NewView => "E",
         };
 
         write!(
@@ -262,53 +262,47 @@ impl PbftNode {
 
                 _ => warn!("Message type not implemented"),
             }
-        } else if msg_type.is_view_change() {
-            info!("{}: Received ViewChange message", self);
 
+        } else if msg_type.is_view_change() {
             let deser_msg = protobuf::parse_from_bytes::<PbftViewChange>(&msg.content);
             if let Err(e) = deser_msg {
                 return Err(PbftError::SerializationError(e));
             }
             let deser_msg = deser_msg.unwrap();
 
-            self.msg_log.add_view_change(deser_msg.clone());
+            info!(
+                "{}: Received ViewChange message from Node {:02}",
+                self,
+                self.state.get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
+            );
 
+            info!("{}", self.msg_log);
+
+            let mut nv_msg = PbftNewView::new();
             {
                 self.msg_log.add_view_change(deser_msg.clone());
 
-                let vc_msgs = self.msg_log.get_view_change(self.state.view);
-                let infos = vc_msgs
-                    .iter()
-                    .map(|&msg| msg.get_info())
-                    .collect();
-                let num_vc_msgs = num_unique_signers(&infos);
+                let infos = self.msg_log.get_message_infos(
+                    &PbftMessageType::ViewChange,
+                    self.state.seq_num,
+                    self.state.view,
+                );
 
-                if num_vc_msgs < 2 * self.state.f + 1 {
-                    return Err(PbftError::WrongNumMessages(
-                        PbftMessageType::ViewChange,
-                        (2 * self.state.f + 1) as usize,
-                        num_vc_msgs as usize,
-                    ));
-                }
-            }
-            let mut nv_msg = PbftNewView::new();
-            {
-                // Advance this node's view and upgrade it to primary, if its ID is correct
+                self._check_msg_against_log(&&deser_msg, true, None)?;
+
+                // Update current view and reset timer
+                self.state.timeout.reset();
                 self.state.view += 1;
                 info!(
                     "{}: Updating to view {} and resetting timeout",
                     self, self.state.view
                 );
-                self.state.timeout.reset();
-                self.state.mode = PbftMode::Normal;
 
+                // Upgrade this node to primary, if its ID is correct
                 if self.state.get_own_peer_id() == self.state.get_primary_peer_id() {
                     self.state.upgrade_role();
 
                     // If we're the new primary, need to clean up the block mess from the view change
-                    self.service
-                        .cancel_block()
-                        .unwrap_or_else(|e| error!("Couldn't cancel block: {}", e));
                     self.service
                         .initialize_block(None)
                         .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
@@ -324,7 +318,12 @@ impl PbftNode {
                     .collect();
 
                 // PrePrepare messages - requests that need to get re-processed
-                let mut pre_prep_msgs: Vec<PbftMessage> = vec![];
+                // TODO: Verify these with every message in deser_msg
+                let mut pre_prep_msgs: Vec<PbftMessage> = self.msg_log
+                    .get_untrusted_pre_prepares()
+                    .iter()
+                    .map(|&msg| msg.clone())
+                    .collect();
 
                 let info = make_msg_info(
                     &PbftMessageType::NewView,
@@ -344,12 +343,37 @@ impl PbftNode {
 
             match msg_bytes {
                 Err(e) => return Err(e),
-                Ok(bytes) => self._broadcast_message(&PbftMessageType::NewView, &bytes),
-            };
+                Ok(bytes) => {
+                    self.state.mode = PbftMode::NewView;
+                    self._broadcast_message(&PbftMessageType::NewView, &bytes)?;
+                },
+            }
+
         } else if msg_type.is_new_view() {
             // TODO: Here is where we should restart the multicast protocol for messages since the
             // last stable checkpoint
-            info!("{}: Received NewView message", self);
+
+            let deser_msg = protobuf::parse_from_bytes::<PbftNewView>(&msg.content);
+            if let Err(e) = deser_msg {
+                return Err(PbftError::SerializationError(e));
+            }
+            let deser_msg = deser_msg.unwrap();
+
+            info!(
+                "{}: Received NewView message from Node {:02}",
+                self,
+                self.state.get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
+            );
+
+            info!("{}", self.msg_log);
+
+            // Add message to the log
+            self.msg_log.add_new_view(deser_msg.clone());
+
+            self._check_msg_against_log(&&deser_msg, true, None)?;
+
+            self.state.mode = PbftMode::Normal;
+
         } else if msg_type.is_checkpoint() {
             let deser_msg = protobuf::parse_from_bytes::<PbftMessage>(&msg.content);
             if let Err(e) = deser_msg {
@@ -568,31 +592,44 @@ impl PbftNode {
     // until the view change is complete.
     pub fn start_view_change(&mut self) -> Result<(), PbftError> {
         if self.state.mode == PbftMode::ViewChange {
-            warn!(
-                "{}: Already in a view change -- this might mean the network is dead",
-                self
-            );
+            // warn!(
+                // "{}: Already in a view change -- this might mean the network is dead",
+                // self
+            // );
             return Ok(());
         }
         info!("{}: Starting view change", self);
         self.state.mode = PbftMode::ViewChange;
 
-        // TODO: use actual checkpoints. For now take current seq num as stable
-        let mut checkpoint_msgs: Vec<PbftMessage> = vec![];
-        // TODO: actually build PrePrepare, Prepare, Checkpoint proofs
-        let mut pairs: Vec<PrepareMessagePair> = vec![];
+        let PbftStableCheckpoint {
+            seq_num: stable_seq_num,
+            checkpoint_messages,
+        } = if let Some(ref cp) = self.msg_log.latest_stable_checkpoint {
+            cp.clone()
+        } else {
+            PbftStableCheckpoint{
+                seq_num: 0,
+                checkpoint_messages: vec![],
+            }
+        };
+
+        let pre_prep_msgs: Vec<PbftMessage> = self.msg_log
+            .get_untrusted_pre_prepares()
+            .iter()
+            .map(|&msg| msg.clone())
+            .collect();
 
         let info = make_msg_info(
             &PbftMessageType::ViewChange,
             self.state.view,
-            self.state.seq_num,
+            stable_seq_num,
             self.state.get_own_peer_id(),
         );
 
         let mut vc_msg = PbftViewChange::new();
         vc_msg.set_info(info);
-        vc_msg.set_checkpoint_messages(RepeatedField::from_vec(checkpoint_msgs));
-        vc_msg.set_prepare_messages(RepeatedField::from_vec(pairs));
+        vc_msg.set_checkpoint_messages(RepeatedField::from_vec(checkpoint_messages.to_vec()));
+        vc_msg.set_pre_prepare_messages(RepeatedField::from_vec(pre_prep_msgs));
 
         let msg_bytes = vc_msg
             .write_to_bytes()

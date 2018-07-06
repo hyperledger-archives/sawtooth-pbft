@@ -47,6 +47,7 @@ pub enum PbftPhase {
 pub enum PbftMode {
     Normal,
     ViewChange,
+    NewView,
     Checkpointing,
 }
 
