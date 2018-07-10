@@ -42,24 +42,6 @@ pub struct PbftNode {
     pub msg_log: PbftLog,
 }
 
-impl fmt::Display for PbftNode {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let ast = if self.state.is_primary() { "*" } else { " " };
-        let mode = match self.state.mode {
-            PbftMode::Normal => "N",
-            PbftMode::Checkpointing => "C",
-            PbftMode::ViewChange => "V",
-            PbftMode::NewView => "E",
-        };
-
-        write!(
-            f,
-            "Node {}{:02} ({:?} {} {})",
-            ast, self.state.id, self.state.phase, mode, self.state.view
-        )
-    }
-}
-
 impl PbftNode {
     pub fn new(id: u64, config: &PbftConfig, service: Box<Service>) -> Self {
         let mut n = PbftNode {
@@ -82,7 +64,7 @@ impl PbftNode {
     // This method controls the PBFT multicast protocol (PrePrepare, Prepare, Commit, CommitFinal).
     pub fn on_peer_message(&mut self, msg: PeerMessage) -> Result<(), PbftError> {
         let msg_type = msg.message_type.clone();
-        debug!("{}: RECEIVED MESSAGE {}", self, msg_type);
+        debug!("{}: RECEIVED MESSAGE {}", self.state, msg_type);
         let msg_type = PbftMessageType::from(msg_type.as_str());
 
         // Handle a multicast protocol message
@@ -99,34 +81,25 @@ impl PbftNode {
                 self.state.timeout.reset();
             }
 
-            // Don't process message if we're not ready for it.
-            // i.e. Don't process prepare messages if we're not in the PbftPhase::Preparing
-            // Discard all multicast messages that come while we're in a ViewChange
-            let expecting_type = self.state.check_msg_type();
-            if expecting_type != msg_type && self.state.mode != PbftMode::ViewChange {
-                debug!(
-                    "{}: !!!!!! [Node {:02}]: {:?} (in mode {:?})",
-                    self,
-                    self.state
-                        .get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
-                    msg_type,
-                    self.state.phase,
-                );
-
-                if expecting_type != PbftMessageType::Unset && msg_type > expecting_type {
-                    info!("{}: Pushing unread {:?}", self, msg_type);
-                    self.msg_log.push_unread(msg);
-                }
-                return Ok(());
-            }
-
             info!(
                 "{}: <<<<<< [Node {:02}]: {:?}",
-                self,
+                self.state,
                 self.state
                     .get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
                 msg.message_type,
             );
+
+            // Don't process message if we're not ready for it.
+            // i.e. Don't process prepare messages if we're not in the PbftPhase::Preparing
+            // Discard all multicast messages that come while we're in a ViewChange
+            let expecting_type = self.state.check_msg_type();
+            if msg_type < expecting_type || self.state.mode == PbftMode::ViewChange {
+                info!("{}: {:?} < {:?}, skipping", self.state, msg_type, expecting_type);
+                return Ok(())
+            } else if msg_type > expecting_type {
+                info!("{}: Pushing unread {:?} ({:?} > {:?})", self.state, msg_type, msg_type, expecting_type);
+                self.msg_log.push_unread(msg);
+            }
 
             match msg_type {
                 PbftMessageType::PrePrepare => {
@@ -186,7 +159,7 @@ impl PbftNode {
                             // sequence number
                             let num_updated = self.msg_log
                                 .fix_seq_nums(&PbftMessageType::BlockNew, info.get_seq_num());
-                            info!("The log updated {} BlockNew messages", num_updated);
+                            // info!("The log updated {} BlockNew messages", num_updated);
                         }
                     }
 
@@ -194,7 +167,7 @@ impl PbftNode {
                     // TODO: Putting log add here is necessary because on_peer_message gets
                     // called again inside of _broadcast_pbft_message
                     self.msg_log.add_message(deser_msg.clone());
-                    self.state.phase = PbftPhase::Preparing;
+                    self.state.switch_phase(PbftPhase::Preparing);
 
                     self._broadcast_pbft_message(
                         info.get_seq_num(),
@@ -210,8 +183,8 @@ impl PbftNode {
                     self._prepared(&deser_msg)?;
 
                     if self.state.phase != PbftPhase::Checking {
-                        self.state.phase = PbftPhase::Checking;
-                        info!("{}: ------ Checking blocks", self);
+                        self.state.switch_phase(PbftPhase::Checking);
+                        // info!("{}: ------ Checking blocks", self.state);
                         self.service
                             .check_blocks(vec![
                                 BlockId::from(deser_msg.get_block().clone().block_id),
@@ -226,7 +199,7 @@ impl PbftNode {
 
                     self._committed(&deser_msg)?;
 
-                    self.state.phase = PbftPhase::FinalCommitting;
+                    self.state.switch_phase(PbftPhase::FinalCommitting);
 
                     self._broadcast_pbft_message(
                         deser_msg.get_info().get_seq_num(),
@@ -247,17 +220,26 @@ impl PbftNode {
 
                     self._check_msg_against_log(&&deser_msg, true, Some(self.state.f + 1))?;
 
-                    self.state.phase = PbftPhase::Finished;
+                    if self.state.phase == PbftPhase::FinalCommitting {
+                        self.state.switch_phase(PbftPhase::Finished);
 
-                    info!(
-                        "{}: Committing block {:?}",
-                        self,
-                        BlockId::from(deser_msg.get_block().block_id.clone())
-                    );
+                        info!(
+                            "{}: Committing block {:?}",
+                            self.state,
+                            BlockId::from(deser_msg.get_block().block_id.clone())
+                        );
 
-                    self.service
-                        .commit_block(BlockId::from(deser_msg.get_block().block_id.clone()))
-                        .expect("Failed to commit block");
+                        self.service
+                            .commit_block(BlockId::from(deser_msg.get_block().block_id.clone()))
+                            .expect("Failed to commit block");
+
+                    } else {
+                        info!(
+                            "{}: Already committed block {:?}",
+                            self.state,
+                            BlockId::from(deser_msg.get_block().block_id.clone())
+                        );
+                    }
                 }
 
                 _ => warn!("Message type not implemented"),
@@ -272,7 +254,7 @@ impl PbftNode {
 
             info!(
                 "{}: Received ViewChange message from Node {:02}",
-                self,
+                self.state,
                 self.state.get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
             );
 
@@ -281,6 +263,10 @@ impl PbftNode {
             let mut nv_msg = PbftNewView::new();
             {
                 self.msg_log.add_view_change(deser_msg.clone());
+
+                if self.state.mode != PbftMode::ViewChange {
+                    return Ok(());
+                }
 
                 let infos = self.msg_log.get_message_infos(
                     &PbftMessageType::ViewChange,
@@ -295,7 +281,7 @@ impl PbftNode {
                 self.state.view += 1;
                 info!(
                     "{}: Updating to view {} and resetting timeout",
-                    self, self.state.view
+                    self.state, self.state.view
                 );
 
                 // Upgrade this node to primary, if its ID is correct
@@ -359,13 +345,11 @@ impl PbftNode {
             }
             let deser_msg = deser_msg.unwrap();
 
-            info!(
-                "{}: Received NewView message from Node {:02}",
-                self,
-                self.state.get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
-            );
-
-            info!("{}", self.msg_log);
+            // info!(
+                // "{}: Received NewView message from Node {:02}",
+                // self.state,
+                // self.state.get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
+            // );
 
             // Add message to the log
             self.msg_log.add_new_view(deser_msg.clone());
@@ -383,7 +367,7 @@ impl PbftNode {
 
             info!(
                 "{}: Received Checkpoint message from {:02}",
-                self,
+                self.state,
                 self.state
                     .get_node_id_from_bytes(deser_msg.get_info().get_signer_id())
             );
@@ -392,7 +376,7 @@ impl PbftNode {
                 if checkpoint.seq_num >= deser_msg.get_info().get_seq_num() {
                     debug!(
                         "{}: Already at a stable checkpoint with this sequence number or past it!",
-                        self
+                        self.state
                     );
                     return Ok(());
                 }
@@ -416,7 +400,7 @@ impl PbftNode {
                 self._check_msg_against_log(&&deser_msg, true, None)?;
                 info!(
                     "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
-                    self,
+                    self.state,
                     deser_msg.get_info().get_seq_num()
                 );
                 self.msg_log.garbage_collect(
@@ -445,7 +429,7 @@ impl PbftNode {
     // Assumes the validator has checked that the block signature is valid, and that it is to
     // be built on top of the current chain head.
     pub fn on_block_new(&mut self, block: Block) -> Result<(), PbftError> {
-        info!("{}: <<<<<< BlockNew: {:?}", self, block.block_id);
+        info!("{}: <<<<<< BlockNew: {:?}", self.state, block.block_id);
 
         let pbft_block = pbft_block_from_block(block.clone());
 
@@ -472,7 +456,7 @@ impl PbftNode {
         msg.set_block(pbft_block.clone());
 
         self.msg_log.add_message(msg);
-        self.state.phase = PbftPhase::PrePreparing;
+        self.state.switch_phase(PbftPhase::PrePreparing);
 
         if self.state.is_primary() {
             let s = self.state.seq_num;
@@ -486,19 +470,22 @@ impl PbftNode {
     // If we're a primary, initialize a new block
     // For both node roles, change phase back to NotStarted
     pub fn on_block_commit(&mut self, block_id: BlockId) -> Result<(), PbftError> {
+        info!(
+            "{}: <<<<<< BlockCommit: {:?}",
+            self.state, block_id
+        );
+
         if self.state.phase == PbftPhase::Finished {
             if self.state.is_primary() {
-                // Initialize block if we're ready to do so
-                info!(
-                    "{}: <<<<<< BlockCommit and initializing new one: {:?}",
-                    self, block_id
-                );
                 self.service
                     .initialize_block(None)
                     .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
                 self.state.seq_num += 1;
             }
-            self.state.phase = PbftPhase::NotStarted;
+
+            self.state.switch_phase(PbftPhase::NotStarted);
+        } else {
+            info!("{}: Not doing anything with BlockCommit :(", self.state);
         }
 
         Ok(())
@@ -507,8 +494,8 @@ impl PbftNode {
     // Handle a valid block notice
     // This message comes after check_blocks is called
     pub fn on_block_valid(&mut self, block_id: BlockId) -> Result<(), PbftError> {
-        info!("{}: <<<<<< BlockValid: {:?}", self, block_id);
-        self.state.phase = PbftPhase::Committing;
+        info!("{}: <<<<<< BlockValid: {:?}", self.state, block_id);
+        self.state.switch_phase(PbftPhase::Committing);
 
         let valid_blocks: Vec<Block> = self.service
             .get_blocks(vec![block_id])
@@ -537,16 +524,17 @@ impl PbftNode {
 
             // Then send a pulse to all nodes to tell them that we're alive
             // and sign it with our PeerId
+            info!("{}: >>>>>> Pulse", self.state);
             self._broadcast_message(&PbftMessageType::Pulse, &Vec::<u8>::from(peer_id))?;
 
             // Try to finalize a block
             if self.state.phase == PbftPhase::NotStarted {
                 match self.service.finalize_block(vec![]) {
                     Ok(block_id) => {
-                        info!("{}: Publishing block {:?}", self, block_id);
+                        info!("{}: Publishing block {:?}", self.state, block_id);
                     }
                     Err(EngineError::BlockNotReady) => {
-                        info!("{}: Block not ready", self);
+                        info!("{}: Block not ready", self.state);
                     }
                     Err(err) => panic!("Failed to finalize block: {:?}", err),
                 }
@@ -573,14 +561,14 @@ impl PbftNode {
 
         self.state.pre_checkpoint_mode = self.state.mode;
         self.state.mode = PbftMode::Checkpointing;
-        info!("{}: Starting checkpoint", self);
+        info!("{}: Starting checkpoint", self.state);
         let s = self.state.seq_num;
         self._broadcast_pbft_message(s, PbftMessageType::Checkpoint, PbftBlock::new())
     }
 
     pub fn retry_unread(&mut self) -> Result<(), PbftError> {
         if let Some(msg) = self.msg_log.pop_unread() {
-            info!("{}: Popping unread {}", self, msg.message_type);
+            info!("{}: Popping unread {}", self.state, msg.message_type);
             self.on_peer_message(msg)?
         }
         Ok(())
@@ -598,7 +586,7 @@ impl PbftNode {
             // );
             return Ok(());
         }
-        info!("{}: Starting view change", self);
+        info!("{}: Starting view change", self.state);
         self.state.mode = PbftMode::ViewChange;
 
         let PbftStableCheckpoint {
@@ -752,7 +740,7 @@ impl PbftNode {
         let expected_type = self.state.check_msg_type();
         // Make sure that we should be sending messages of this type
         if msg_type.is_multicast() && msg_type != expected_type {
-            info!("{}: xxxxxx {:?} not sending", self, msg_type);
+            // info!("{}: xxxxxx {:?} not sending", self.state, msg_type);
             return Ok(());
         }
 
@@ -778,14 +766,14 @@ impl PbftNode {
         self.service
             .broadcast(String::from(msg_type).as_str(), msg_bytes.clone())
             .unwrap_or_else(|err| error!("Couldn't broadcast: {}", err));
-        info!("{}: >>>>>> {:?}", self, msg_type);
+        // info!("{}: >>>>>> {:?}", self.state, msg_type);
 
         // Send to self
         let peer_msg = PeerMessage {
             message_type: String::from(msg_type),
             content: msg_bytes.clone(),
         };
-        info!("{}: >self> {:?}", self, msg_type);
+        // info!("{}: >self> {:?}", self.state, msg_type);
         self.on_peer_message(peer_msg)
     }
 }

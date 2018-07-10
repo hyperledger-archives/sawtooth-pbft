@@ -16,6 +16,7 @@
  */
 
 use std::collections::HashMap;
+use std::fmt;
 
 use sawtooth_sdk::consensus::engine::PeerId;
 
@@ -49,6 +50,24 @@ pub enum PbftMode {
     ViewChange,
     NewView,
     Checkpointing,
+}
+
+impl fmt::Display for PbftState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let ast = if self.is_primary() { "*" } else { " " };
+        let mode = match self.mode {
+            PbftMode::Normal => "N",
+            PbftMode::Checkpointing => "C",
+            PbftMode::ViewChange => "V",
+            PbftMode::NewView => "E",
+        };
+
+        write!(
+            f,
+            "({:?} {} {}, seq {}), Node {}{:02}",
+            self.phase, mode, self.view, self.seq_num, ast, self.id,
+        )
+    }
 }
 
 // Information about the PBFT algorithm's state
@@ -170,8 +189,8 @@ impl PbftState {
         self.role = PbftNodeRole::Secondary;
     }
 
-    // Go to the next phase and return the phase we're at now
-    pub fn advance_phase(&mut self) -> PbftPhase {
+    // Go to a phase and return new phase, if successfully changed
+    pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Option<PbftPhase> {
         let next = match self.phase {
             PbftPhase::NotStarted => PbftPhase::PrePreparing,
             PbftPhase::PrePreparing => PbftPhase::Preparing,
@@ -181,7 +200,13 @@ impl PbftState {
             PbftPhase::FinalCommitting => PbftPhase::Finished,
             PbftPhase::Finished => PbftPhase::NotStarted,
         };
-        self.phase = next.clone();
-        next
+        if desired_phase == next {
+            info!("{}: Changing to {:?}", self, desired_phase);
+            self.phase = desired_phase.clone();
+            Some(desired_phase)
+        } else {
+            info!("{}: Didn't change to {:?}", self, desired_phase);
+            None
+        }
     }
 }

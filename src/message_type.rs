@@ -18,8 +18,6 @@
 // Messages related to PBFT consensus
 #[derive(Debug, PartialEq, PartialOrd)]
 pub enum PbftMessageType {
-    Unset,
-
     // Basic message types for the multicast protocol
     PrePrepare,
     Prepare,
@@ -35,6 +33,9 @@ pub enum PbftMessageType {
     // Heartbeat ping message; primary uses this to tell nodes that it's still alive so they don't ViewChange
     // When sent, bytes in message represent the signer's PeerId
     Pulse,
+
+    // Goes at the bottom to prevent accidentally adding to unread message queue
+    Unset,
 }
 
 impl PbftMessageType {
