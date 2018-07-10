@@ -22,7 +22,6 @@ use protobuf::{Message, ProtobufError};
 use std::collections::{HashMap, HashSet};
 
 use std::convert::From;
-use std::fmt;
 
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId, PeerMessage};
 use sawtooth_sdk::consensus::service::Service;
@@ -372,14 +371,12 @@ impl PbftNode {
                     .get_node_id_from_bytes(deser_msg.get_info().get_signer_id())
             );
 
-            if let Some(ref checkpoint) = self.msg_log.latest_stable_checkpoint {
-                if checkpoint.seq_num >= deser_msg.get_info().get_seq_num() {
-                    debug!(
-                        "{}: Already at a stable checkpoint with this sequence number or past it!",
-                        self.state
-                    );
-                    return Ok(());
-                }
+            if self.msg_log.get_latest_checkpoint() >= deser_msg.get_info().get_seq_num() {
+                debug!(
+                    "{}: Already at a stable checkpoint with this sequence number or past it!",
+                    self.state
+                );
+                return Ok(());
             }
 
             // Add message to the log
@@ -504,6 +501,7 @@ impl PbftNode {
             .map(|(_block_id, block)| block)
             .collect();
 
+        // TODO: Remove assertion
         assert_eq!(valid_blocks.len(), 1);
 
         let s = self.state.seq_num; // By now, secondaries have the proper seq number

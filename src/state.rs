@@ -160,6 +160,7 @@ impl PbftState {
             .map(|(node_id, _network_peer_id)| *node_id)
             .collect();
 
+        // TODO: Remove assertion
         assert_eq!(matching_node_ids.len(), 1);
 
         matching_node_ids[0]

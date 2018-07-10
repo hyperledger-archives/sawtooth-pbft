@@ -90,10 +90,25 @@ pub struct PbftLog {
 
 impl fmt::Display for PbftLog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut msg_string_vec: Vec<String> = self.messages
+        let stable = self.get_latest_checkpoint();
+
+        let msg_infos: Vec<PbftMessageInfo> = self.messages
             .iter()
-            .map(|msg: &PbftMessage| -> String {
-                let info = msg.get_info();
+            .map(|ref msg| msg.get_info().clone())
+            .chain(
+                self.view_changes
+                    .iter()
+                    .map(|ref msg| msg.get_info().clone())
+            )
+            .chain(
+                self.new_views
+                    .iter()
+                    .map(|ref msg| msg.get_info().clone())
+            )
+            .collect();
+        let string_infos: Vec<String> = msg_infos
+            .iter()
+            .map(|info: &PbftMessageInfo| -> String {
                 format!(
                     "    {{ {}, view: {}, seq: {}, signer: {} }}",
                     info.get_msg_type(),
@@ -103,40 +118,13 @@ impl fmt::Display for PbftLog {
                 )
             })
             .collect();
-            msg_string_vec.extend(
-                self.view_changes
-                    .iter()
-                    .map(|msg: &PbftViewChange| -> String {
-                        let info = msg.get_info();
-                        format!(
-                            "    {{ {}, view: {}, seq: {}, signer: {} }}",
-                            info.get_msg_type(),
-                            info.get_view(),
-                            info.get_seq_num(),
-                            hex::encode(info.get_signer_id()),
-                        )
-                    })
-            );
-            msg_string_vec.extend(
-                self.new_views
-                    .iter()
-                    .map(|msg: &PbftNewView| -> String {
-                        let info = msg.get_info();
-                        format!(
-                            "    {{ {}, view: {}, seq: {}, signer: {} }}",
-                            info.get_msg_type(),
-                            info.get_view(),
-                            info.get_seq_num(),
-                            hex::encode(info.get_signer_id()),
-                        )
-                    })
-            );
+
         write!(
             f,
             "\nPbftLog ({}, {}):\n{}",
             self.low_water_mark,
             self.high_water_mark,
-            msg_string_vec.join("\n")
+            string_infos.join("\n")
         )
     }
 }
@@ -285,6 +273,15 @@ impl PbftLog {
             .collect()
     }
 
+    // Get the latest stable checkpoint
+    pub fn get_latest_checkpoint(&self) -> u64 {
+        if let Some(ref cp) = self.latest_stable_checkpoint {
+            cp.seq_num
+        } else {
+            0
+        }
+    }
+
     // Is this node ready for a checkpoint?
     pub fn at_checkpoint(&self) -> bool {
         self.cycles > self.checkpoint_period
@@ -292,7 +289,6 @@ impl PbftLog {
 
     // Garbage collect the log, and create a stable checkpoint
     pub fn garbage_collect(&mut self, stable_checkpoint: u64, view: u64) {
-        // For now, just update low/high water marks
         self.low_water_mark = stable_checkpoint;
         self.high_water_mark = self.low_water_mark + self.max_log_size;
         self.cycles = 0;
@@ -308,6 +304,33 @@ impl PbftLog {
             checkpoint_messages: cp_msgs,
         };
         self.latest_stable_checkpoint = Some(cp);
+
+        // Garbage collect logs, filter out all old messages (up to but not including the
+        // checkpoint)
+        self.messages = self.messages
+            .iter()
+            .filter(|ref msg| {
+                let seq_num = msg.get_info().get_seq_num();
+                seq_num >= self.get_latest_checkpoint() && seq_num > 0
+            })
+            .map(|msg| msg.clone())
+            .collect();
+        self.view_changes = self.view_changes
+            .iter()
+            .filter(|ref msg| {
+                let seq_num = msg.get_info().get_seq_num();
+                seq_num >= self.get_latest_checkpoint() && seq_num > 0
+            })
+            .map(|msg| msg.clone())
+            .collect();
+        self.new_views = self.new_views
+            .iter()
+            .filter(|ref msg| {
+                let seq_num = msg.get_info().get_seq_num();
+                seq_num >= self.get_latest_checkpoint() && seq_num > 0
+            })
+            .map(|msg| msg.clone())
+            .collect();
     }
 
     pub fn push_unread(&mut self, msg: PeerMessage) {
