@@ -20,7 +20,7 @@ use std::fmt;
 
 use hex;
 
-use protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange};
+use protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange, PbftBlock};
 
 use sawtooth_sdk::consensus::engine::PeerMessage;
 
@@ -153,7 +153,9 @@ impl PbftLog {
             if PbftMessageType::from(msg.get_info().get_msg_type()) == PbftMessageType::BlockNew {
                 self.cycles += 1;
             }
-            self.messages.push(msg);
+            if !self.messages.contains(&msg) {
+                self.messages.push(msg);
+            }
             debug!("{}", self);
         } else {
             warn!(
@@ -234,12 +236,18 @@ impl PbftLog {
     }
 
     // Fix sequence numbers of generic messages that are defaulted to zero
-    pub fn fix_seq_nums(&mut self, msg_type: &PbftMessageType, new_sequence_number: u64) -> usize {
+    pub fn fix_seq_nums(
+        &mut self,
+        msg_type: &PbftMessageType,
+        new_sequence_number: u64,
+        block: &PbftBlock,
+    ) -> usize {
         let mut changed_msgs = 0;
         for m in &mut self.messages {
             let mut info = m.get_info().clone();
             if m.get_info().get_msg_type() == String::from(msg_type)
                 && m.get_info().get_seq_num() == 0
+                && m.get_block().get_block_id() == block.get_block_id()
             {
                 info.set_seq_num(new_sequence_number);
                 m.set_info(info);
@@ -251,7 +259,9 @@ impl PbftLog {
 
     // Methods for dealing with PbftViewChanges
     pub fn add_view_change(&mut self, vc: PbftViewChange) {
-        self.view_changes.push(vc);
+        if !self.view_changes.contains(&vc) {
+            self.view_changes.push(vc);
+        }
     }
 
     pub fn get_view_change(&self, old_view: u64) -> Vec<&PbftViewChange> {
@@ -263,7 +273,9 @@ impl PbftLog {
 
     // Methods for dealing with PbftNewViews
     pub fn add_new_view(&mut self, vc: PbftNewView) {
-        self.new_views.push(vc);
+        if !self.new_views.contains(&vc) {
+            self.new_views.push(vc);
+        }
     }
 
     pub fn get_new_view(&self, sequence_number: u64) -> Vec<&PbftNewView> {

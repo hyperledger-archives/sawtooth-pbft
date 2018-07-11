@@ -88,16 +88,25 @@ impl PbftNode {
                     .get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
             );
 
+            // If we're in NotStarted, accept everything from the next seq number
+            if self.state.phase == PbftPhase::NotStarted && deser_msg.get_info().get_seq_num() > self.state.seq_num {
+                info!("{}: NotStarted, accept all. ({} > {})", self.state, deser_msg.get_info().get_seq_num(), self.state.seq_num);
+                self.msg_log.push_unread(msg);
+                return Ok(());
+            }
+
             // Don't process message if we're not ready for it.
             // i.e. Don't process prepare messages if we're not in the PbftPhase::Preparing
             // Discard all multicast messages that come while we're in a ViewChange
             let expecting_type = self.state.check_msg_type();
-            if msg_type < expecting_type || self.state.mode == PbftMode::ViewChange {
-                info!("{}: {:?} < {:?}, skipping", self.state, msg_type, expecting_type);
-                return Ok(())
-            } else if msg_type > expecting_type {
-                info!("{}: Pushing unread {:?} ({:?} > {:?})", self.state, msg_type, msg_type, expecting_type);
+            if msg_type > expecting_type && deser_msg.get_info().get_seq_num() >= self.state.seq_num {
+                info!("{}: Pushing unread {:?} ({:?} > {:?} && {} >= {})", self.state, msg_type, msg_type, expecting_type, deser_msg.get_info().get_seq_num(), self.state.seq_num);
                 self.msg_log.push_unread(msg);
+                return Ok(());
+            } else if msg_type < expecting_type || self.state.mode == PbftMode::ViewChange {
+                info!("{}: {:?} < {:?}, skipping but adding to log", self.state, msg_type, expecting_type);
+                self.msg_log.add_message(deser_msg.clone());
+                return Ok(());
             }
 
             match msg_type {
@@ -157,8 +166,10 @@ impl PbftNode {
                             // ...then update the BlockNew message we received with the correct
                             // sequence number
                             let num_updated = self.msg_log
-                                .fix_seq_nums(&PbftMessageType::BlockNew, info.get_seq_num());
-                            // info!("The log updated {} BlockNew messages", num_updated);
+                                .fix_seq_nums(&PbftMessageType::BlockNew, info.get_seq_num(), deser_msg.get_block());
+
+                            info!("{}: The log updated {} BlockNew messages to seq num {}",
+                                  self.state, num_updated, info.get_seq_num());
                         }
                     }
 
@@ -437,9 +448,7 @@ impl PbftNode {
 
         let mut msg = PbftMessage::new();
         if self.state.is_primary() {
-            if self.state.seq_num == 0 {
-                self.state.seq_num = 1;
-            }
+            self.state.seq_num += 1;
             msg.set_info(make_msg_info(
                 &PbftMessageType::BlockNew,
                 self.state.view,
@@ -482,7 +491,6 @@ impl PbftNode {
                 self.service
                     .initialize_block(None)
                     .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
-                self.state.seq_num += 1;
             }
 
             self.state.switch_phase(PbftPhase::NotStarted);
@@ -634,13 +642,14 @@ impl PbftNode {
 
     // "prepared" predicate
     fn _prepared(&self, deser_msg: &PbftMessage) -> Result<(), PbftError> {
+
         let info = deser_msg.get_info();
         let block_new_msgs = self.msg_log.get_messages_of_type(
             &PbftMessageType::BlockNew,
             info.get_seq_num(),
             info.get_view(),
         );
-        if block_new_msgs.len() != 1 {
+        if block_new_msgs.len() < 1 { // TODO: Deal with more than 1 message (match them)
             return Err(PbftError::WrongNumMessages(
                 PbftMessageType::BlockNew,
                 1,
@@ -679,6 +688,8 @@ impl PbftNode {
 
         self._check_msg_against_log(&deser_msg, true, None)?;
 
+        info!("{}: Passed _prepared predicate", self.state);
+
         Ok(())
     }
 
@@ -692,7 +703,10 @@ impl PbftNode {
 
         self._check_msg_against_log(&deser_msg, true, None)?;
 
-        self._prepared(deser_msg)
+        self._prepared(deser_msg)?;
+
+        info!("{}: Passed _committed predicate", self.state);
+        Ok(())
     }
 
     // Check an incoming message against its counterparts in the message log
