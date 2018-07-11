@@ -32,6 +32,7 @@ use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
 mod config;
 mod engine;
 mod error;
+mod message_extensions;
 mod message_type;
 mod node;
 mod pbft_log;

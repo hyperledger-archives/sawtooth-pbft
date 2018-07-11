@@ -33,6 +33,8 @@ pub enum PbftError {
     BlockMismatch(PbftBlock, PbftBlock),
     MessageMismatch(PbftMessageType),
     ViewMismatch(usize, usize),
+    NodeNotFound,
+    WrongNumBlocks,
     Timeout,
 }
 
@@ -46,6 +48,8 @@ impl Error for PbftError {
             BlockMismatch(_, _) => "BlockMismatch",
             MessageMismatch(_) => "MessageMismatch",
             ViewMismatch(_, _) => "ViewMismatch",
+            NodeNotFound => "NodeNotFound",
+            WrongNumBlocks => "WrongNumBlocks",
             Timeout => "Timeout",
         }
     }
@@ -71,7 +75,9 @@ impl fmt::Display for PbftError {
             PbftError::BlockMismatch(exp, got) => {
                 write!(f, "Block mismatch: {:?} != {:?}", exp, got)
             }
-            PbftError::Timeout => write!(f, "didn't receive any message"),
+            PbftError::NodeNotFound => write!(f, "Couldn't find node in the network"),
+            PbftError::WrongNumBlocks => write!(f, "Incorrect number of blocks"),
+            PbftError::Timeout => write!(f, "Timed out"),
         }
     }
 }

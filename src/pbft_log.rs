@@ -20,42 +20,18 @@ use std::fmt;
 
 use hex;
 
-use protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange, PbftBlock};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange};
 
 use sawtooth_sdk::consensus::engine::PeerMessage;
 
 use config::PbftConfig;
 use message_type::PbftMessageType;
 
-// TODO: move this somewhere else
-// State keeps track of the last stable checkpoint
+// The log keeps track of the last stable checkpoint
 #[derive(Clone)]
 pub struct PbftStableCheckpoint {
     pub seq_num: u64,
     pub checkpoint_messages: Vec<PbftMessage>,
-}
-
-// TODO: Put these somewhere else
-pub trait PbftGetInfo<'a> {
-    fn get_msg_info(&self) -> &'a PbftMessageInfo;
-}
-
-impl<'a> PbftGetInfo<'a> for &'a PbftMessage {
-    fn get_msg_info(&self) -> &'a PbftMessageInfo {
-        self.get_info()
-    }
-}
-
-impl<'a> PbftGetInfo<'a> for &'a PbftViewChange {
-    fn get_msg_info(&self) -> &'a PbftMessageInfo {
-        self.get_info()
-    }
-}
-
-impl<'a> PbftGetInfo<'a> for &'a PbftNewView {
-    fn get_msg_info(&self) -> &'a PbftMessageInfo {
-        self.get_info()
-    }
 }
 
 // Struct for storing messages that a PbftNode receives
@@ -90,21 +66,15 @@ pub struct PbftLog {
 
 impl fmt::Display for PbftLog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let stable = self.get_latest_checkpoint();
-
         let msg_infos: Vec<PbftMessageInfo> = self.messages
             .iter()
             .map(|ref msg| msg.get_info().clone())
             .chain(
                 self.view_changes
                     .iter()
-                    .map(|ref msg| msg.get_info().clone())
+                    .map(|ref msg| msg.get_info().clone()),
             )
-            .chain(
-                self.new_views
-                    .iter()
-                    .map(|ref msg| msg.get_info().clone())
-            )
+            .chain(self.new_views.iter().map(|ref msg| msg.get_info().clone()))
             .collect();
         let string_infos: Vec<String> = msg_infos
             .iter()
@@ -156,7 +126,7 @@ impl PbftLog {
             if !self.messages.contains(&msg) {
                 self.messages.push(msg);
             }
-            debug!("{}", self);
+            trace!("{}", self);
         } else {
             warn!(
                 "Not adding message with sequence number {}; outside of log bounds ({}, {})",

@@ -20,9 +20,11 @@ use std::fmt;
 
 use sawtooth_sdk::consensus::engine::PeerId;
 
+use protos::pbft_message::PbftBlock;
 use config::PbftConfig;
 use message_type::PbftMessageType;
 use timing::Timeout;
+use error::PbftError;
 
 // Possible roles for a node
 // Primary is in charge of making consensus decisions
@@ -103,10 +105,13 @@ pub struct PbftState {
     // primary. If a message hasn't been received in a certain amount of time, then this node will
     // initiate a view change.
     pub timeout: Timeout,
+
+    // The BlockId of the current block we're working on
+    pub working_block: PbftBlock,
 }
 
 impl PbftState {
-    pub fn new(id: u64, config: &PbftConfig) -> Self {
+    pub fn new(id: u64, working_block: PbftBlock, config: &PbftConfig) -> Self {
         let peer_id_map: HashMap<u64, PeerId> = config
             .peers
             .clone()
@@ -135,6 +140,7 @@ impl PbftState {
             f: f,
             network_node_ids: peer_id_map,
             timeout: Timeout::new(config.view_change_timeout.clone()),
+            working_block: working_block,
         }
     }
 
@@ -151,7 +157,7 @@ impl PbftState {
     }
 
     // Obtain the node ID from a serialized PeerId
-    pub fn get_node_id_from_bytes(&self, peer_id: &[u8]) -> u64 {
+    pub fn get_node_id_from_bytes(&self, peer_id: &[u8]) -> Result<u64, PbftError> {
         let deser_id = PeerId::from(peer_id.to_vec());
 
         let matching_node_ids: Vec<u64> = self.network_node_ids
@@ -160,10 +166,11 @@ impl PbftState {
             .map(|(node_id, _network_peer_id)| *node_id)
             .collect();
 
-        // TODO: Remove assertion
-        assert_eq!(matching_node_ids.len(), 1);
-
-        matching_node_ids[0]
+        if matching_node_ids.len() < 1 {
+            Err(PbftError::NodeNotFound)
+        } else {
+            Ok(matching_node_ids[0])
+        }
     }
 
     pub fn get_own_peer_id(&self) -> PeerId {
@@ -202,11 +209,11 @@ impl PbftState {
             PbftPhase::Finished => PbftPhase::NotStarted,
         };
         if desired_phase == next {
-            info!("{}: Changing to {:?}", self, desired_phase);
+            debug!("{}: Changing to {:?}", self, desired_phase);
             self.phase = desired_phase.clone();
             Some(desired_phase)
         } else {
-            info!("{}: Didn't change to {:?}", self, desired_phase);
+            debug!("{}: Didn't change to {:?}", self, desired_phase);
             None
         }
     }

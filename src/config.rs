@@ -50,7 +50,7 @@ impl PbftConfig {
     pub fn default() -> Self {
         PbftConfig {
             peers: HashMap::new(),
-            block_duration: Duration::from_millis(2000),
+            block_duration: Duration::from_millis(200),
             message_timeout: Duration::from_millis(10),
             view_change_timeout: Duration::from_millis(4000),
             checkpoint_period: 100,

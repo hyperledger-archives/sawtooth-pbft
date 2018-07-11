@@ -30,6 +30,12 @@ use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
 
+macro_rules! hang {
+    () => {
+        loop {}
+    };
+}
+
 pub struct PbftEngine {
     id: u64,
 }
@@ -57,7 +63,7 @@ impl Engine for PbftEngine {
 
         let mut node = PbftNode::new(self.id, &config, service);
 
-        info!("Starting state: {:#?}", node.state);
+        debug!("Starting state: {:#?}", node.state);
 
         let mut mod_file = File::create(format!("state_{}.txt", self.id).as_str()).unwrap();
         mod_file
@@ -71,6 +77,11 @@ impl Engine for PbftEngine {
             let res = match incoming_message {
                 Ok(Update::BlockNew(block)) => node.on_block_new(block),
                 Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id),
+                Ok(Update::BlockInvalid(block_id)) => {
+                    // Just hang out until the block becomes valid
+                    warn!("{}: BlockInvalid", node.state);
+                    Ok(())
+                }
                 Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id),
                 Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(message),
                 Ok(Update::Shutdown) => break,
