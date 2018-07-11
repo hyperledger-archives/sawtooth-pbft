@@ -81,11 +81,11 @@ impl PbftNode {
             }
 
             info!(
-                "{}: <<<<<< [Node {:02}]: {:?}",
+                "{}: <<<<<< {:?} [Node {:02}]",
                 self.state,
+                msg.message_type,
                 self.state
                     .get_node_id_from_bytes(deser_msg.get_info().get_signer_id()),
-                msg.message_type,
             );
 
             // Don't process message if we're not ready for it.
@@ -167,6 +167,8 @@ impl PbftNode {
                     // called again inside of _broadcast_pbft_message
                     self.msg_log.add_message(deser_msg.clone());
                     self.state.switch_phase(PbftPhase::Preparing);
+
+                    warn!("{}: PrePrepare, sequence number {}", self.state, info.get_seq_num());
 
                     self._broadcast_pbft_message(
                         info.get_seq_num(),
@@ -278,7 +280,7 @@ impl PbftNode {
                 // Update current view and reset timer
                 self.state.timeout.reset();
                 self.state.view += 1;
-                info!(
+                warn!(
                     "{}: Updating to view {} and resetting timeout",
                     self.state, self.state.view
                 );
@@ -286,12 +288,14 @@ impl PbftNode {
                 // Upgrade this node to primary, if its ID is correct
                 if self.state.get_own_peer_id() == self.state.get_primary_peer_id() {
                     self.state.upgrade_role();
+                    warn!("{}: I'm now a primary", self.state);
 
                     // If we're the new primary, need to clean up the block mess from the view change
                     self.service
                         .initialize_block(None)
                         .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
                 } else {
+                    warn!("{}: I'm now a secondary", self.state);
                     self.state.downgrade_role();
                 }
 
@@ -355,6 +359,7 @@ impl PbftNode {
 
             self._check_msg_against_log(&&deser_msg, true, None)?;
 
+            warn!("{}: Arrived in new view, transitioning to Normal mode", self.state);
             self.state.mode = PbftMode::Normal;
 
         } else if msg_type.is_checkpoint() {
@@ -395,7 +400,7 @@ impl PbftNode {
 
             if self.state.mode == PbftMode::Checkpointing {
                 self._check_msg_against_log(&&deser_msg, true, None)?;
-                info!(
+                warn!(
                     "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
                     self.state,
                     deser_msg.get_info().get_seq_num()
@@ -584,7 +589,7 @@ impl PbftNode {
             // );
             return Ok(());
         }
-        info!("{}: Starting view change", self.state);
+        warn!("{}: Starting view change", self.state);
         self.state.mode = PbftMode::ViewChange;
 
         let PbftStableCheckpoint {

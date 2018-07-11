@@ -68,7 +68,7 @@ impl Engine for PbftEngine {
         loop {
             let incoming_message = updates.recv_timeout(config.message_timeout);
 
-            if let Err(e) = match incoming_message {
+            let res = match incoming_message {
                 Ok(Update::BlockNew(block)) => node.on_block_new(block),
                 Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id),
                 Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id),
@@ -79,14 +79,9 @@ impl Engine for PbftEngine {
                     error!("Disconnected from validator");
                     break;
                 }
-                _ => Ok(unimplemented!()),
-            } {
-                // Do nothing for Timeout errors
-                match e {
-                    PbftError::Timeout => (),
-                    _ => error!("{}", e),
-                }
-            }
+                x => Ok(error!("THIS IS UNIMPLEMENTED {:?}", x)),
+            };
+            handle_pbft_result(res);
 
             working_ticker.tick(|| {
                 if let Err(e) = node.update_working_block() {
@@ -96,17 +91,14 @@ impl Engine for PbftEngine {
 
             // Check to see if timeout has expired; initiate ViewChange if necessary
             if node.check_timeout_expired() {
-                node.start_view_change()
-                    .unwrap_or_else(|e| error!("Couldn't start view change: {}", e));
+                handle_pbft_result(node.start_view_change());
             }
 
             if node.msg_log.at_checkpoint() {
-                node.start_checkpoint()
-                    .unwrap_or_else(|e| error!("Couldn't start checkpoint: {}", e));
+                handle_pbft_result(node.start_checkpoint());
             }
 
-            node.retry_unread()
-                .unwrap_or_else(|e| error!("Couldn't retry unread: {}", e));
+            handle_pbft_result(node.retry_unread());
         }
     }
 
@@ -116,5 +108,15 @@ impl Engine for PbftEngine {
 
     fn name(&self) -> String {
         String::from("sawtooth-pbft")
+    }
+}
+
+fn handle_pbft_result(res: Result<(), PbftError>) {
+    if let Err(e) = res {
+        match e {
+            PbftError::Timeout => (),
+            PbftError::WrongNumMessages(_, _, _) => debug!("{}", e),
+            _ => error!("{}", e),
+        }
     }
 }
