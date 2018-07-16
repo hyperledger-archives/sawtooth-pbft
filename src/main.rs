@@ -28,17 +28,11 @@ extern crate simple_logger;
 use std::process;
 
 use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
+use sawtooth_sdk::consensus::engine::Engine;
 
-mod config;
-mod engine;
-mod error;
-mod message_extensions;
-mod message_type;
 mod node;
-mod pbft_log;
 mod protos;
-mod state;
-mod timing;
+mod engine;
 
 fn main() {
     let matches = clap_app!(sawtooth_pbft =>
@@ -68,7 +62,7 @@ fn main() {
 
     simple_logger::init_with_level(log_level).unwrap();
 
-    info!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
+    warn!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
 
     let pbft_engine = engine::PbftEngine::new(id);
 

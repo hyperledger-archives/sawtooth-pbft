@@ -30,12 +30,12 @@ use sawtooth_sdk::consensus::service::Service;
 
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange};
 
-use config::PbftConfig;
-use error::PbftError;
-use message_extensions::PbftGetInfo;
-use message_type::PbftMessageType;
-use pbft_log::{PbftLog, PbftStableCheckpoint};
-use state::{PbftMode, PbftPhase, PbftState};
+use node::config::PbftConfig;
+use node::error::PbftError;
+use node::message_extensions::PbftGetInfo;
+use node::message_type::PbftMessageType;
+use node::pbft_log::{PbftLog, PbftStableCheckpoint};
+use node::state::{PbftMode, PbftPhase, PbftState};
 
 // The actual node
 pub struct PbftNode {

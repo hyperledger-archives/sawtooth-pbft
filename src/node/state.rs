@@ -21,10 +21,11 @@ use std::fmt;
 use sawtooth_sdk::consensus::engine::PeerId;
 
 use protos::pbft_message::PbftBlock;
-use config::PbftConfig;
-use message_type::PbftMessageType;
-use timing::Timeout;
-use error::PbftError;
+
+use node::config::PbftConfig;
+use node::message_type::PbftMessageType;
+use node::timing::Timeout;
+use node::error::PbftError;
 
 // Possible roles for a node
 // Primary is in charge of making consensus decisions

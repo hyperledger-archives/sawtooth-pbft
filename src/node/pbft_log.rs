@@ -24,8 +24,8 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView,
 
 use sawtooth_sdk::consensus::engine::PeerMessage;
 
-use config::PbftConfig;
-use message_type::PbftMessageType;
+use node::config::PbftConfig;
+use node::message_type::PbftMessageType;
 
 // The log keeps track of the last stable checkpoint
 #[derive(Clone)]

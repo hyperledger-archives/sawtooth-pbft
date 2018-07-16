@@ -22,7 +22,7 @@ use protobuf::error::ProtobufError;
 
 use protos::pbft_message::PbftBlock;
 
-use message_type::PbftMessageType;
+use node::message_type::PbftMessageType;
 
 // Errors that might occur in a PbftNode
 #[derive(Debug)]

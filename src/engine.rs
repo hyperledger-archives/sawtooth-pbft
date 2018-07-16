@@ -16,25 +16,19 @@
  */
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::time::Duration;
 
 use sawtooth_sdk::consensus::{engine::*, service::Service};
 
-use node::PbftNode;
+use node::node::PbftNode;
 
-use config;
-use timing;
+use node::config;
+use node::timing;
 
-use error::PbftError;
+use node::error::PbftError;
 
-use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
-
-macro_rules! hang {
-    () => {
-        loop {}
-    };
-}
 
 pub struct PbftEngine {
     id: u64,
