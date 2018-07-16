@@ -442,16 +442,14 @@ impl PbftNode {
                     }
                     Err(err) => panic!("Failed to finalize block: {:?}", err),
                 }
+                // First, get our PeerId
+                let peer_id = self.state.get_own_peer_id();
+
+                // Then send a pulse to all nodes to tell them that we're alive
+                // and sign it with our PeerId
+                debug!("{}: >>>>>> Pulse", self.state);
+                self._broadcast_message(&PbftMessageType::Pulse, &Vec::<u8>::from(peer_id))?;
             }
-
-            // First, get our PeerId
-            let peer_id = self.state.get_own_peer_id();
-
-            // Then send a pulse to all nodes to tell them that we're alive
-            // and sign it with our PeerId
-            debug!("{}: >>>>>> Pulse", self.state);
-            self._broadcast_message(&PbftMessageType::Pulse, &Vec::<u8>::from(peer_id))?;
-
         }
         Ok(())
     }
