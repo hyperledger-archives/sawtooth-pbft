@@ -18,6 +18,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use hex;
+
 use sawtooth_sdk::consensus::engine::PeerId;
 
 use protos::pbft_message::PbftBlock;
@@ -53,6 +55,7 @@ pub enum PbftMode {
     ViewChange,
     NewView,
     Checkpointing,
+    CatchingUp,
 }
 
 impl fmt::Display for PbftState {
@@ -63,12 +66,29 @@ impl fmt::Display for PbftState {
             PbftMode::Checkpointing => "C",
             PbftMode::ViewChange => "V",
             PbftMode::NewView => "E",
+            PbftMode::CatchingUp => "H",
+        };
+
+        let phase = match self.phase {
+            PbftPhase::NotStarted => "NS",
+            PbftPhase::PrePreparing => "PP",
+            PbftPhase::Preparing => "Pr",
+            PbftPhase::Checking => "Ch",
+            PbftPhase::Committing => "Co",
+            PbftPhase::FinalCommitting => "FC",
+            PbftPhase::Finished => "Fi",
+        };
+
+        let wb = if let Some(ref block) = self.working_block {
+            block.get_block_id()
+        } else {
+            b"~none~"
         };
 
         write!(
             f,
-            "({:?} {} {}, seq {}), Node {}{:02}",
-            self.phase, mode, self.view, self.seq_num, ast, self.id,
+            "({} {} {}, seq {}, wb {}), Node {}{:02}",
+            phase, mode, self.view, self.seq_num, &hex::encode(&wb)[..6], ast, self.id,
         )
     }
 }
@@ -107,12 +127,12 @@ pub struct PbftState {
     // initiate a view change.
     pub timeout: Timeout,
 
-    // The BlockId of the current block we're working on
-    pub working_block: PbftBlock,
+    // The current block we're working on
+    pub working_block: Option<PbftBlock>,
 }
 
 impl PbftState {
-    pub fn new(id: u64, working_block: PbftBlock, config: &PbftConfig) -> Self {
+    pub fn new(id: u64, config: &PbftConfig) -> Self {
         let peer_id_map: HashMap<u64, PeerId> = config
             .peers
             .clone()
@@ -141,7 +161,7 @@ impl PbftState {
             f: f,
             network_node_ids: peer_id_map,
             timeout: Timeout::new(config.view_change_timeout.clone()),
-            working_block: working_block,
+            working_block: None,
         }
     }
 

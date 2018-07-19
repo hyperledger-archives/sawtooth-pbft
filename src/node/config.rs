@@ -113,6 +113,11 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftCo
         }
     }
 
+    // Check to make sure block_duration < view_change_timeout
+    if config.block_duration >= config.view_change_timeout {
+        panic!("Block duration must be less than the view change timeout");
+    }
+
     // Get various integer constants
     if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.checkpoint_period") {
         if let Ok(checkpoint_period) = s.parse() {

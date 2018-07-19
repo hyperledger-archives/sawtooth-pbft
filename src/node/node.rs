@@ -21,8 +21,8 @@ use protobuf;
 use protobuf::RepeatedField;
 use protobuf::{Message, ProtobufError};
 
+use std::error::Error;
 use std::collections::HashMap;
-
 use std::convert::From;
 
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId, PeerMessage};
@@ -45,11 +45,8 @@ pub struct PbftNode {
 
 impl PbftNode {
     pub fn new(id: u64, config: &PbftConfig, mut service: Box<Service>) -> Self {
-        let block = service.get_chain_head()
-            .unwrap_or_else(|e| panic!("No chain head: {}", e));
-
         let mut n = PbftNode {
-            state: PbftState::new(id, pbft_block_from_block(block), config),
+            state: PbftState::new(id, config),
             service: service,
             msg_log: PbftLog::new(config),
         };
@@ -106,18 +103,19 @@ impl PbftNode {
             }
 
             let block = pbft_message.get_block();
+
             if self.state.phase != PbftPhase::PrePreparing
-                // && block != &self.state.working_block
-                && !blocks_match(block, &self.state.working_block)
-                && block.get_block_num() >= self.state.working_block.get_block_num()
+                && self.state.working_block.is_some()
+                && !blocks_match(block, &self.state.working_block.clone().unwrap())
+                && block.get_block_num() >= self.state.working_block.clone().unwrap().get_block_num()
             {
                 info!(
                     "{}: Block differs from working block. ({:?} != {:?}, {} >= {})",
                     self.state,
                     &hex::encode(block.get_block_id())[..6],
-                    &hex::encode(self.state.working_block.get_block_id())[..6],
+                    &hex::encode(self.state.working_block.clone().unwrap().get_block_id())[..6],
                     block.get_block_num(),
-                    self.state.working_block.get_block_num(),
+                    self.state.working_block.clone().unwrap().get_block_num(),
                 );
                 self.msg_log.push_unread(msg);
                 return Ok(());
@@ -231,7 +229,21 @@ impl PbftNode {
                 self.msg_log.check_msg_against_log(&&pbft_message, true, self.state.f + 1)?;
 
                 if self.state.phase == PbftPhase::FinalCommitting {
+                    let working_block = self.state.working_block.clone().ok_or(PbftError::NoWorkingBlock)?;
+
                     self.state.switch_phase(PbftPhase::Finished);
+
+                    if pbft_message.get_block().get_block_id() != working_block.get_block_id() {
+                        warn!(
+                            "{}: Not committing block {:?}",
+                            self.state,
+                            BlockId::from(pbft_message.get_block().block_id.clone())
+                        );
+                        return Err(PbftError::BlockMismatch(pbft_message.get_block().clone(), working_block));
+                    }
+
+                    // Previous block is sent to the validator; reset the working block
+                    self.state.working_block = None;
 
                     info!(
                         "{}: Committing block {:?}",
@@ -431,15 +443,21 @@ impl PbftNode {
         if self.state.is_primary() {
             // Try to finalize a block
             if self.state.phase == PbftPhase::NotStarted {
-                info!("{}: Trying to finalize block", self.state);
-                match self.service.finalize_block(vec![]) {
-                    Ok(block_id) => {
-                        debug!("{}: Publishing block {:?}", self.state, block_id);
+                info!("{}: Summarizing block", self.state);
+                if let Err(e) = self.service.summarize_block() {
+                    error!("{}: Couldn't summarize, so not finalizing: {}", self.state,
+                           e.description().to_string());
+                } else {
+                    info!("{}: Trying to finalize block", self.state);
+                    match self.service.finalize_block(vec![]) {
+                        Ok(block_id) => {
+                            debug!("{}: Publishing block {:?}", self.state, block_id);
+                        }
+                        Err(EngineError::BlockNotReady) => {
+                            debug!("{}: Block not ready", self.state);
+                        }
+                        Err(err) => panic!("Failed to finalize block: {:?}", err),
                     }
-                    Err(EngineError::BlockNotReady) => {
-                        debug!("{}: Block not ready", self.state);
-                    }
-                    Err(err) => panic!("Failed to finalize block: {:?}", err),
                 }
                 // First, get our PeerId
                 let peer_id = self.state.get_own_peer_id();
@@ -612,7 +630,7 @@ impl PbftNode {
         }
 
         // Take the working block from PrePrepare message as our current working block
-        self.state.working_block = pbft_message.get_block().clone();
+        self.state.working_block = Some(pbft_message.get_block().clone());
 
         Ok(())
     }
@@ -669,9 +687,12 @@ impl PbftNode {
             warn!("{}: I'm now a primary", self.state);
 
             // If we're the new primary, need to clean up the block mess from the view change
-            self.service
-                .ignore_block(BlockId::from(self.state.working_block.get_block_id().to_vec()))
-                .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
+            if let Some(ref working_block) = self.state.working_block {
+                info!("{}: Ignoring block {}", self.state, &hex::encode(working_block.get_block_id()));
+                self.service
+                    .ignore_block(BlockId::from(working_block.get_block_id().to_vec()))
+                    .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
+            }
             info!("{}: Initializing block", self.state);
             self.service
                 .initialize_block(None)

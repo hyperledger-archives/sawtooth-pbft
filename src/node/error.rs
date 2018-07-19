@@ -18,6 +18,8 @@
 use std::error::Error;
 use std::fmt;
 
+use hex;
+
 use protobuf::error::ProtobufError;
 
 use protos::pbft_message::PbftBlock;
@@ -33,9 +35,11 @@ pub enum PbftError {
     BlockMismatch(PbftBlock, PbftBlock),
     MessageMismatch(PbftMessageType),
     ViewMismatch(usize, usize),
+    InternalError(String),
     NodeNotFound,
     WrongNumBlocks,
     Timeout,
+    NoWorkingBlock,
 }
 
 impl Error for PbftError {
@@ -48,9 +52,11 @@ impl Error for PbftError {
             BlockMismatch(_, _) => "BlockMismatch",
             MessageMismatch(_) => "MessageMismatch",
             ViewMismatch(_, _) => "ViewMismatch",
+            InternalError(_) => "InternalError",
             NodeNotFound => "NodeNotFound",
             WrongNumBlocks => "WrongNumBlocks",
             Timeout => "Timeout",
+            NoWorkingBlock => "NoWorkingBlock",
         }
     }
 }
@@ -73,11 +79,14 @@ impl fmt::Display for PbftError {
             PbftError::MessageMismatch(t) => write!(f, "{:?} message mismatch", t),
             PbftError::ViewMismatch(exp, got) => write!(f, "View mismatch: {} != {}", exp, got),
             PbftError::BlockMismatch(exp, got) => {
-                write!(f, "Block mismatch: {:?} != {:?}", exp, got)
+                write!(f, "{:?} != {:?}", &hex::encode(exp.get_block_id())[..6],
+                &hex::encode(got.get_block_id())[..6])
             }
             PbftError::NodeNotFound => write!(f, "Couldn't find node in the network"),
             PbftError::WrongNumBlocks => write!(f, "Incorrect number of blocks"),
             PbftError::Timeout => write!(f, "Timed out"),
+            PbftError::InternalError(description) => write!(f, "{}", description),
+            PbftError::NoWorkingBlock => write!(f, "There is no working block!"),
         }
     }
 }
