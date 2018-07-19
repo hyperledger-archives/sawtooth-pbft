@@ -28,7 +28,6 @@ extern crate simple_logger;
 use std::process;
 
 use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
-use sawtooth_sdk::consensus::engine::Engine;
 
 mod node;
 mod protos;

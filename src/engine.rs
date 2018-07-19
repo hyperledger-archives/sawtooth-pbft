@@ -16,7 +16,6 @@
  */
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::time::Duration;
 
 use sawtooth_sdk::consensus::{engine::*, service::Service};
 
@@ -47,9 +46,14 @@ impl Engine for PbftEngine {
         &mut self,
         updates: Receiver<Update>,
         mut service: Box<Service>,
-        chain_head: Block,
-        _peers: Vec<PeerInfo>,
+        startup_state: StartupState,
     ) {
+        let StartupState {
+            chain_head,
+            peers,
+            local_peer_info: _,
+        } = startup_state;
+
         // Load on-chain settings
         let config = config::load_pbft_config(chain_head.block_id, &mut service);
 
