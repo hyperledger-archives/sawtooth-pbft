@@ -21,7 +21,7 @@ use protobuf;
 use protobuf::RepeatedField;
 use protobuf::{Message, ProtobufError};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use std::convert::From;
 
@@ -32,7 +32,6 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView,
 
 use node::config::PbftConfig;
 use node::error::PbftError;
-use node::message_extensions::PbftGetInfo;
 use node::message_type::PbftMessageType;
 use node::pbft_log::{PbftLog, PbftStableCheckpoint};
 use node::state::{PbftMode, PbftPhase, PbftState};
@@ -193,7 +192,7 @@ impl PbftNode {
 
                 self.msg_log.add_message(pbft_message.clone());
 
-                self._prepared(&pbft_message)?;
+                self.msg_log.prepared(&pbft_message, self.state.f)?;
 
                 if self.state.phase != PbftPhase::Checking {
                     self.state.switch_phase(PbftPhase::Checking);
@@ -212,7 +211,7 @@ impl PbftNode {
 
                 self.msg_log.add_message(pbft_message.clone());
 
-                self._committed(&pbft_message)?;
+                self.msg_log.committed(&pbft_message, self.state.f)?;
 
                 self.state.switch_phase(PbftPhase::FinalCommitting);
 
@@ -229,7 +228,7 @@ impl PbftNode {
 
                 self.msg_log.add_message(pbft_message.clone());
 
-                self._check_msg_against_log(&&pbft_message, true, Some(self.state.f + 1))?;
+                self.msg_log.check_msg_against_log(&&pbft_message, true, self.state.f + 1)?;
 
                 if self.state.phase == PbftPhase::FinalCommitting {
                     self.state.switch_phase(PbftPhase::Finished);
@@ -323,7 +322,7 @@ impl PbftNode {
 
                 self.msg_log.add_new_view(nv_message.clone());
 
-                self._check_msg_against_log(&&nv_message, true, None)?;
+                self.msg_log.check_msg_against_log(&&nv_message, true, 2 * self.state.f + 1)?;
 
                 warn!(
                     "{}: Arrived in new view, transitioning to Normal mode",
@@ -634,7 +633,7 @@ impl PbftNode {
         }
 
         if self.state.mode == PbftMode::Checkpointing {
-            self._check_msg_against_log(&pbft_message, true, None)?;
+            self.msg_log.check_msg_against_log(&pbft_message, true, 2 * self.state.f + 1)?;
             warn!(
                 "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
                 self.state,
@@ -654,7 +653,7 @@ impl PbftNode {
         &mut self,
         vc_message: &PbftViewChange,
     ) -> Result<PbftNewView, PbftError> {
-        self._check_msg_against_log(&vc_message, true, None)?;
+        self.msg_log.check_msg_against_log(&vc_message, true, 2 * self.state.f + 1)?;
 
         // Update current view and reset timer
         self.state.timeout.reset();
@@ -711,106 +710,6 @@ impl PbftNode {
         Ok(nv_msg)
     }
 
-    // ---------- Methods for checking on the current state ----------
-
-    // "prepared" predicate
-    fn _prepared(&self, deser_msg: &PbftMessage) -> Result<(), PbftError> {
-        let info = deser_msg.get_info();
-        let block_new_msgs = self.msg_log.get_messages_of_type(
-            &PbftMessageType::BlockNew,
-            info.get_seq_num(),
-            info.get_view(),
-        );
-        if block_new_msgs.len() != 1 {
-            return Err(PbftError::WrongNumMessages(
-                PbftMessageType::BlockNew,
-                1,
-                block_new_msgs.len(),
-            ));
-        }
-
-        let pre_prep_msgs = self.msg_log.get_messages_of_type(
-            &PbftMessageType::PrePrepare,
-            info.get_seq_num(),
-            info.get_view(),
-        );
-        if pre_prep_msgs.len() != 1 {
-            return Err(PbftError::WrongNumMessages(
-                PbftMessageType::PrePrepare,
-                1,
-                pre_prep_msgs.len(),
-            ));
-        }
-
-        let prep_msgs = self.msg_log.get_messages_of_type(
-            &PbftMessageType::Prepare,
-            info.get_seq_num(),
-            info.get_view(),
-        );
-        for prep_msg in prep_msgs.iter() {
-            // Make sure the contents match
-            if (!infos_match(prep_msg.get_info(), &pre_prep_msgs[0].get_info())
-                && prep_msg.get_block() != pre_prep_msgs[0].get_block())
-                || (!infos_match(prep_msg.get_info(), block_new_msgs[0].get_info())
-                    && prep_msg.get_block() != block_new_msgs[0].get_block())
-            {
-                return Err(PbftError::MessageMismatch(PbftMessageType::Prepare));
-            }
-        }
-
-        self._check_msg_against_log(&deser_msg, true, None)?;
-
-        debug!("{}: Passed _prepared predicate", self.state);
-        Ok(())
-    }
-
-    // "committed" predicate
-    fn _committed(&self, deser_msg: &PbftMessage) -> Result<(), PbftError> {
-        self._check_msg_against_log(&deser_msg, true, None)?;
-
-        self._prepared(deser_msg)?;
-
-        debug!("{}: Passed _committed predicate", self.state);
-        Ok(())
-    }
-
-    // Check an incoming message against its counterparts in the message log
-    fn _check_msg_against_log<'a, T: PbftGetInfo<'a>>(
-        &self,
-        message: &'a T,
-        check_match: bool,
-        num_cutoff: Option<u64>,
-    ) -> Result<(), PbftError> {
-        let num_cutoff = num_cutoff.unwrap_or(2 * self.state.f + 1);
-        let msg_type = PbftMessageType::from(message.get_msg_info().get_msg_type());
-
-        let msg_infos: Vec<&PbftMessageInfo> = self.msg_log.get_message_infos(
-            &msg_type,
-            message.get_msg_info().get_seq_num(),
-            message.get_msg_info().get_view(),
-        );
-
-        let num_cp_msgs = num_unique_signers(&msg_infos);
-        if num_cp_msgs < num_cutoff {
-            return Err(PbftError::WrongNumMessages(
-                msg_type,
-                num_cutoff as usize,
-                num_cp_msgs as usize,
-            ));
-        }
-
-        if check_match {
-            let non_matches: usize = msg_infos
-                .iter()
-                .filter(|&m| !infos_match(message.get_msg_info(), m))
-                .count();
-            if non_matches > 0 {
-                return Err(PbftError::MessageMismatch(msg_type));
-            }
-        }
-        Ok(())
-    }
-
     // ---------- Methods for communication between nodes ----------
 
     // Broadcast a message to this node's peers, and itself
@@ -863,12 +762,6 @@ impl PbftNode {
     }
 }
 
-
-// Check that the views and sequence numbers of two messages match
-fn infos_match(m1: &PbftMessageInfo, m2: &PbftMessageInfo) -> bool {
-    m1.get_view() == m2.get_view() && m1.get_seq_num() == m2.get_seq_num()
-}
-
 // Check that everything but the signers of a block match
 fn blocks_match(b1: &PbftBlock, b2: &PbftBlock) -> bool {
     b1.get_block_id() == b2.get_block_id()
@@ -907,17 +800,4 @@ fn pbft_block_from_block(block: Block) -> PbftBlock {
     pbft_block.set_block_num(block.block_num);
     pbft_block.set_summary(block.summary);
     pbft_block
-}
-
-// Make sure messages are all from different nodes
-fn num_unique_signers(msg_info_list: &Vec<&PbftMessageInfo>) -> u64 {
-    let mut received_from: HashSet<&[u8]> = HashSet::new();
-    let mut diff_msgs = 0;
-    for info in msg_info_list {
-        // If the signer is NOT already in the set
-        if received_from.insert(info.get_signer_id()) {
-            diff_msgs += 1;
-        }
-    }
-    diff_msgs as u64
 }

@@ -15,7 +15,7 @@
  * -----------------------------------------------------------------------------
  */
 
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashSet};
 use std::fmt;
 
 use hex;
@@ -24,8 +24,10 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView,
 
 use sawtooth_sdk::consensus::engine::PeerMessage;
 
+use node::error::PbftError;
 use node::config::PbftConfig;
 use node::message_type::PbftMessageType;
+use node::message_extensions::PbftGetInfo;
 
 // The log keeps track of the last stable checkpoint
 #[derive(Clone)]
@@ -59,6 +61,7 @@ pub struct PbftLog {
 
     // Unread messages
     unreads: VecDeque<PeerMessage>,
+    unread_block_new: VecDeque<Block>,
 
     // The most recent checkpoint that contains proof
     pub latest_stable_checkpoint: Option<PbftStableCheckpoint>,
@@ -111,8 +114,103 @@ impl PbftLog {
             high_water_mark: config.max_log_size,
             max_log_size: config.max_log_size,
             unreads: VecDeque::new(),
+            unread_block_new: VecDeque::new(),
             latest_stable_checkpoint: None,
         }
+    }
+
+    // ---------- Methods to check a message against the log ----------
+    // "prepared" predicate
+    pub fn prepared(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
+        let info = deser_msg.get_info();
+        let block_new_msgs = self.get_messages_of_type(
+            &PbftMessageType::BlockNew,
+            info.get_seq_num(),
+            info.get_view(),
+        );
+        if block_new_msgs.len() != 1 {
+            return Err(PbftError::WrongNumMessages(
+                PbftMessageType::BlockNew,
+                1,
+                block_new_msgs.len(),
+            ));
+        }
+
+        let pre_prep_msgs = self.get_messages_of_type(
+            &PbftMessageType::PrePrepare,
+            info.get_seq_num(),
+            info.get_view(),
+        );
+        if pre_prep_msgs.len() != 1 {
+            return Err(PbftError::WrongNumMessages(
+                PbftMessageType::PrePrepare,
+                1,
+                pre_prep_msgs.len(),
+            ));
+        }
+
+        let prep_msgs = self.get_messages_of_type(
+            &PbftMessageType::Prepare,
+            info.get_seq_num(),
+            info.get_view(),
+        );
+        for prep_msg in prep_msgs.iter() {
+            // Make sure the contents match
+            if (!infos_match(prep_msg.get_info(), &pre_prep_msgs[0].get_info())
+                && prep_msg.get_block() != pre_prep_msgs[0].get_block())
+                || (!infos_match(prep_msg.get_info(), block_new_msgs[0].get_info())
+                    && prep_msg.get_block() != block_new_msgs[0].get_block())
+            {
+                return Err(PbftError::MessageMismatch(PbftMessageType::Prepare));
+            }
+        }
+
+        self.check_msg_against_log(&deser_msg, true, 2 * f + 1)?;
+
+        Ok(())
+    }
+
+    // "committed" predicate
+    pub fn committed(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
+        self.check_msg_against_log(&deser_msg, true, 2 * f + 1)?;
+        self.prepared(deser_msg, f)?;
+        Ok(())
+    }
+
+    // Check an incoming message against its counterparts in the message log
+    pub fn check_msg_against_log<'a, T: PbftGetInfo<'a>>(
+        &self,
+        message: &'a T,
+        check_match: bool,
+        num_cutoff: u64,
+    ) -> Result<(), PbftError> {
+        let msg_type = PbftMessageType::from(message.get_msg_info().get_msg_type());
+
+        let msg_infos: Vec<&PbftMessageInfo> = self.get_message_infos(
+            &msg_type,
+            message.get_msg_info().get_seq_num(),
+            message.get_msg_info().get_view(),
+        );
+
+        let num_cp_msgs = num_unique_signers(&msg_infos);
+        if num_cp_msgs < num_cutoff {
+            return Err(PbftError::WrongNumMessages(
+                msg_type,
+                num_cutoff as usize,
+                num_cp_msgs as usize,
+            ));
+        }
+
+        if check_match {
+            let non_matches: usize = msg_infos
+                .iter()
+                .filter(|&m| !infos_match(message.get_msg_info(), m))
+                .count();
+            if non_matches > 0 {
+                return Err(PbftError::MessageMismatch(msg_type));
+            }
+        }
+        Ok(())
     }
 
     // Methods for dealing with PbftMessages
@@ -322,4 +420,20 @@ impl PbftLog {
     pub fn pop_unread(&mut self) -> Option<PeerMessage> {
         self.unreads.pop_front()
     }
+// Make sure messages are all from different nodes
+fn num_unique_signers(msg_info_list: &Vec<&PbftMessageInfo>) -> u64 {
+    let mut received_from: HashSet<&[u8]> = HashSet::new();
+    let mut diff_msgs = 0;
+    for info in msg_info_list {
+        // If the signer is NOT already in the set
+        if received_from.insert(info.get_signer_id()) {
+            diff_msgs += 1;
+        }
+    }
+    diff_msgs as u64
+}
+
+// Check that the views and sequence numbers of two messages match
+fn infos_match(m1: &PbftMessageInfo, m2: &PbftMessageInfo) -> bool {
+    m1.get_view() == m2.get_view() && m1.get_seq_num() == m2.get_seq_num()
 }
