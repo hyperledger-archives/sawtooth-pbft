@@ -80,15 +80,15 @@ impl fmt::Display for PbftState {
         };
 
         let wb = if let Some(ref block) = self.working_block {
-            block.get_block_id()
+            String::from(&hex::encode(block.get_block_id())[..6])
         } else {
-            b"~none~"
+            String::from("~none~")
         };
 
         write!(
             f,
             "({} {} {}, seq {}, wb {}), Node {}{:02}",
-            phase, mode, self.view, self.seq_num, &hex::encode(&wb)[..6], ast, self.id,
+            phase, mode, self.view, self.seq_num, wb, ast, self.id,
         )
     }
 }

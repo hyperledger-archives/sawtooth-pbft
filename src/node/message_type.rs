@@ -15,6 +15,8 @@
  * -----------------------------------------------------------------------------
  */
 
+use std::fmt;
+
 // Messages related to PBFT consensus
 #[derive(Debug, PartialEq, PartialOrd)]
 pub enum PbftMessageType {
@@ -37,6 +39,26 @@ pub enum PbftMessageType {
     // Goes at the bottom to prevent accidentally adding to unread message queue
     Unset,
 }
+
+
+impl fmt::Display for PbftMessageType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let txt = match self {
+            PbftMessageType::PrePrepare => "PP",
+            PbftMessageType::Prepare => "Pr",
+            PbftMessageType::Commit => "Co",
+            PbftMessageType::CommitFinal => "FC",
+            PbftMessageType::BlockNew => "BN",
+            PbftMessageType::Checkpoint => "CP",
+            PbftMessageType::ViewChange => "VC",
+            PbftMessageType::NewView => "NV",
+            PbftMessageType::Pulse => "Pl",
+            PbftMessageType::Unset => "Un",
+        };
+        write!(f, "{}", txt)
+    }
+}
+
 
 impl PbftMessageType {
     pub fn is_multicast(&self) -> bool {

@@ -420,6 +420,14 @@ impl PbftLog {
     pub fn pop_unread(&mut self) -> Option<PeerMessage> {
         self.unreads.pop_front()
     }
+
+    pub fn push_unread_block_new(&mut self, msg: Block) {
+        self.unread_block_new.push_back(msg);
+    }
+
+    pub fn pop_unread_block_new(&mut self) -> Option<Block> {
+        self.unread_block_new.pop_front()
+    }
 }
 
 // Make sure messages are all from different nodes

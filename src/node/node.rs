@@ -67,7 +67,6 @@ impl PbftNode {
     // This method controls the PBFT multicast protocol (PrePrepare, Prepare, Commit, CommitFinal).
     pub fn on_peer_message(&mut self, msg: PeerMessage) -> Result<(), PbftError> {
         let msg_type = msg.message_type.clone();
-        debug!("{}: RECEIVED MESSAGE {}", self.state, msg_type);
         let msg_type = PbftMessageType::from(msg_type.as_str());
 
         // Handle a multicast protocol message
@@ -233,12 +232,33 @@ impl PbftNode {
 
                     self.state.switch_phase(PbftPhase::Finished);
 
-                    if pbft_message.get_block().get_block_id() != working_block.get_block_id() {
+                    // Don't commit if we've seen this block already, but go ahead if we somehow
+                    // skipped a block.
+                    if pbft_message.get_block().get_block_id() != working_block.get_block_id()
+                        && pbft_message.get_block().get_block_num() >= working_block.get_block_num()
+                    {
                         warn!(
                             "{}: Not committing block {:?}",
                             self.state,
                             BlockId::from(pbft_message.get_block().block_id.clone())
                         );
+                        return Err(PbftError::BlockMismatch(pbft_message.get_block().clone(), working_block));
+                    }
+
+                    // Also make sure that we're committing on top of the current chain head
+                    let head = self.service.get_chain_head()
+                        .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
+                    let cur_block = get_block_by_id(
+                        &mut self.service,
+                        BlockId::from(pbft_message.get_block().get_block_id().to_vec()))
+                        .unwrap();
+                    if cur_block.previous_id != head.block_id {
+                        warn!(
+                            "{}: Not committing block {:?} but pushing to unreads",
+                            self.state,
+                            BlockId::from(pbft_message.get_block().block_id.clone())
+                        );
+                        self.msg_log.push_unread(msg);
                         return Err(PbftError::BlockMismatch(pbft_message.get_block().clone(), working_block));
                     }
 
@@ -354,7 +374,7 @@ impl PbftNode {
     // Assumes the validator has checked that the block signature is valid, and that it is to
     // be built on top of the current chain head.
     pub fn on_block_new(&mut self, block: Block) -> Result<(), PbftError> {
-        debug!("{}: <<<<<< BlockNew: {:?}", self.state, block.block_id);
+        info!("{}: Got BlockNew: {:?}", self.state, block.block_id);
 
         let pbft_block = pbft_block_from_block(block.clone());
 
@@ -378,8 +398,13 @@ impl PbftNode {
 
         msg.set_block(pbft_block.clone());
 
+        if self.state.switch_phase(PbftPhase::PrePreparing).is_none() {
+            info!("{}: Not ready for block {}, pushing to unread", self.state,
+                  &hex::encode(Vec::<u8>::from(block.block_id.clone()))[..6]);
+            self.msg_log.push_unread_block_new(block.clone());
+            return Ok(())
+        }
         self.msg_log.add_message(msg);
-        self.state.switch_phase(PbftPhase::PrePreparing);
 
         if self.state.is_primary() {
             let s = self.state.seq_num;
@@ -443,15 +468,15 @@ impl PbftNode {
         if self.state.is_primary() {
             // Try to finalize a block
             if self.state.phase == PbftPhase::NotStarted {
-                info!("{}: Summarizing block", self.state);
+                debug!("{}: Summarizing block", self.state);
                 if let Err(e) = self.service.summarize_block() {
                     error!("{}: Couldn't summarize, so not finalizing: {}", self.state,
                            e.description().to_string());
                 } else {
-                    info!("{}: Trying to finalize block", self.state);
+                    debug!("{}: Trying to finalize block", self.state);
                     match self.service.finalize_block(vec![]) {
                         Ok(block_id) => {
-                            debug!("{}: Publishing block {:?}", self.state, block_id);
+                            info!("{}: Publishing block {:?}", self.state, block_id);
                         }
                         Err(EngineError::BlockNotReady) => {
                             debug!("{}: Block not ready", self.state);
@@ -497,6 +522,10 @@ impl PbftNode {
         if let Some(msg) = self.msg_log.pop_unread() {
             debug!("{}: Popping unread {}", self.state, msg.message_type);
             self.on_peer_message(msg)?
+        }
+        if let Some(msg) = self.msg_log.pop_unread_block_new() {
+            debug!("{}: Popping unread BlockNew", self.state);
+            self.on_block_new(msg)?
         }
         Ok(())
     }
@@ -821,4 +850,19 @@ fn pbft_block_from_block(block: Block) -> PbftBlock {
     pbft_block.set_block_num(block.block_num);
     pbft_block.set_summary(block.summary);
     pbft_block
+}
+
+// There should only be one block with a matching ID
+fn get_block_by_id(service: &mut Box<Service>, block_id: BlockId) -> Option<Block> {
+    let blocks: Vec<Block> = service
+        .get_blocks(vec![block_id.clone()])
+        .unwrap_or(HashMap::new())
+        .into_iter()
+        .map(|(_block_id, block)| block)
+        .collect();
+    if blocks.len() < 1 {
+        None
+    } else {
+        Some(blocks[0].clone())
+    }
 }
