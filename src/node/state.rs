@@ -20,7 +20,7 @@ use std::fmt;
 
 use hex;
 
-use sawtooth_sdk::consensus::engine::PeerId;
+use sawtooth_sdk::consensus::engine::{PeerId, BlockId};
 
 use protos::pbft_message::PbftBlock;
 
@@ -79,10 +79,13 @@ impl fmt::Display for PbftState {
             PbftPhase::Finished => "Fi",
         };
 
-        let wb = if let Some(ref block) = self.working_block {
-            String::from(&hex::encode(block.get_block_id())[..6])
-        } else {
-            String::from("~none~")
+        let wb = match self.working_block {
+            WorkingBlockOption::WorkingBlock(ref block) =>
+                String::from(&hex::encode(block.get_block_id())[..6]),
+            WorkingBlockOption::WorkingBlockNew(ref block_id) =>
+                String::from(&hex::encode(block_id)[..5]) + "~",
+            _ =>
+                String::from("~none~"),
         };
 
         write!(
@@ -90,6 +93,26 @@ impl fmt::Display for PbftState {
             "({} {} {}, seq {}, wb {}), Node {}{:02}",
             phase, mode, self.view, self.seq_num, wb, ast, self.id,
         )
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum WorkingBlockOption {
+    NoWorkingBlock,
+    WorkingBlockNew(BlockId),
+    WorkingBlock(PbftBlock),
+}
+
+impl WorkingBlockOption {
+    pub fn is_none(&self) -> bool {
+        self == &WorkingBlockOption::NoWorkingBlock
+    }
+
+    pub fn is_some(&self) -> bool {
+        match self {
+            &WorkingBlockOption::WorkingBlock(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -128,7 +151,7 @@ pub struct PbftState {
     pub timeout: Timeout,
 
     // The current block we're working on
-    pub working_block: Option<PbftBlock>,
+    pub working_block: WorkingBlockOption,
 }
 
 impl PbftState {
@@ -161,7 +184,7 @@ impl PbftState {
             f: f,
             network_node_ids: peer_id_map,
             timeout: Timeout::new(config.view_change_timeout.clone()),
-            working_block: None,
+            working_block: WorkingBlockOption::NoWorkingBlock,
         }
     }
 

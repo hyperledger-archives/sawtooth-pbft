@@ -103,10 +103,6 @@ impl Engine for PbftEngine {
                 handle_pbft_result(node.start_view_change());
             }
 
-            if node.msg_log.at_checkpoint() {
-                handle_pbft_result(node.start_checkpoint());
-            }
-
             handle_pbft_result(node.retry_unread());
         }
     }
@@ -124,7 +120,7 @@ fn handle_pbft_result(res: Result<(), PbftError>) {
     if let Err(e) = res {
         match e {
             PbftError::Timeout => (),
-            PbftError::WrongNumMessages(_, _, _) => debug!("{}", e),
+            PbftError::WrongNumMessages(_, _, _) => trace!("{}", e),
             _ => error!("{}", e),
         }
     }

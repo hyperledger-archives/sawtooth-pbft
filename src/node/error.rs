@@ -17,7 +17,6 @@
 
 use std::error::Error;
 use std::fmt;
-
 use hex;
 
 use protobuf::error::ProtobufError;
@@ -25,6 +24,15 @@ use protobuf::error::ProtobufError;
 use protos::pbft_message::PbftBlock;
 
 use node::message_type::PbftMessageType;
+
+#[derive(Debug, PartialEq)]
+pub enum PbftNotReadyType {
+    PushToUnreads,
+    AddToLog,
+    LimboPushToUnreads,
+    LimboAddToLog,
+    Proceed,
+}
 
 // Errors that might occur in a PbftNode
 #[derive(Debug)]
@@ -40,6 +48,7 @@ pub enum PbftError {
     WrongNumBlocks,
     Timeout,
     NoWorkingBlock,
+    NotReadyForMessage,
 }
 
 impl Error for PbftError {
@@ -57,6 +66,7 @@ impl Error for PbftError {
             WrongNumBlocks => "WrongNumBlocks",
             Timeout => "Timeout",
             NoWorkingBlock => "NoWorkingBlock",
+            NotReadyForMessage => "NotReadyForMessage",
         }
     }
 }
@@ -86,7 +96,8 @@ impl fmt::Display for PbftError {
             PbftError::WrongNumBlocks => write!(f, "Incorrect number of blocks"),
             PbftError::Timeout => write!(f, "Timed out"),
             PbftError::InternalError(description) => write!(f, "{}", description),
-            PbftError::NoWorkingBlock => write!(f, "There is no working block!"),
+            PbftError::NoWorkingBlock => write!(f, "There is no working block"),
+            PbftError::NotReadyForMessage => write!(f, "Not ready"),
         }
     }
 }
