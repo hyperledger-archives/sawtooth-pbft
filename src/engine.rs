@@ -35,9 +35,7 @@ pub struct PbftEngine {
 
 impl PbftEngine {
     pub fn new(id: u64) -> Self {
-        PbftEngine {
-            id: id,
-        }
+        PbftEngine { id: id }
     }
 }
 

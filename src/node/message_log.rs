@@ -15,7 +15,7 @@
  * -----------------------------------------------------------------------------
  */
 
-use std::collections::{VecDeque, HashSet};
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 
 use hex;
@@ -24,10 +24,10 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChan
 
 use sawtooth_sdk::consensus::engine::{Block, PeerMessage};
 
-use node::error::PbftError;
 use node::config::PbftConfig;
-use node::message_type::PbftMessageType;
+use node::error::PbftError;
 use node::message_extensions::PbftGetInfo;
+use node::message_type::PbftMessageType;
 
 // The log keeps track of the last stable checkpoint
 #[derive(Clone)]

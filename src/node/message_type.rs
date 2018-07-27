@@ -33,7 +33,6 @@ pub enum PbftMessageType {
     Unset,
 }
 
-
 impl fmt::Display for PbftMessageType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let txt = match self {
@@ -49,13 +48,12 @@ impl fmt::Display for PbftMessageType {
     }
 }
 
-
 impl PbftMessageType {
     pub fn is_multicast(&self) -> bool {
         match self {
-            PbftMessageType::PrePrepare
-            | PbftMessageType::Prepare
-            | PbftMessageType::Commit => true,
+            PbftMessageType::PrePrepare | PbftMessageType::Prepare | PbftMessageType::Commit => {
+                true
+            }
             _ => false,
         }
     }

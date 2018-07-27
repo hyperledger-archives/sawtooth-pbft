@@ -21,9 +21,9 @@ use protobuf;
 use protobuf::RepeatedField;
 use protobuf::{Message, ProtobufError};
 
-use std::error::Error;
 use std::collections::HashMap;
 use std::convert::From;
+use std::error::Error;
 
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId, PeerMessage};
 use sawtooth_sdk::consensus::service::Service;
@@ -32,8 +32,8 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChan
 
 use node::config::PbftConfig;
 use node::error::{PbftError, PbftNotReadyType};
-use node::message_type::PbftMessageType;
 use node::message_log::{PbftLog, PbftStableCheckpoint};
+use node::message_type::PbftMessageType;
 use node::state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 
 // The actual node
@@ -97,14 +97,17 @@ impl PbftNode {
                 // If we've got a BlockNew ready and the sequence number is our current plus one,
                 // then ignore whatever multicast_not_ready tells us to do.
                 let mut ignore_not_ready = false;
-                if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = self.state.working_block {
+                if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) =
+                    self.state.working_block
+                {
                     if block_id == &BlockId::from(pbft_message.get_block().get_block_id().to_vec())
                         && pbft_message.get_info().get_seq_num() == self.state.seq_num + 1
                     {
                         info!("{}: Ignoring not ready and starting multicast", self.state);
                         ignore_not_ready = true;
                     } else {
-                        info!("{}: Not starting multicast; ({} != {} or {} != {} + 1)",
+                        info!(
+                            "{}: Not starting multicast; ({} != {} or {} != {} + 1)",
                             self.state,
                             &hex::encode(Vec::<u8>::from(block_id.clone()))[..6],
                             &hex::encode(pbft_message.get_block().get_block_id())[..6],
@@ -115,7 +118,11 @@ impl PbftNode {
                 }
 
                 if !ignore_not_ready {
-                    self._handle_not_ready(multicast_not_ready, &pbft_message, msg.content.clone())?;
+                    self._handle_not_ready(
+                        multicast_not_ready,
+                        &pbft_message,
+                        msg.content.clone(),
+                    )?;
                 }
 
                 self._handle_pre_prepare(&pbft_message)?;
@@ -155,7 +162,9 @@ impl PbftNode {
                         .check_blocks(vec![
                             BlockId::from(pbft_message.get_block().clone().block_id),
                         ])
-                        .expect("Failed to check blocks");
+                        .map_err(|_| {
+                            PbftError::InternalError(String::from("Failed to check blocks"))
+                        })?;
                 }
             }
 
@@ -170,7 +179,9 @@ impl PbftNode {
                 self.msg_log.committed(&pbft_message, self.state.f)?;
 
                 if self.state.phase == PbftPhase::Committing {
-                    let working_block = if let WorkingBlockOption::WorkingBlock(ref wb) = self.state.working_block {
+                    let working_block = if let WorkingBlockOption::WorkingBlock(ref wb) =
+                        self.state.working_block
+                    {
                         Ok(wb.clone())
                     } else {
                         Err(PbftError::NoWorkingBlock)
@@ -188,16 +199,20 @@ impl PbftNode {
                             self.state,
                             BlockId::from(pbft_message.get_block().block_id.clone())
                         );
-                        return Err(PbftError::BlockMismatch(pbft_message.get_block().clone(), working_block.clone()));
+                        return Err(PbftError::BlockMismatch(
+                            pbft_message.get_block().clone(),
+                            working_block.clone(),
+                        ));
                     }
 
                     // Also make sure that we're committing on top of the current chain head
-                    let head = self.service.get_chain_head()
+                    let head = self.service
+                        .get_chain_head()
                         .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
                     let cur_block = get_block_by_id(
                         &mut self.service,
-                        BlockId::from(pbft_message.get_block().get_block_id().to_vec()))
-                        .unwrap();
+                        BlockId::from(pbft_message.get_block().get_block_id().to_vec()),
+                    ).ok_or_else(|| PbftError::WrongNumBlocks)?;
                     if cur_block.previous_id != head.block_id {
                         warn!(
                             "{}: Not committing block {:?} but pushing to backlog",
@@ -205,7 +220,10 @@ impl PbftNode {
                             BlockId::from(pbft_message.get_block().block_id.clone())
                         );
                         self.msg_log.push_backlog(msg);
-                        return Err(PbftError::BlockMismatch(pbft_message.get_block().clone(), working_block.clone()));
+                        return Err(PbftError::BlockMismatch(
+                            pbft_message.get_block().clone(),
+                            working_block.clone(),
+                        ));
                     }
 
                     info!(
@@ -216,7 +234,9 @@ impl PbftNode {
 
                     self.service
                         .commit_block(BlockId::from(pbft_message.get_block().block_id.clone()))
-                        .expect("Failed to commit block");
+                        .map_err(|_| {
+                            PbftError::InternalError(String::from("Failed to commit block"))
+                        })?;
 
                     // Previous block is sent to the validator; reset the working block
                     self.state.working_block = WorkingBlockOption::NoWorkingBlock;
@@ -311,16 +331,20 @@ impl PbftNode {
 
         msg.set_block(pbft_block.clone());
 
-        let head = self.service.get_chain_head()
+        let head = self.service
+            .get_chain_head()
             .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
 
         if self.state.switch_phase(PbftPhase::PrePreparing).is_none()
             || block.block_num > head.block_num + 1
         {
-            info!("{}: Not ready for block {}, pushing to backlog", self.state,
-                  &hex::encode(Vec::<u8>::from(block.block_id.clone()))[..6]);
+            info!(
+                "{}: Not ready for block {}, pushing to backlog",
+                self.state,
+                &hex::encode(Vec::<u8>::from(block.block_id.clone()))[..6]
+            );
             self.msg_log.push_block_backlog(block.clone());
-            return Ok(())
+            return Ok(());
         }
 
         self.msg_log.add_message(msg);
@@ -342,7 +366,10 @@ impl PbftNode {
 
         if self.state.phase == PbftPhase::Finished {
             if self.state.is_primary() {
-                info!("{}: Initializing block with previous ID {:?}", self.state, block_id);
+                info!(
+                    "{}: Initializing block with previous ID {:?}",
+                    self.state, block_id
+                );
                 self.service
                     .initialize_block(Some(block_id))
                     .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
@@ -400,8 +427,11 @@ impl PbftNode {
             if self.state.phase == PbftPhase::NotStarted {
                 debug!("{}: Summarizing block", self.state);
                 if let Err(e) = self.service.summarize_block() {
-                    error!("{}: Couldn't summarize, so not finalizing: {}", self.state,
-                           e.description().to_string());
+                    error!(
+                        "{}: Couldn't summarize, so not finalizing: {}",
+                        self.state,
+                        e.description().to_string()
+                    );
                 } else {
                     debug!("{}: Trying to finalize block", self.state);
                     match self.service.finalize_block(vec![]) {
@@ -550,21 +580,13 @@ impl PbftNode {
             if msg_type < expecting_type {
                 info!(
                     "{}: seq {} == {}, {} < {}, only add to log",
-                    self.state,
-                    self.state.seq_num,
-                    self.state.seq_num,
-                    msg_type,
-                    expecting_type,
+                    self.state, self.state.seq_num, self.state.seq_num, msg_type, expecting_type,
                 );
                 return PbftNotReadyType::AddToLog;
             } else if msg_type > expecting_type {
                 info!(
                     "{}: seq {} == {}, {} > {}, push to backlog.",
-                    self.state,
-                    self.state.seq_num,
-                    self.state.seq_num,
-                    msg_type,
-                    expecting_type,
+                    self.state, self.state.seq_num, self.state.seq_num, msg_type, expecting_type,
                 );
                 return PbftNotReadyType::PushToBacklog;
             }
@@ -660,12 +682,17 @@ impl PbftNode {
             );
 
             if num_updated < 1 {
-                return Err(PbftError::WrongNumMessages(PbftMessageType::BlockNew, 1, num_updated));
+                return Err(PbftError::WrongNumMessages(
+                    PbftMessageType::BlockNew,
+                    1,
+                    num_updated,
+                ));
             }
         }
 
         // Take the working block from PrePrepare message as our current working block
-        self.state.working_block = WorkingBlockOption::WorkingBlock(pbft_message.get_block().clone());
+        self.state.working_block =
+            WorkingBlockOption::WorkingBlock(pbft_message.get_block().clone());
 
         Ok(())
     }
@@ -686,7 +713,8 @@ impl PbftNode {
         }
 
         if self.state.mode == PbftMode::Checkpointing {
-            self.msg_log.check_msg_against_log(&pbft_message, true, 2 * self.state.f + 1)?;
+            self.msg_log
+                .check_msg_against_log(&pbft_message, true, 2 * self.state.f + 1)?;
             warn!(
                 "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
                 self.state,
@@ -702,11 +730,9 @@ impl PbftNode {
         Ok(())
     }
 
-    fn _handle_view_change(
-        &mut self,
-        vc_message: &PbftViewChange,
-    ) -> Result<(), PbftError> {
-        self.msg_log.check_msg_against_log(&vc_message, true, 2 * self.state.f + 1)?;
+    fn _handle_view_change(&mut self, vc_message: &PbftViewChange) -> Result<(), PbftError> {
+        self.msg_log
+            .check_msg_against_log(&vc_message, true, 2 * self.state.f + 1)?;
 
         // Update current view and stop timeout
         self.state.view += 1;
@@ -720,11 +746,17 @@ impl PbftNode {
             // If we're the new primary, need to clean up the block mess from the view change and
             // initialize a new block.
             if let WorkingBlockOption::WorkingBlock(ref working_block) = self.state.working_block {
-                info!("{}: Ignoring block {}", self.state, &hex::encode(working_block.get_block_id()));
+                info!(
+                    "{}: Ignoring block {}",
+                    self.state,
+                    &hex::encode(working_block.get_block_id())
+                );
                 self.service
                     .ignore_block(BlockId::from(working_block.get_block_id().to_vec()))
                     .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
-            } else if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = self.state.working_block {
+            } else if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) =
+                self.state.working_block
+            {
                 info!("{}: Ignoring block {}", self.state, &hex::encode(block_id));
                 self.service
                     .ignore_block(block_id.clone())
@@ -742,7 +774,10 @@ impl PbftNode {
         self.state.phase = PbftPhase::NotStarted;
         self.state.mode = PbftMode::Normal;
         self.state.timeout.stop();
-        warn!("{}: Entered normal mode in new view {} and stopped timeout", self.state, self.state.view);
+        warn!(
+            "{}: Entered normal mode in new view {} and stopped timeout",
+            self.state, self.state.view
+        );
         Ok(())
     }
 
@@ -796,8 +831,7 @@ impl PbftNode {
 
 // Check that everything but the signers of a block match
 fn blocks_match(b1: &PbftBlock, b2: &PbftBlock) -> bool {
-    b1.get_block_id() == b2.get_block_id()
-        && b1.get_block_num() == b2.get_block_num()
+    b1.get_block_id() == b2.get_block_id() && b1.get_block_num() == b2.get_block_num()
 }
 
 // Create a PbftMessageInfo struct with the desired type, view, sequence number, and signer ID

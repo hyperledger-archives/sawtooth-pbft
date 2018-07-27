@@ -20,14 +20,14 @@ use std::fmt;
 
 use hex;
 
-use sawtooth_sdk::consensus::engine::{PeerId, BlockId};
+use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
 
 use protos::pbft_message::PbftBlock;
 
 use node::config::PbftConfig;
+use node::error::PbftError;
 use node::message_type::PbftMessageType;
 use node::timing::Timeout;
-use node::error::PbftError;
 
 // Possible roles for a node
 // Primary is in charge of making consensus decisions
@@ -74,12 +74,13 @@ impl fmt::Display for PbftState {
         };
 
         let wb = match self.working_block {
-            WorkingBlockOption::WorkingBlock(ref block) =>
-                String::from(&hex::encode(block.get_block_id())[..6]),
-            WorkingBlockOption::TentativeWorkingBlock(ref block_id) =>
-                String::from(&hex::encode(block_id)[..5]) + "~",
-            _ =>
-                String::from("~none~"),
+            WorkingBlockOption::WorkingBlock(ref block) => {
+                String::from(&hex::encode(block.get_block_id())[..6])
+            }
+            WorkingBlockOption::TentativeWorkingBlock(ref block_id) => {
+                String::from(&hex::encode(block_id)[..5]) + "~"
+            }
+            _ => String::from("~none~"),
         };
 
         write!(
@@ -162,10 +163,10 @@ impl PbftState {
             .map(|(peer_id, node_id)| (node_id, peer_id))
             .collect();
 
-        // Maximum number of faulty nodes in this network
+        // Maximum number of faulty nodes in this network. Panic if there are not enough nodes.
         let f = ((peer_id_map.len() - 1) / 3) as u64;
         if f == 0 {
-            warn!("This network does not contain enough nodes to be fault tolerant");
+            panic!("This network does not contain enough nodes to be fault tolerant");
         }
 
         PbftState {

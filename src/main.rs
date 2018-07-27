@@ -29,9 +29,9 @@ use std::process;
 
 use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
 
+mod engine;
 mod node;
 mod protos;
-mod engine;
 
 fn main() {
     let matches = clap_app!(sawtooth_pbft =>
@@ -59,7 +59,7 @@ fn main() {
 
     let id = value_t!(matches.value_of("ID"), u64).unwrap_or_else(|e| e.exit());
 
-    simple_logger::init_with_level(log_level).unwrap();
+    simple_logger::init_with_level(log_level).expect("Unable to initialize logger");
 
     warn!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
 

@@ -76,7 +76,8 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftCo
         )
         .expect("Failed to get on-chain settings");
 
-    // Get the peers associated with this node (including ourselves)
+    // Get the peers associated with this node (including ourselves). Panic if it is not provided;
+    // the network cannot function without this setting.
     let peers_string = sawtooth_settings
         .get("sawtooth.consensus.pbft.peers")
         .expect("'sawtooth.consensus.pbft.peers' must be set");

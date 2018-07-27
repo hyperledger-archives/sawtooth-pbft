@@ -15,9 +15,9 @@
  * -----------------------------------------------------------------------------
  */
 
+use hex;
 use std::error::Error;
 use std::fmt;
-use hex;
 
 use protobuf::error::ProtobufError;
 
@@ -86,10 +86,12 @@ impl fmt::Display for PbftError {
             ),
             PbftError::MessageMismatch(t) => write!(f, "{:?} message mismatch", t),
             PbftError::ViewMismatch(exp, got) => write!(f, "View mismatch: {} != {}", exp, got),
-            PbftError::BlockMismatch(exp, got) => {
-                write!(f, "{:?} != {:?}", &hex::encode(exp.get_block_id())[..6],
-                &hex::encode(got.get_block_id())[..6])
-            }
+            PbftError::BlockMismatch(exp, got) => write!(
+                f,
+                "{:?} != {:?}",
+                &hex::encode(exp.get_block_id())[..6],
+                &hex::encode(got.get_block_id())[..6]
+            ),
             PbftError::NodeNotFound => write!(f, "Couldn't find node in the network"),
             PbftError::WrongNumBlocks => write!(f, "Incorrect number of blocks"),
             PbftError::Timeout => write!(f, "Timed out"),
