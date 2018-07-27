@@ -44,6 +44,7 @@ impl Ticker {
 #[derive(Debug)]
 enum TimeoutState {
     Active,
+    Inactive,
     Expired,
 }
 
@@ -69,14 +70,18 @@ impl Timeout {
             self.state = TimeoutState::Expired;
         }
         match self.state {
-            TimeoutState::Active => false,
+            TimeoutState::Active | TimeoutState::Inactive => false,
             TimeoutState::Expired => true,
         }
     }
 
-    pub fn reset(&mut self) {
+    pub fn start(&mut self) {
         self.state = TimeoutState::Active;
-        self.duration = self.duration;
+        self.start = Instant::now();
+    }
+
+    pub fn stop(&mut self) {
+        self.state = TimeoutState::Inactive;
         self.start = Instant::now();
     }
 }

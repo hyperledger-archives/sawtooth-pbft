@@ -145,9 +145,8 @@ pub struct PbftState {
     // The maximum number of faulty nodes in the network
     pub f: u64,
 
-    // Timer used to keep track of whether or not this node has received timely messages from the
-    // primary. If a message hasn't been received in a certain amount of time, then this node will
-    // initiate a view change.
+    // Timer used to make sure the primary is executing BlockCommits in a timely manner. If not,
+    // then this node will initiate a view change.
     pub timeout: Timeout,
 
     // The current block we're working on

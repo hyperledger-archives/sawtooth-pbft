@@ -96,12 +96,12 @@ impl Engine for PbftEngine {
                 if let Err(e) = node.try_publish() {
                     error!("{}", e);
                 }
-            });
 
-            // Check to see if timeout has expired; initiate ViewChange if necessary
-            if node.check_timeout_expired() {
-                handle_pbft_result(node.start_view_change());
-            }
+                // Every so often, check to see if timeout has expired; initiate ViewChange if necessary
+                if node.check_timeout_expired() {
+                    handle_pbft_result(node.start_view_change());
+                }
+            });
 
             handle_pbft_result(node.retry_backlog());
         }

@@ -74,11 +74,6 @@ impl PbftNode {
         if msg_type.is_multicast() {
             let pbft_message = protobuf::parse_from_bytes::<PbftMessage>(&msg.content)
                 .map_err(|e| PbftError::SerializationError(e))?;
-            // Received a message from the primary, timeout can be reset
-            let primary = self.state.get_primary_peer_id();
-            if pbft_message.get_info().get_signer_id().to_vec() == Vec::<u8>::from(primary) {
-                self.state.timeout.reset();
-            }
 
             info!(
                 "{}: <<<<<< {} [Node {:02}] (v {}, seq {}, b {})",
@@ -95,16 +90,6 @@ impl PbftNode {
         }
 
         match msg_type {
-            PbftMessageType::Pulse => {
-                // Directly deserialize into PeerId
-                let primary = PeerId::from(msg.content);
-
-                // Reset the timer if the PeerId checks out
-                if self.state.get_primary_peer_id() == primary {
-                    self.state.timeout.reset();
-                }
-            }
-
             PbftMessageType::PrePrepare => {
                 let pbft_message = protobuf::parse_from_bytes::<PbftMessage>(&msg.content)
                     .map_err(|e| PbftError::SerializationError(e))?;
@@ -273,11 +258,13 @@ impl PbftNode {
                 let vc_message = protobuf::parse_from_bytes::<PbftViewChange>(&msg.content)
                     .map_err(|e| PbftError::SerializationError(e))?;
 
-                debug!(
-                    "{}: Received ViewChange message from Node {:02}",
+                info!(
+                    "{}: Received ViewChange message from Node {:02} (v {}, seq {})",
                     self.state,
                     self.state
                         .get_node_id_from_bytes(vc_message.get_info().get_signer_id())?,
+                    vc_message.get_info().get_view(),
+                    vc_message.get_info().get_seq_num(),
                 );
 
                 self.msg_log.add_view_change(vc_message.clone());
@@ -335,8 +322,10 @@ impl PbftNode {
             self.msg_log.push_block_backlog(block.clone());
             return Ok(())
         }
+
         self.msg_log.add_message(msg);
         self.state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id);
+        self.state.timeout.start();
 
         if self.state.is_primary() {
             let s = self.state.seq_num;
@@ -368,6 +357,10 @@ impl PbftNode {
         } else {
             debug!("{}: Not doing anything with BlockCommit :(", self.state);
         }
+
+        // The primary processessed this block in a timely manner, so stop the timeout.
+        self.state.timeout.stop();
+
         Ok(())
     }
 
@@ -421,13 +414,6 @@ impl PbftNode {
                         Err(err) => panic!("Failed to finalize block: {:?}", err),
                     }
                 }
-                // First, get our PeerId
-                let peer_id = self.state.get_own_peer_id();
-
-                // Then send a pulse to all nodes to tell them that we're alive
-                // and sign it with our PeerId
-                debug!("{}: >>>>>> Pulse", self.state);
-                self._broadcast_message(&PbftMessageType::Pulse, &Vec::<u8>::from(peer_id))?;
             }
         }
         Ok(())
@@ -722,24 +708,26 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         self.msg_log.check_msg_against_log(&vc_message, true, 2 * self.state.f + 1)?;
 
-        // Update current view and reset timer
-        self.state.timeout.reset();
+        // Update current view and stop timeout
         self.state.view += 1;
-        warn!(
-            "{}: Updating to view {} and resetting timeout",
-            self.state, self.state.view
-        );
+        warn!("{}: Updating to view {}", self.state, self.state.view);
 
         // Upgrade this node to primary, if its ID is correct
         if self.state.get_own_peer_id() == self.state.get_primary_peer_id() {
             self.state.upgrade_role();
             warn!("{}: I'm now a primary", self.state);
 
-            // If we're the new primary, need to clean up the block mess from the view change
+            // If we're the new primary, need to clean up the block mess from the view change and
+            // initialize a new block.
             if let WorkingBlockOption::WorkingBlock(ref working_block) = self.state.working_block {
                 info!("{}: Ignoring block {}", self.state, &hex::encode(working_block.get_block_id()));
                 self.service
                     .ignore_block(BlockId::from(working_block.get_block_id().to_vec()))
+                    .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
+            } else if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = self.state.working_block {
+                info!("{}: Ignoring block {}", self.state, &hex::encode(block_id));
+                self.service
+                    .ignore_block(block_id.clone())
                     .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
             }
             info!("{}: Initializing block", self.state);
@@ -753,7 +741,8 @@ impl PbftNode {
         self.state.working_block = WorkingBlockOption::NoWorkingBlock;
         self.state.phase = PbftPhase::NotStarted;
         self.state.mode = PbftMode::Normal;
-        warn!("{}: Entered normal mode in new view {}", self.state, self.state.view);
+        self.state.timeout.stop();
+        warn!("{}: Entered normal mode in new view {} and stopped timeout", self.state, self.state.view);
         Ok(())
     }
 

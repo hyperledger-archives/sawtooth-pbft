@@ -30,10 +30,6 @@ pub enum PbftMessageType {
     Checkpoint,
     ViewChange,
 
-    // Heartbeat ping message; primary uses this to tell nodes that it's still alive so they don't ViewChange
-    // When sent, bytes in message represent the signer's PeerId
-    Pulse,
-
     Unset,
 }
 
@@ -47,7 +43,6 @@ impl fmt::Display for PbftMessageType {
             PbftMessageType::BlockNew => "BN",
             PbftMessageType::Checkpoint => "CP",
             PbftMessageType::ViewChange => "VC",
-            PbftMessageType::Pulse => "Pl",
             PbftMessageType::Unset => "Un",
         };
         write!(f, "{}", txt)
@@ -75,7 +70,6 @@ impl<'a> From<&'a str> for PbftMessageType {
             "BlockNew" => PbftMessageType::BlockNew,
             "ViewChange" => PbftMessageType::ViewChange,
             "Checkpoint" => PbftMessageType::Checkpoint,
-            "Pulse" => PbftMessageType::Pulse,
             _ => {
                 warn!("Unhandled PBFT message type: {}", s);
                 PbftMessageType::Unset
