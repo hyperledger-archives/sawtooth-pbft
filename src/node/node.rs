@@ -33,14 +33,14 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChan
 use node::config::PbftConfig;
 use node::error::{PbftError, PbftNotReadyType};
 use node::message_type::PbftMessageType;
-use node::pbft_log::{PbftLog, PbftStableCheckpoint};
+use node::message_log::{PbftLog, PbftStableCheckpoint};
 use node::state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 
 // The actual node
 pub struct PbftNode {
     service: Box<Service>,
     pub state: PbftState,
-    pub msg_log: PbftLog,
+    msg_log: PbftLog,
 }
 
 impl PbftNode {
@@ -112,7 +112,7 @@ impl PbftNode {
                 // If we've got a BlockNew ready and the sequence number is our current plus one,
                 // then ignore whatever multicast_not_ready tells us to do.
                 let mut ignore_not_ready = false;
-                if let WorkingBlockOption::WorkingBlockNew(ref block_id) = self.state.working_block {
+                if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = self.state.working_block {
                     if block_id == &BlockId::from(pbft_message.get_block().get_block_id().to_vec())
                         && pbft_message.get_info().get_seq_num() == self.state.seq_num + 1
                     {
@@ -215,11 +215,11 @@ impl PbftNode {
                         .unwrap();
                     if cur_block.previous_id != head.block_id {
                         warn!(
-                            "{}: Not committing block {:?} but pushing to unreads",
+                            "{}: Not committing block {:?} but pushing to backlog",
                             self.state,
                             BlockId::from(pbft_message.get_block().block_id.clone())
                         );
-                        self.msg_log.push_unread(msg);
+                        self.msg_log.push_backlog(msg);
                         return Err(PbftError::BlockMismatch(pbft_message.get_block().clone(), working_block.clone()));
                     }
 
@@ -282,7 +282,7 @@ impl PbftNode {
 
                 self.msg_log.add_view_change(vc_message.clone());
 
-                if self.state.mode != PbftMode::ViewChange {
+                if self.state.mode != PbftMode::ViewChanging {
                     return Ok(());
                 }
 
@@ -330,13 +330,13 @@ impl PbftNode {
         if self.state.switch_phase(PbftPhase::PrePreparing).is_none()
             || block.block_num > head.block_num + 1
         {
-            info!("{}: Not ready for block {}, pushing to unread", self.state,
+            info!("{}: Not ready for block {}, pushing to backlog", self.state,
                   &hex::encode(Vec::<u8>::from(block.block_id.clone()))[..6]);
-            self.msg_log.push_unread_block_new(block.clone());
+            self.msg_log.push_block_backlog(block.clone());
             return Ok(())
         }
         self.msg_log.add_message(msg);
-        self.state.working_block = WorkingBlockOption::WorkingBlockNew(block.block_id);
+        self.state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id);
 
         if self.state.is_primary() {
             let s = self.state.seq_num;
@@ -401,7 +401,7 @@ impl PbftNode {
     // ---------- Methods for periodically checking on and updating the state, called by the engine ----------
 
     // The primary tries to finalize a block every so often
-    pub fn update_working_block(&mut self) -> Result<(), PbftError> {
+    pub fn try_publish(&mut self) -> Result<(), PbftError> {
         if self.state.is_primary() {
             // Try to finalize a block
             if self.state.phase == PbftPhase::NotStarted {
@@ -455,14 +455,14 @@ impl PbftNode {
         self._broadcast_pbft_message(s, PbftMessageType::Checkpoint, PbftBlock::new())
     }
 
-    pub fn retry_unread(&mut self) -> Result<(), PbftError> {
+    pub fn retry_backlog(&mut self) -> Result<(), PbftError> {
         let mut peer_res = Ok(());
-        if let Some(msg) = self.msg_log.pop_unread() {
-            debug!("{}: Popping unread {}", self.state, msg.message_type);
+        if let Some(msg) = self.msg_log.pop_backlog() {
+            debug!("{}: Popping from backlog {}", self.state, msg.message_type);
             peer_res = self.on_peer_message(msg);
         }
-        if let Some(msg) = self.msg_log.pop_unread_block_new() {
-            info!("{}: Popping unread BlockNew", self.state);
+        if let Some(msg) = self.msg_log.pop_block_backlog() {
+            info!("{}: Popping BlockNew from backlog", self.state);
             self.on_block_new(msg)?;
         }
         peer_res
@@ -473,11 +473,11 @@ impl PbftNode {
     // Drop everything when we're doing a view change - nodes will not process any peer messages
     // until the view change is complete.
     pub fn start_view_change(&mut self) -> Result<(), PbftError> {
-        if self.state.mode == PbftMode::ViewChange {
+        if self.state.mode == PbftMode::ViewChanging {
             return Ok(());
         }
         warn!("{}: Starting view change", self.state);
-        self.state.mode = PbftMode::ViewChange;
+        self.state.mode = PbftMode::ViewChanging;
 
         let PbftStableCheckpoint {
             seq_num: stable_seq_num,
@@ -514,7 +514,7 @@ impl PbftNode {
 
     // ---------- Methods for handling individual PeerMessages
 
-    // Either push to unreads or add message to log, depending on which type of not ready
+    // Either push to backlog or add message to log, depending on which type of not ready
     fn _handle_not_ready(
         &mut self,
         not_ready: PbftNotReadyType,
@@ -526,13 +526,11 @@ impl PbftNode {
             content: msg_content,
         };
         match not_ready {
-            PbftNotReadyType::PushToUnreads
-            | PbftNotReadyType::LimboPushToUnreads => {
-                self.msg_log.push_unread(msg);
+            PbftNotReadyType::PushToBacklog => {
+                self.msg_log.push_backlog(msg);
                 Err(PbftError::NotReadyForMessage)
             }
-            PbftNotReadyType::AddToLog
-            | PbftNotReadyType::LimboAddToLog => {
+            PbftNotReadyType::AddToLog => {
                 self.msg_log.add_message(pbft_message.clone());
                 Err(PbftError::NotReadyForMessage)
             }
@@ -551,11 +549,7 @@ impl PbftNode {
                 pbft_message.get_info().get_seq_num(),
                 self.state.seq_num
             );
-            if self.state.working_block.is_none() {
-                return PbftNotReadyType::LimboPushToUnreads;
-            } else {
-                return PbftNotReadyType::PushToUnreads;
-            }
+            return PbftNotReadyType::PushToBacklog;
         } else if pbft_message.get_info().get_seq_num() == self.state.seq_num {
             if self.state.working_block.is_none() {
                 info!(
@@ -564,7 +558,7 @@ impl PbftNode {
                     pbft_message.get_info().get_seq_num(),
                     self.state.seq_num,
                 );
-                return PbftNotReadyType::LimboAddToLog;
+                return PbftNotReadyType::AddToLog;
             }
             let expecting_type = self.state.check_msg_type();
             if msg_type < expecting_type {
@@ -579,14 +573,14 @@ impl PbftNode {
                 return PbftNotReadyType::AddToLog;
             } else if msg_type > expecting_type {
                 info!(
-                    "{}: seq {} == {}, {} > {}, push unread.",
+                    "{}: seq {} == {}, {} > {}, push to backlog.",
                     self.state,
                     self.state.seq_num,
                     self.state.seq_num,
                     msg_type,
                     expecting_type,
                 );
-                return PbftNotReadyType::PushToUnreads;
+                return PbftNotReadyType::PushToBacklog;
             }
         } else {
             if self.state.working_block.is_none() {
@@ -596,7 +590,7 @@ impl PbftNode {
                     pbft_message.get_info().get_seq_num(),
                     self.state.seq_num,
                 );
-                return PbftNotReadyType::LimboAddToLog;
+                return PbftNotReadyType::AddToLog;
             }
             info!(
                 "{}: seq {} < {}, skip but add to log.",

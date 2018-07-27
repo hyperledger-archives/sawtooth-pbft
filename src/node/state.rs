@@ -51,9 +51,8 @@ pub enum PbftPhase {
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum PbftMode {
     Normal,
-    ViewChange,
+    ViewChanging,
     Checkpointing,
-    CatchingUp,
 }
 
 impl fmt::Display for PbftState {
@@ -62,8 +61,7 @@ impl fmt::Display for PbftState {
         let mode = match self.mode {
             PbftMode::Normal => "N",
             PbftMode::Checkpointing => "C",
-            PbftMode::ViewChange => "V",
-            PbftMode::CatchingUp => "H",
+            PbftMode::ViewChanging => "V",
         };
 
         let phase = match self.phase {
@@ -78,7 +76,7 @@ impl fmt::Display for PbftState {
         let wb = match self.working_block {
             WorkingBlockOption::WorkingBlock(ref block) =>
                 String::from(&hex::encode(block.get_block_id())[..6]),
-            WorkingBlockOption::WorkingBlockNew(ref block_id) =>
+            WorkingBlockOption::TentativeWorkingBlock(ref block_id) =>
                 String::from(&hex::encode(block_id)[..5]) + "~",
             _ =>
                 String::from("~none~"),
@@ -94,8 +92,14 @@ impl fmt::Display for PbftState {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum WorkingBlockOption {
+    // There is no working block
     NoWorkingBlock,
-    WorkingBlockNew(BlockId),
+
+    // A block has been received in a BlockNew update, but has not been assigned a sequence number
+    // yet
+    TentativeWorkingBlock(BlockId),
+
+    // There is a current working block
     WorkingBlock(PbftBlock),
 }
 

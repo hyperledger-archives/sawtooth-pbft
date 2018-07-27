@@ -93,7 +93,7 @@ impl Engine for PbftEngine {
             handle_pbft_result(res);
 
             working_ticker.tick(|| {
-                if let Err(e) = node.update_working_block() {
+                if let Err(e) = node.try_publish() {
                     error!("{}", e);
                 }
             });
@@ -103,7 +103,7 @@ impl Engine for PbftEngine {
                 handle_pbft_result(node.start_view_change());
             }
 
-            handle_pbft_result(node.retry_unread());
+            handle_pbft_result(node.retry_backlog());
         }
     }
 

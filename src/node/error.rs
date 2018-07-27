@@ -27,10 +27,8 @@ use node::message_type::PbftMessageType;
 
 #[derive(Debug, PartialEq)]
 pub enum PbftNotReadyType {
-    PushToUnreads,
+    PushToBacklog,
     AddToLog,
-    LimboPushToUnreads,
-    LimboAddToLog,
     Proceed,
 }
 

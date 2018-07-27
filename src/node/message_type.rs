@@ -34,7 +34,6 @@ pub enum PbftMessageType {
     // When sent, bytes in message represent the signer's PeerId
     Pulse,
 
-    // Goes at the bottom to prevent accidentally adding to unread message queue
     Unset,
 }
 

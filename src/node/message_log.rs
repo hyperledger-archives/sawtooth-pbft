@@ -58,9 +58,9 @@ pub struct PbftLog {
     // How many cycles in between checkpoints
     checkpoint_period: u64,
 
-    // Unread messages
-    unreads: VecDeque<PeerMessage>,
-    unread_block_new: VecDeque<Block>,
+    // Backlog of messages (from peers) and blocks (from BlockNews)
+    backlog: VecDeque<PeerMessage>,
+    block_backlog: VecDeque<Block>,
 
     // The most recent checkpoint that contains proof
     pub latest_stable_checkpoint: Option<PbftStableCheckpoint>,
@@ -110,8 +110,8 @@ impl PbftLog {
             checkpoint_period: config.checkpoint_period,
             high_water_mark: config.max_log_size,
             max_log_size: config.max_log_size,
-            unreads: VecDeque::new(),
-            unread_block_new: VecDeque::new(),
+            backlog: VecDeque::new(),
+            block_backlog: VecDeque::new(),
             latest_stable_checkpoint: None,
         }
     }
@@ -363,20 +363,20 @@ impl PbftLog {
             .collect();
     }
 
-    pub fn push_unread(&mut self, msg: PeerMessage) {
-        self.unreads.push_back(msg);
+    pub fn push_backlog(&mut self, msg: PeerMessage) {
+        self.backlog.push_back(msg);
     }
 
-    pub fn pop_unread(&mut self) -> Option<PeerMessage> {
-        self.unreads.pop_front()
+    pub fn pop_backlog(&mut self) -> Option<PeerMessage> {
+        self.backlog.pop_front()
     }
 
-    pub fn push_unread_block_new(&mut self, msg: Block) {
-        self.unread_block_new.push_back(msg);
+    pub fn push_block_backlog(&mut self, msg: Block) {
+        self.block_backlog.push_back(msg);
     }
 
-    pub fn pop_unread_block_new(&mut self) -> Option<Block> {
-        self.unread_block_new.pop_front()
+    pub fn pop_block_backlog(&mut self) -> Option<Block> {
+        self.block_backlog.pop_front()
     }
 }
 
