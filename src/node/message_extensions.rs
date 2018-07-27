@@ -15,7 +15,7 @@
  * -----------------------------------------------------------------------------
  */
 
-use protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange};
+use protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftViewChange};
 
 // All message types that have "info" inside of them
 pub trait PbftGetInfo<'a> {
@@ -29,12 +29,6 @@ impl<'a> PbftGetInfo<'a> for &'a PbftMessage {
 }
 
 impl<'a> PbftGetInfo<'a> for &'a PbftViewChange {
-    fn get_msg_info(&self) -> &'a PbftMessageInfo {
-        self.get_info()
-    }
-}
-
-impl<'a> PbftGetInfo<'a> for &'a PbftNewView {
     fn get_msg_info(&self) -> &'a PbftMessageInfo {
         self.get_info()
     }

@@ -28,7 +28,7 @@ use std::convert::From;
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId, PeerMessage};
 use sawtooth_sdk::consensus::service::Service;
 
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 use node::config::PbftConfig;
 use node::error::{PbftError, PbftNotReadyType};
@@ -286,42 +286,7 @@ impl PbftNode {
                     return Ok(());
                 }
 
-                let nv_msg = self._handle_view_change(&vc_message)?;
-                let msg_bytes = nv_msg
-                    .write_to_bytes()
-                    .map_err(|e| PbftError::SerializationError(e));
-
-                match msg_bytes {
-                    Err(e) => return Err(e),
-                    Ok(bytes) => {
-                        self.state.mode = PbftMode::NewView;
-                        self._broadcast_message(&PbftMessageType::NewView, &bytes)?;
-                    }
-                }
-            }
-
-            PbftMessageType::NewView => {
-                // TODO: Here is where we should restart the multicast protocol for messages since the
-                // last stable checkpoint
-                let nv_message = protobuf::parse_from_bytes::<PbftNewView>(&msg.content)
-                    .map_err(|e| PbftError::SerializationError(e))?;
-
-                debug!(
-                    "{}: Received NewView message from Node {:02}",
-                    self.state,
-                    self.state
-                        .get_node_id_from_bytes(nv_message.get_info().get_signer_id())?,
-                );
-
-                self.msg_log.add_new_view(nv_message.clone());
-
-                self.msg_log.check_msg_against_log(&&nv_message, true, 2 * self.state.f + 1)?;
-
-                warn!(
-                    "{}: Arrived in new view, transitioning to Normal mode",
-                    self.state
-                );
-                self.state.mode = PbftMode::Normal;
+                self._handle_view_change(&vc_message)?;
             }
 
             _ => warn!("Message type not implemented"),
@@ -526,12 +491,6 @@ impl PbftNode {
             }
         };
 
-        let pre_prep_msgs: Vec<PbftMessage> = self.msg_log
-            .get_untrusted_pre_prepares()
-            .iter()
-            .map(|&msg| msg.clone())
-            .collect();
-
         let info = make_msg_info(
             &PbftMessageType::ViewChange,
             self.state.view,
@@ -542,7 +501,6 @@ impl PbftNode {
         let mut vc_msg = PbftViewChange::new();
         vc_msg.set_info(info);
         vc_msg.set_checkpoint_messages(RepeatedField::from_vec(checkpoint_messages.to_vec()));
-        vc_msg.set_pre_prepare_messages(RepeatedField::from_vec(pre_prep_msgs));
 
         let msg_bytes = vc_msg
             .write_to_bytes()
@@ -767,7 +725,7 @@ impl PbftNode {
     fn _handle_view_change(
         &mut self,
         vc_message: &PbftViewChange,
-    ) -> Result<PbftNewView, PbftError> {
+    ) -> Result<(), PbftError> {
         self.msg_log.check_msg_against_log(&vc_message, true, 2 * self.state.f + 1)?;
 
         // Update current view and reset timer
@@ -798,34 +756,11 @@ impl PbftNode {
             warn!("{}: I'm now a secondary", self.state);
             self.state.downgrade_role();
         }
-
-        // ViewChange messages
-        let vc_msgs_send = self.msg_log
-            .get_view_change(self.state.view)
-            .iter()
-            .map(|&msg| msg.clone())
-            .collect();
-
-        // PrePrepare messages - requests that need to get re-processed
-        // TODO: Verify these with every message in vc_message
-        let mut pre_prep_msgs: Vec<PbftMessage> = self.msg_log
-            .get_untrusted_pre_prepares()
-            .iter()
-            .map(|&msg| msg.clone())
-            .collect();
-
-        let info = make_msg_info(
-            &PbftMessageType::NewView,
-            self.state.view,
-            self.state.seq_num,
-            self.state.get_own_peer_id(),
-        );
-
-        let mut nv_msg = PbftNewView::new();
-        nv_msg.set_info(info);
-        nv_msg.set_view_change_messages(RepeatedField::from_vec(vc_msgs_send));
-        nv_msg.set_pre_prepare_messages(RepeatedField::from_vec(pre_prep_msgs));
-        Ok(nv_msg)
+        self.state.working_block = WorkingBlockOption::NoWorkingBlock;
+        self.state.phase = PbftPhase::NotStarted;
+        self.state.mode = PbftMode::Normal;
+        warn!("{}: Entered normal mode in new view {}", self.state, self.state.view);
+        Ok(())
     }
 
     // ---------- Methods for communication between nodes ----------

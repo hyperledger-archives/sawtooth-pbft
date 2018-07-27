@@ -29,7 +29,6 @@ pub enum PbftMessageType {
     BlockNew,
     Checkpoint,
     ViewChange,
-    NewView,
 
     // Heartbeat ping message; primary uses this to tell nodes that it's still alive so they don't ViewChange
     // When sent, bytes in message represent the signer's PeerId
@@ -49,7 +48,6 @@ impl fmt::Display for PbftMessageType {
             PbftMessageType::BlockNew => "BN",
             PbftMessageType::Checkpoint => "CP",
             PbftMessageType::ViewChange => "VC",
-            PbftMessageType::NewView => "NV",
             PbftMessageType::Pulse => "Pl",
             PbftMessageType::Unset => "Un",
         };
@@ -67,22 +65,6 @@ impl PbftMessageType {
             _ => false,
         }
     }
-
-    pub fn is_view_change(&self) -> bool {
-        self == &PbftMessageType::ViewChange
-    }
-
-    pub fn is_new_view(&self) -> bool {
-        self == &PbftMessageType::NewView
-    }
-
-    pub fn is_checkpoint(&self) -> bool {
-        self == &PbftMessageType::Checkpoint
-    }
-
-    pub fn is_pulse(&self) -> bool {
-        self == &PbftMessageType::Pulse
-    }
 }
 
 impl<'a> From<&'a str> for PbftMessageType {
@@ -93,7 +75,6 @@ impl<'a> From<&'a str> for PbftMessageType {
             "Commit" => PbftMessageType::Commit,
             "BlockNew" => PbftMessageType::BlockNew,
             "ViewChange" => PbftMessageType::ViewChange,
-            "NewView" => PbftMessageType::NewView,
             "Checkpoint" => PbftMessageType::Checkpoint,
             "Pulse" => PbftMessageType::Pulse,
             _ => {

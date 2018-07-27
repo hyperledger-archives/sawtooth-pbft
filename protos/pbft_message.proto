@@ -61,26 +61,4 @@ message PbftViewChange {
   // Set of `2f + 1` checkpoint messages, proving correctness of stable
   // checkpoint mentioned in info's `sequence_number`
   repeated PbftMessage checkpoint_messages = 2;
-
-  // `PrePrepare` messages with a sequence numbers greater than
-  // the last stable checkpoint.
-  // Used to help construct `PbftNewView`
-  repeated PbftMessage pre_prepare_messages = 3;
 }
-
-
-// New view message, for when there is consensus that the primary is faulty
-message PbftNewView {
-  // Message information
-  PbftMessageInfo info = 1;
-
-  // Valid `ViewChange` messages received by new primary and the original
-  // `ViewChange` message sent by the new primary
-  repeated PbftViewChange view_change_messages = 2;
-
-  // New set of `PrePrepare` messages for every sequence number in between
-  // the last stable checkpoint in `view_change_messages` and the highest
-  // sequence number in `view_change_messages`.
-  repeated PbftMessage pre_prepare_messages = 3;
-}
-

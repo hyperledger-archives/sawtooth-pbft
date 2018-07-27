@@ -52,7 +52,6 @@ pub enum PbftPhase {
 pub enum PbftMode {
     Normal,
     ViewChange,
-    NewView,
     Checkpointing,
     CatchingUp,
 }
@@ -64,7 +63,6 @@ impl fmt::Display for PbftState {
             PbftMode::Normal => "N",
             PbftMode::Checkpointing => "C",
             PbftMode::ViewChange => "V",
-            PbftMode::NewView => "E",
             PbftMode::CatchingUp => "H",
         };
 

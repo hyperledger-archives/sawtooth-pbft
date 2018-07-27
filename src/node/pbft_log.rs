@@ -20,7 +20,7 @@ use std::fmt;
 
 use hex;
 
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 use sawtooth_sdk::consensus::engine::{Block, PeerMessage};
 
@@ -43,7 +43,6 @@ pub struct PbftLog {
 
     // View change related messages
     view_changes: Vec<PbftViewChange>,
-    new_views: Vec<PbftNewView>,
 
     // Watermarks (minimum/maximum sequence numbers)
     // Ensures log does not get too large
@@ -77,7 +76,6 @@ impl fmt::Display for PbftLog {
                     .iter()
                     .map(|ref msg| msg.get_info().clone()),
             )
-            .chain(self.new_views.iter().map(|ref msg| msg.get_info().clone()))
             .collect();
         let string_infos: Vec<String> = msg_infos
             .iter()
@@ -107,7 +105,6 @@ impl PbftLog {
         PbftLog {
             messages: vec![],
             view_changes: vec![],
-            new_views: vec![],
             low_water_mark: 0,
             cycles: 0,
             checkpoint_period: config.checkpoint_period,
@@ -252,23 +249,6 @@ impl PbftLog {
             .collect()
     }
 
-    // Get the PrePrepare messages that were executed since the last stable checkpoint
-    pub fn get_untrusted_pre_prepares(&self) -> Vec<&PbftMessage> {
-        self.messages
-            .iter()
-            .filter(|&msg| {
-                let info = (*msg).get_info();
-                let cp_seq_num = if let Some(ref cp) = self.latest_stable_checkpoint {
-                    cp.seq_num
-                } else {
-                    0
-                };
-                info.get_msg_type() == String::from(&PbftMessageType::PrePrepare)
-                    && info.get_seq_num() > cp_seq_num
-            })
-            .collect()
-    }
-
     pub fn get_message_infos(
         &self,
         msg_type: &PbftMessageType,
@@ -285,14 +265,6 @@ impl PbftLog {
             }
         }
         for msg in self.view_changes.iter() {
-            let info = msg.get_info();
-            if info.get_msg_type() == String::from(msg_type)
-                && info.get_seq_num() == sequence_number && info.get_view() == view
-            {
-                infos.push(info);
-            }
-        }
-        for msg in self.new_views.iter() {
             let info = msg.get_info();
             if info.get_msg_type() == String::from(msg_type)
                 && info.get_seq_num() == sequence_number && info.get_view() == view
@@ -339,20 +311,6 @@ impl PbftLog {
             .collect()
     }
 
-    // Methods for dealing with PbftNewViews
-    pub fn add_new_view(&mut self, vc: PbftNewView) {
-        if !self.new_views.contains(&vc) {
-            self.new_views.push(vc);
-        }
-    }
-
-    pub fn get_new_view(&self, sequence_number: u64) -> Vec<&PbftNewView> {
-        self.new_views
-            .iter()
-            .filter(|&msg| (*msg).get_info().get_seq_num() == sequence_number)
-            .collect()
-    }
-
     // Get the latest stable checkpoint
     pub fn get_latest_checkpoint(&self) -> u64 {
         if let Some(ref cp) = self.latest_stable_checkpoint {
@@ -396,14 +354,6 @@ impl PbftLog {
             .map(|msg| msg.clone())
             .collect();
         self.view_changes = self.view_changes
-            .iter()
-            .filter(|ref msg| {
-                let seq_num = msg.get_info().get_seq_num();
-                seq_num >= self.get_latest_checkpoint() && seq_num > 0
-            })
-            .map(|msg| msg.clone())
-            .collect();
-        self.new_views = self.new_views
             .iter()
             .filter(|ref msg| {
                 let seq_num = msg.get_info().get_seq_num();
