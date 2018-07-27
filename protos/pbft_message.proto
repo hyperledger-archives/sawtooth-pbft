@@ -43,8 +43,7 @@ message PbftMessageInfo {
 }
 
 
-// A generic PBFT message (PrePrepare, Prepare, Commit, CommitFinal,
-// Checkpoint)
+// A generic PBFT message (PrePrepare, Prepare, Commit, Checkpoint)
 message PbftMessage {
   // Message information
   PbftMessageInfo info = 1;

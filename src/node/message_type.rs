@@ -24,7 +24,6 @@ pub enum PbftMessageType {
     PrePrepare,
     Prepare,
     Commit,
-    CommitFinal,
 
     // Auxiliary PBFT messages
     BlockNew,
@@ -47,7 +46,6 @@ impl fmt::Display for PbftMessageType {
             PbftMessageType::PrePrepare => "PP",
             PbftMessageType::Prepare => "Pr",
             PbftMessageType::Commit => "Co",
-            PbftMessageType::CommitFinal => "FC",
             PbftMessageType::BlockNew => "BN",
             PbftMessageType::Checkpoint => "CP",
             PbftMessageType::ViewChange => "VC",
@@ -65,8 +63,7 @@ impl PbftMessageType {
         match self {
             PbftMessageType::PrePrepare
             | PbftMessageType::Prepare
-            | PbftMessageType::Commit
-            | PbftMessageType::CommitFinal => true,
+            | PbftMessageType::Commit => true,
             _ => false,
         }
     }
@@ -94,7 +91,6 @@ impl<'a> From<&'a str> for PbftMessageType {
             "PrePrepare" => PbftMessageType::PrePrepare,
             "Prepare" => PbftMessageType::Prepare,
             "Commit" => PbftMessageType::Commit,
-            "CommitFinal" => PbftMessageType::CommitFinal,
             "BlockNew" => PbftMessageType::BlockNew,
             "ViewChange" => PbftMessageType::ViewChange,
             "NewView" => PbftMessageType::NewView,

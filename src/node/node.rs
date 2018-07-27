@@ -64,7 +64,7 @@ impl PbftNode {
     // ---------- Methods for handling Updates from the validator ----------
 
     // Handle a peer message from another PbftNode
-    // This method controls the PBFT multicast protocol (PrePrepare, Prepare, Commit, CommitFinal).
+    // This method controls the PBFT multicast protocol (PrePrepare, Prepare, Commit).
     pub fn on_peer_message(&mut self, msg: PeerMessage) -> Result<(), PbftError> {
         let msg_type = msg.message_type.clone();
         let msg_type = PbftMessageType::from(msg_type.as_str());
@@ -184,26 +184,7 @@ impl PbftNode {
 
                 self.msg_log.committed(&pbft_message, self.state.f)?;
 
-                self.state.switch_phase(PbftPhase::FinalCommitting);
-
-                self._broadcast_pbft_message(
-                    pbft_message.get_info().get_seq_num(),
-                    PbftMessageType::CommitFinal,
-                    (*pbft_message.get_block()).clone(),
-                )?;
-            }
-
-            PbftMessageType::CommitFinal => {
-                let pbft_message = protobuf::parse_from_bytes::<PbftMessage>(&msg.content)
-                    .map_err(|e| PbftError::SerializationError(e))?;
-
-                self._handle_not_ready(multicast_not_ready, &pbft_message, msg.content.clone())?;
-
-                self.msg_log.add_message(pbft_message.clone());
-
-                self.msg_log.check_msg_against_log(&&pbft_message, true, self.state.f + 1)?;
-
-                if self.state.phase == PbftPhase::FinalCommitting {
+                if self.state.phase == PbftPhase::Committing {
                     let working_block = if let WorkingBlockOption::WorkingBlock(ref wb) = self.state.working_block {
                         Ok(wb.clone())
                     } else {
@@ -601,7 +582,7 @@ impl PbftNode {
         }
     }
 
-    // Handle a multicast message (PrePrepare, Prepare, Commit, CommitFinal)
+    // Handle a multicast message (PrePrepare, Prepare, Commit)
     fn _handle_multicast(&mut self, pbft_message: PbftMessage) -> PbftNotReadyType {
         let msg_type = PbftMessageType::from(pbft_message.get_info().get_msg_type());
 

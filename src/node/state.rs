@@ -45,7 +45,6 @@ pub enum PbftPhase {
     Preparing,
     Checking,
     Committing,
-    FinalCommitting,
     Finished,
 }
 
@@ -75,7 +74,6 @@ impl fmt::Display for PbftState {
             PbftPhase::Preparing => "Pr",
             PbftPhase::Checking => "Ch",
             PbftPhase::Committing => "Co",
-            PbftPhase::FinalCommitting => "FC",
             PbftPhase::Finished => "Fi",
         };
 
@@ -195,7 +193,6 @@ impl PbftState {
             PbftPhase::Preparing => PbftMessageType::Prepare,
             PbftPhase::Checking => PbftMessageType::Prepare,
             PbftPhase::Committing => PbftMessageType::Commit,
-            PbftPhase::FinalCommitting => PbftMessageType::CommitFinal,
             _ => PbftMessageType::Unset,
         }
     }
@@ -248,8 +245,7 @@ impl PbftState {
             PbftPhase::PrePreparing => PbftPhase::Preparing,
             PbftPhase::Preparing => PbftPhase::Checking,
             PbftPhase::Checking => PbftPhase::Committing,
-            PbftPhase::Committing => PbftPhase::FinalCommitting,
-            PbftPhase::FinalCommitting => PbftPhase::Finished,
+            PbftPhase::Committing => PbftPhase::Finished,
             PbftPhase::Finished => PbftPhase::NotStarted,
         };
         if desired_phase == next {
