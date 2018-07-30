@@ -41,7 +41,7 @@ impl Ticker {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum TimeoutState {
     Active,
     Inactive,
@@ -59,14 +59,14 @@ pub struct Timeout {
 impl Timeout {
     pub fn new(duration: Duration) -> Self {
         Timeout {
-            state: TimeoutState::Active,
-            duration: duration,
+            state: TimeoutState::Inactive,
+            duration,
             start: Instant::now(),
         }
     }
 
     pub fn is_expired(&mut self) -> bool {
-        if Instant::now() - self.start > self.duration {
+        if self.state == TimeoutState::Active && Instant::now() - self.start > self.duration {
             self.state = TimeoutState::Expired;
         }
         match self.state {

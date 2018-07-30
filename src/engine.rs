@@ -75,9 +75,8 @@ impl Engine for PbftEngine {
                 Ok(Update::BlockNew(block)) => node.on_block_new(block),
                 Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id),
                 Ok(Update::BlockInvalid(block_id)) => {
-                    // Just hang out until the block becomes valid
-                    warn!("{}: BlockInvalid", node.state);
-                    Ok(())
+                    warn!("{}: BlockInvalid received, starting view change", node.state);
+                    node.start_view_change()
                 }
                 Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id),
                 Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(message),

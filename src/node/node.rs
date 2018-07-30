@@ -290,7 +290,16 @@ impl PbftNode {
                 self.msg_log.add_view_change(vc_message.clone());
 
                 if self.state.mode != PbftMode::ViewChanging {
-                    return Ok(());
+                    // Even if our own timer hasn't expired, still do a ViewChange if we've received
+                    // f + 1 VC messages to prevent being late to the new view party
+                    if self.msg_log.check_msg_against_log(&&vc_message, true, self.state.f + 1).is_ok()
+                        && vc_message.get_info().get_view() > self.state.view
+                    {
+                        info!("{}: Starting ViewChange from a VC message", self.state);
+                        self.start_view_change()?;
+                    } else {
+                        return Ok(());
+                    }
                 }
 
                 self._handle_view_change(&vc_message)?;
@@ -499,6 +508,7 @@ impl PbftNode {
             seq_num: stable_seq_num,
             checkpoint_messages,
         } = if let Some(ref cp) = self.msg_log.latest_stable_checkpoint {
+            info!("{}: No stable checkpoint", self.state);
             cp.clone()
         } else {
             PbftStableCheckpoint {
@@ -509,7 +519,7 @@ impl PbftNode {
 
         let info = make_msg_info(
             &PbftMessageType::ViewChange,
-            self.state.view,
+            self.state.view + 1,
             stable_seq_num,
             self.state.get_own_peer_id(),
         );
@@ -520,12 +530,9 @@ impl PbftNode {
 
         let msg_bytes = vc_msg
             .write_to_bytes()
-            .map_err(|e| PbftError::SerializationError(e));
+            .map_err(|e| PbftError::SerializationError(e))?;
 
-        match msg_bytes {
-            Err(e) => Err(e),
-            Ok(bytes) => self._broadcast_message(&PbftMessageType::ViewChange, &bytes),
-        }
+        self._broadcast_message(&PbftMessageType::ViewChange, &msg_bytes)
     }
 
     // ---------- Methods for handling individual PeerMessages
@@ -736,13 +743,17 @@ impl PbftNode {
             .check_msg_against_log(&vc_message, true, 2 * self.state.f + 1)?;
 
         // Update current view and stop timeout
-        self.state.view += 1;
+        self.state.view = vc_message.get_info().get_view();
         warn!("{}: Updating to view {}", self.state, self.state.view);
 
         // Upgrade this node to primary, if its ID is correct
         if self.state.get_own_peer_id() == self.state.get_primary_peer_id() {
             self.state.upgrade_role();
             warn!("{}: I'm now a primary", self.state);
+
+            info!("{}: Trying to cancel the previous primary's initialized block", self.state);
+            self.service.cancel_block()
+                .unwrap_or_else(|e| warn!("Couldn't cancel block: {}", e));
 
             // If we're the new primary, need to clean up the block mess from the view change and
             // initialize a new block.
