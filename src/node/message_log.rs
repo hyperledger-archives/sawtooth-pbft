@@ -39,10 +39,10 @@ pub struct PbftStableCheckpoint {
 // Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
     // Generic messages (BlockNew, PrePrepare, Prepare, Commit, CommitFinal, Checkpoint)
-    messages: Vec<PbftMessage>,
+    messages: HashSet<PbftMessage>,
 
     // View change related messages
-    view_changes: Vec<PbftViewChange>,
+    view_changes: HashSet<PbftViewChange>,
 
     // Watermarks (minimum/maximum sequence numbers)
     // Ensures log does not get too large
@@ -103,8 +103,8 @@ impl fmt::Display for PbftLog {
 impl PbftLog {
     pub fn new(config: &PbftConfig) -> Self {
         PbftLog {
-            messages: vec![],
-            view_changes: vec![],
+            messages: HashSet::new(),
+            view_changes: HashSet::new(),
             low_water_mark: 0,
             cycles: 0,
             checkpoint_period: config.checkpoint_period,
@@ -215,11 +215,11 @@ impl PbftLog {
         if msg.get_info().get_seq_num() < self.high_water_mark
             || msg.get_info().get_seq_num() >= self.low_water_mark
         {
-            if PbftMessageType::from(msg.get_info().get_msg_type()) == PbftMessageType::BlockNew {
+            // If the message wasn't already in the log, increment cycles
+            let msg_type = PbftMessageType::from(msg.get_info().get_msg_type());
+            let inserted = self.messages.insert(msg);
+            if msg_type == PbftMessageType::BlockNew && inserted {
                 self.cycles += 1;
-            }
-            if !self.messages.contains(&msg) {
-                self.messages.push(msg);
             }
             trace!("{}", self);
         } else {
@@ -280,28 +280,41 @@ impl PbftLog {
         &mut self,
         msg_type: &PbftMessageType,
         new_sequence_number: u64,
+        view: u64,
         block: &PbftBlock,
     ) -> usize {
-        let mut changed_msgs = 0;
-        for m in &mut self.messages {
-            let mut info = m.get_info().clone();
+        let zero_seq_msgs: Vec<PbftMessage> = self.get_messages_of_type(msg_type, 0, view)
+            .iter()
+            .map(|&msg| msg.clone())
+            .collect();
+
+        for m in zero_seq_msgs.iter() {
+            self.messages.remove(m);
+        }
+
+        let mut fixed_msgs = Vec::<PbftMessage>::new();
+        for mut m in zero_seq_msgs {
+            let mut info: PbftMessageInfo = m.get_info().clone();
             if m.get_info().get_msg_type() == String::from(msg_type)
                 && m.get_info().get_seq_num() == 0
                 && m.get_block().get_block_id() == block.get_block_id()
             {
                 info.set_seq_num(new_sequence_number);
                 m.set_info(info);
-                changed_msgs += 1;
+                fixed_msgs.push(m);
             }
+        }
+
+        let changed_msgs = fixed_msgs.len();
+        for m in fixed_msgs {
+            self.messages.insert(m);
         }
         changed_msgs
     }
 
     // Methods for dealing with PbftViewChanges
     pub fn add_view_change(&mut self, vc: PbftViewChange) {
-        if !self.view_changes.contains(&vc) {
-            self.view_changes.push(vc);
-        }
+        self.view_changes.insert(vc);
     }
 
     pub fn get_view_change(&self, old_view: u64) -> Vec<&PbftViewChange> {
@@ -322,7 +335,7 @@ impl PbftLog {
 
     // Is this node ready for a checkpoint?
     pub fn at_checkpoint(&self) -> bool {
-        self.cycles > self.checkpoint_period
+        self.cycles >= self.checkpoint_period
     }
 
     // Garbage collect the log, and create a stable checkpoint

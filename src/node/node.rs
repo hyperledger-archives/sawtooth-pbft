@@ -671,6 +671,7 @@ impl PbftNode {
             let num_updated = self.msg_log.fix_seq_nums(
                 &PbftMessageType::BlockNew,
                 info.get_seq_num(),
+                info.get_view(),
                 pbft_message.get_block(),
             );
 

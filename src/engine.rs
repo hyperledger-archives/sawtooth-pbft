@@ -56,6 +56,7 @@ impl Engine for PbftEngine {
         let config = config::load_pbft_config(chain_head.block_id, &mut service);
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
+        let mut backlog_ticker = timing::Ticker::new(config.message_timeout);
 
         let mut node = PbftNode::new(self.id, &config, service);
 
@@ -101,7 +102,9 @@ impl Engine for PbftEngine {
                 }
             });
 
-            handle_pbft_result(node.retry_backlog());
+            backlog_ticker.tick(|| {
+                handle_pbft_result(node.retry_backlog());
+            })
         }
     }
 

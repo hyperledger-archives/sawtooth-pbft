@@ -15,6 +15,8 @@
  * -----------------------------------------------------------------------------
  */
 
+use std::hash::{Hash, Hasher};
+
 use protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftViewChange};
 
 // All message types that have "info" inside of them
@@ -31,5 +33,29 @@ impl<'a> PbftGetInfo<'a> for &'a PbftMessage {
 impl<'a> PbftGetInfo<'a> for &'a PbftViewChange {
     fn get_msg_info(&self) -> &'a PbftMessageInfo {
         self.get_info()
+    }
+}
+
+impl Eq for PbftMessage {  }
+impl Eq for PbftViewChange {  }
+
+impl Hash for PbftMessageInfo {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_msg_type().hash(state);
+        self.get_view().hash(state);
+        self.get_seq_num().hash(state);
+        self.get_signer_id().hash(state);
+    }
+}
+
+impl Hash for PbftMessage {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_info().hash(state);
+    }
+}
+
+impl Hash for PbftViewChange {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_info().hash(state);
     }
 }
