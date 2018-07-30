@@ -35,6 +35,7 @@ RUN echo "deb [arch=amd64] http://repo.sawtooth.me/ubuntu/nightly xenial univers
     python3-nose2 \
     sawtooth-smallbank-workload \
     sawtooth-smallbank-tp-go \
+    sawtooth-xo-tp-go \
     unzip \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
