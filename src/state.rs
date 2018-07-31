@@ -17,7 +17,6 @@
 
 //! Information about a PBFT node's state
 
-use std::collections::HashMap;
 use std::fmt;
 
 use hex;
@@ -138,7 +137,7 @@ pub struct PbftState {
     pub pre_checkpoint_mode: PbftMode,
 
     /// Map of peers in the network, including ourselves
-    network_node_ids: HashMap<u64, PeerId>,
+    peer_ids: Vec<PeerId>,
 
     /// The maximum number of faulty nodes in the network
     pub f: u64,
@@ -157,15 +156,8 @@ impl PbftState {
     /// Panics if the network this node is on does not have enough nodes to be Byzantine fault
     /// tolernant.
     pub fn new(id: u64, config: &PbftConfig) -> Self {
-        let peer_id_map: HashMap<u64, PeerId> = config
-            .peers
-            .clone()
-            .into_iter()
-            .map(|(peer_id, node_id)| (node_id, peer_id))
-            .collect();
-
         // Maximum number of faulty nodes in this network. Panic if there are not enough nodes.
-        let f = ((peer_id_map.len() - 1) / 3) as u64;
+        let f = ((config.peers.len() - 1) / 3) as u64;
         if f == 0 {
             panic!("This network does not contain enough nodes to be fault tolerant");
         }
@@ -183,7 +175,7 @@ impl PbftState {
             mode: PbftMode::Normal,
             pre_checkpoint_mode: PbftMode::Normal,
             f,
-            network_node_ids: peer_id_map,
+            peer_ids: config.peers.clone(),
             timeout: Timeout::new(config.view_change_timeout),
             working_block: WorkingBlockOption::NoWorkingBlock,
         }
@@ -205,29 +197,22 @@ impl PbftState {
     pub fn get_node_id_from_bytes(&self, peer_id: &[u8]) -> Result<u64, PbftError> {
         let deser_id = PeerId::from(peer_id.to_vec());
 
-        let matching_node_ids: Vec<u64> = self
-            .network_node_ids
-            .iter()
-            .filter(|(_node_id, network_peer_id)| *network_peer_id == &deser_id)
-            .map(|(node_id, _network_peer_id)| *node_id)
-            .collect();
-
-        if matching_node_ids.is_empty() {
-            Err(PbftError::NodeNotFound)
+        if let Some(node_id) = self.peer_ids.iter().position(|ref info| info == &&deser_id) {
+            Ok(node_id as u64)
         } else {
-            Ok(matching_node_ids[0])
+            Err(PbftError::NodeNotFound)
         }
     }
 
     /// Obtain the Peer ID for this node
     pub fn get_own_peer_id(&self) -> PeerId {
-        self.network_node_ids[&self.id].clone()
+        self.peer_ids[self.id as usize].clone()
     }
 
     /// Obtain the Peer ID for the primary node in the network
     pub fn get_primary_peer_id(&self) -> PeerId {
-        let primary_node_id = self.view % (self.network_node_ids.len() as u64);
-        self.network_node_ids[&primary_node_id].clone()
+        let primary_node_id = (self.view % (self.peer_ids.len() as u64)) as usize;
+        self.peer_ids[primary_node_id].clone()
     }
 
     /// Tell if this node is currently the primary
@@ -285,7 +270,7 @@ mod tests {
     /// Check that the initial configuration of state is as we expect:
     /// + Primary is node 0, secondaries are other nodes
     /// + The node is not expecting any particular message type
-    /// + `network_node_ids` got set properly
+    /// + `peer_ids` got set properly
     /// + The node's own PeerId got set properly
     /// + The primary PeerId got se properly
     #[test]
@@ -305,22 +290,22 @@ mod tests {
 
         assert_eq!(
             state0
-                .get_node_id_from_bytes(&Vec::<u8>::from(state0.network_node_ids[&0].clone()))
+                .get_node_id_from_bytes(&Vec::<u8>::from(state0.peer_ids[0].clone()))
                 .unwrap(),
             0
         );
         assert_eq!(
             state1
-                .get_node_id_from_bytes(&Vec::<u8>::from(state1.network_node_ids[&1].clone()))
+                .get_node_id_from_bytes(&Vec::<u8>::from(state1.peer_ids[1].clone()))
                 .unwrap(),
             1
         );
 
-        assert_eq!(state0.get_own_peer_id(), state0.network_node_ids[&0]);
-        assert_eq!(state1.get_own_peer_id(), state1.network_node_ids[&1]);
+        assert_eq!(state0.get_own_peer_id(), state0.peer_ids[0]);
+        assert_eq!(state1.get_own_peer_id(), state1.peer_ids[1]);
 
-        assert_eq!(state0.get_primary_peer_id(), state0.network_node_ids[&0]);
-        assert_eq!(state1.get_primary_peer_id(), state1.network_node_ids[&0]);
+        assert_eq!(state0.get_primary_peer_id(), state0.peer_ids[0]);
+        assert_eq!(state1.get_primary_peer_id(), state1.peer_ids[0]);
     }
 
     /// Make sure that nodes transition from primary to secondary and back smoothly
