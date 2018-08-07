@@ -15,6 +15,8 @@
  * -----------------------------------------------------------------------------
  */
 
+//! PBFT-specific error messages
+
 use hex;
 use std::error::Error;
 use std::fmt;
@@ -25,27 +27,56 @@ use protos::pbft_message::PbftBlock;
 
 use message_type::PbftMessageType;
 
+/// Enum for showing the difference between future messages, present messages, and past messages.
 #[derive(Debug, PartialEq)]
 pub enum PbftNotReadyType {
+    /// A future message. The node is not ready to process it yet.
     PushToBacklog,
+
+    /// A past message. It's possible the node may still need it though, so it is added to the log.
     AddToLog,
+
+    /// A present message. The node is ready to process this message immediately.
     Proceed,
 }
 
-// Errors that might occur in a PbftNode
+/// Errors that might occur in a PbftNode
 #[derive(Debug)]
 pub enum PbftError {
+    /// An error occured while serializing or deserializing a Protobuf message
     SerializationError(ProtobufError),
+
+    /// The message already exists in the log
     MessageExists(PbftMessageType),
+
+    /// Insufficient number of messages recieved so far (expected, got)
     WrongNumMessages(PbftMessageType, usize, usize),
+
+    /// The block in the message doesn't match the one this node was expecting
     BlockMismatch(PbftBlock, PbftBlock),
+
+    /// The message information doesn't match the one this node was expecting
     MessageMismatch(PbftMessageType),
+
+    /// The message is in a different view than this node is
     ViewMismatch(usize, usize),
+
+    /// Internal PBFT error (description)
     InternalError(String),
+
+    /// The requested node is not found on the network
     NodeNotFound,
+
+    /// More than one block matched with the given ID
     WrongNumBlocks,
+
+    /// Timed out waiting for a message
     Timeout,
+
+    /// There is no working block; no operations can be performed
     NoWorkingBlock,
+
+    /// Not ready for this message type
     NotReadyForMessage,
 }
 

@@ -15,6 +15,10 @@
  * -----------------------------------------------------------------------------
  */
 
+//! Implementation of the [PBFT consensus
+//! algorithm](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/castro.html),
+//! modified for use with Hyperledger Sawtooth.
+
 #[macro_use]
 extern crate clap;
 #[cfg(test)]

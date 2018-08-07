@@ -15,6 +15,8 @@
  * -----------------------------------------------------------------------------
  */
 
+//! Information about a PBFT node's state
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -37,7 +39,7 @@ enum PbftNodeRole {
     Secondary,
 }
 
-// Stages of the PBFT algorithm
+/// Phases of the PBFT algorithm, in `Normal` mode
 #[derive(Debug, PartialEq, PartialOrd, Clone)]
 pub enum PbftPhase {
     NotStarted,
@@ -48,6 +50,7 @@ pub enum PbftPhase {
     Finished,
 }
 
+/// Modes that the PBFT algorithm can possibly be in
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum PbftMode {
     Normal,
@@ -91,16 +94,17 @@ impl fmt::Display for PbftState {
     }
 }
 
+/// Possible options for the current block
 #[derive(Debug, PartialEq, Clone)]
 pub enum WorkingBlockOption {
-    // There is no working block
+    /// There is no working block
     NoWorkingBlock,
 
-    // A block has been received in a BlockNew update, but has not been assigned a sequence number
-    // yet
+    /// A block has been received in a BlockNew update, but has not been assigned a sequence number
+    /// yet
     TentativeWorkingBlock(BlockId),
 
-    // There is a current working block
+    /// There is a current working block
     WorkingBlock(PbftBlock),
 }
 
@@ -110,44 +114,48 @@ impl WorkingBlockOption {
     }
 }
 
-// Information about the PBFT algorithm's state
+/// Information about the PBFT algorithm's state
 #[derive(Debug)]
 pub struct PbftState {
-    // This node's ID
+    /// This node's ID
     pub id: u64,
 
-    // The node's current sequence number
-    // Always starts at 0; representative of an unknown sequence number.
+    /// The node's current sequence number
+    /// Always starts at 0; representative of an unknown sequence number.
     pub seq_num: u64,
 
-    // The current view (where the primary's ID is p = v mod network_node_ids.len())
+    /// The current view (where the primary's ID is p = v mod network_node_ids.len())
     pub view: u64,
 
-    // Current phase of the algorithm
+    /// Current phase of the algorithm
     pub phase: PbftPhase,
 
-    // Is this node primary or secondary?
+    /// Is this node primary or secondary?
     role: PbftNodeRole,
 
-    // Normal operation, view change, or checkpointing. Previous mode is stored when checkpointing
+    /// Normal operation, view change, or checkpointing. Previous mode is stored when checkpointing
     pub mode: PbftMode,
     pub pre_checkpoint_mode: PbftMode,
 
-    // Map of peers in the network, including ourselves
+    /// Map of peers in the network, including ourselves
     network_node_ids: HashMap<u64, PeerId>,
 
-    // The maximum number of faulty nodes in the network
+    /// The maximum number of faulty nodes in the network
     pub f: u64,
 
     // Timer used to make sure the primary is executing BlockCommits in a timely manner. If not,
-    // then this node will initiate a view change.
+    /// then this node will initiate a view change.
     pub timeout: Timeout,
 
-    // The current block we're working on
+    /// The current block this node is working on
     pub working_block: WorkingBlockOption,
 }
 
 impl PbftState {
+    /// Construct the initial state for a PBFT node
+    /// # Panics
+    /// Panics if the network this node is on does not have enough nodes to be Byzantine fault
+    /// tolernant.
     pub fn new(id: u64, config: &PbftConfig) -> Self {
         let peer_id_map: HashMap<u64, PeerId> = config
             .peers
@@ -181,7 +189,8 @@ impl PbftState {
         }
     }
 
-    // Checks to see what type of message we're expecting or sending, based on what phase we're in
+    /// Check to see what type of message this node is expecting or sending, based on the current
+    /// phase
     pub fn check_msg_type(&self) -> PbftMessageType {
         match self.phase {
             PbftPhase::PrePreparing => PbftMessageType::PrePrepare,
@@ -192,7 +201,7 @@ impl PbftState {
         }
     }
 
-    // Obtain the node ID from a serialized PeerId
+    /// Obtain the node ID (u64) from a serialized PeerId
     pub fn get_node_id_from_bytes(&self, peer_id: &[u8]) -> Result<u64, PbftError> {
         let deser_id = PeerId::from(peer_id.to_vec());
 
@@ -210,31 +219,34 @@ impl PbftState {
         }
     }
 
+    /// Obtain the Peer ID for this node
     pub fn get_own_peer_id(&self) -> PeerId {
         self.network_node_ids[&self.id].clone()
     }
 
+    /// Obtain the Peer ID for the primary node in the network
     pub fn get_primary_peer_id(&self) -> PeerId {
         let primary_node_id = self.view % (self.network_node_ids.len() as u64);
         self.network_node_ids[&primary_node_id].clone()
     }
 
-    // Tell if this node is currently a primary
+    /// Tell if this node is currently the primary
     pub fn is_primary(&self) -> bool {
         self.role == PbftNodeRole::Primary
     }
 
-    // Upgrade this node to primary
+    /// Upgrade this node to primary
     pub fn upgrade_role(&mut self) {
         self.role = PbftNodeRole::Primary;
     }
 
-    // Downgrade this node to secondary
+    /// Downgrade this node to secondary
     pub fn downgrade_role(&mut self) {
         self.role = PbftNodeRole::Secondary;
     }
 
-    // Go to a phase and return new phase, if successfully changed
+    /// Go to a phase and return new phase, if successfully changed
+    /// Enforces sequential ordering of PBFT phases in normal mode.
     pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Option<PbftPhase> {
         let next = match self.phase {
             PbftPhase::NotStarted => PbftPhase::PrePreparing,

@@ -15,17 +15,19 @@
  * -----------------------------------------------------------------------------
  */
 
+//! Message types for PeerMessages
+
 use std::fmt;
 
-// Messages related to PBFT consensus
+/// Messages related to PBFT consensus
 #[derive(Debug, PartialEq, PartialOrd)]
 pub enum PbftMessageType {
-    // Basic message types for the multicast protocol
+    /// Basic message types for the multicast protocol
     PrePrepare,
     Prepare,
     Commit,
 
-    // Auxiliary PBFT messages
+    /// Auxiliary PBFT messages
     BlockNew,
     Checkpoint,
     ViewChange,
@@ -49,6 +51,7 @@ impl fmt::Display for PbftMessageType {
 }
 
 impl PbftMessageType {
+    /// Is the message type a multicast message (`PrePrepare`, `Prepare`, or `Commit`)?
     pub fn is_multicast(&self) -> bool {
         match self {
             PbftMessageType::PrePrepare | PbftMessageType::Prepare | PbftMessageType::Commit => {

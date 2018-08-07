@@ -15,6 +15,8 @@
  * -----------------------------------------------------------------------------
  */
 
+//! Initial configuration for a PBFT node
+
 use hex;
 use serde_json;
 
@@ -27,25 +29,27 @@ use sawtooth_sdk::consensus::{
     service::Service,
 };
 
+/// Contains the initial configuration loaded from on-chain settings, if present, or defaults in
+/// their absence.
 #[derive(Debug)]
 pub struct PbftConfig {
-    // Peers that this node is connected to
+    /// Peers that this node is connected to
     pub peers: HashMap<PeerId, u64>,
 
-    // How long to wait in between trying to publish blocks
+    /// How long to wait in between trying to publish blocks
     pub block_duration: Duration,
 
-    // How long to wait for a message to arrive
+    /// How long to wait for a message to arrive
     pub message_timeout: Duration,
 
-    // How long to wait to initiate a ViewChange if we suspect the primary's faulty
-    // Should be longer than block_duration
+    /// How long to wait to initiate a ViewChange if we suspect the primary's faulty
+    /// Should be longer than block_duration
     pub view_change_timeout: Duration,
 
-    // How many requests in between each checkpoint
+    /// How many requests in between each checkpoint
     pub checkpoint_period: u64,
 
-    // How large the PbftLog is allowed to get
+    /// How large the PbftLog is allowed to get
     pub max_log_size: u64,
 }
 
@@ -62,6 +66,20 @@ impl PbftConfig {
     }
 }
 
+/// Load configuration from on-chain Sawtooth settings.
+///
+/// Configuration loads the following settings:
+/// + `sawtooth.consensus.pbft.peers` (required)
+/// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
+/// + `sawtooth.consensus.pbft.checkpoint_period` (optional, default 10 ms)
+/// + `sawtooth.consensus.pbft.view_change_timeout` (optional, default 4000 ms)
+/// + `sawtooth.consensus.pbft.message_timeout` (optional, default 100 blocks)
+/// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
+///
+/// # Panics
+/// + If the `sawtooth.consensus.pbft.peers` setting is not provided
+/// + If settings loading fails entirely
+/// + If block duration is greater than the view change timeout
 pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftConfig {
     let mut config = PbftConfig::default();
 

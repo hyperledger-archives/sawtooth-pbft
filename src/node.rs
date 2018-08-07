@@ -15,6 +15,8 @@
  * -----------------------------------------------------------------------------
  */
 
+//! The core PBFT algorithm
+
 use hex;
 
 use protobuf;
@@ -35,14 +37,21 @@ use message_log::{PbftLog, PbftStableCheckpoint};
 use message_type::PbftMessageType;
 use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 
-// The actual node
+/// Contains all of the components for operating a PBFT node.
 pub struct PbftNode {
-    service: Box<Service>,
+    /// Used for interactions with the validator
+    pub service: Box<Service>,
+
+    /// Storage of state information
     pub state: PbftState,
-    msg_log: PbftLog,
+
+    /// Messages this node has received
+    pub msg_log: PbftLog,
 }
 
 impl PbftNode {
+    /// Construct a new PBFT node.
+    /// After the node is created, if the node is primary, it initializes a new block on the chain.
     pub fn new(id: u64, config: &PbftConfig, service: Box<Service>) -> Self {
         let mut n = PbftNode {
             state: PbftState::new(id, config),
@@ -62,8 +71,10 @@ impl PbftNode {
 
     // ---------- Methods for handling Updates from the validator ----------
 
-    // Handle a peer message from another PbftNode
-    // This method controls the PBFT multicast protocol (PrePrepare, Prepare, Commit).
+    /// Handle a peer message from another PbftNode
+    /// This method handles all messages from other nodes. Such messages may include `PrePrepare`,
+    /// `Prepare`, `Commit`, `Checkpoint`, or `ViewChange`. If a node receives a type of message
+    /// before it is ready to do so, the message is pushed into a backlog queue.
     pub fn on_peer_message(&mut self, msg: PeerMessage) -> Result<(), PbftError> {
         let msg_type = msg.message_type.clone();
         let msg_type = PbftMessageType::from(msg_type.as_str());
@@ -318,11 +329,10 @@ impl PbftNode {
         Ok(())
     }
 
-    // Creates a new working block on the working block queue and kicks off the consensus algorithm
-    // by broadcasting a "PrePrepare" message to peers
-    //
-    // Assumes the validator has checked that the block signature is valid, and that it is to
-    // be built on top of the current chain head.
+    /// Creates a new working block on the working block queue and kicks off the consensus algorithm
+    /// by broadcasting a `PrePrepare` message to peers. Starts a view change timer, just in case
+    /// the primary decides not to commit this block. If a `BlockCommit` update doesn't happen in a
+    /// timely fashion, then the primary can be considered faulty and a view change should happen.
     pub fn on_block_new(&mut self, block: Block) -> Result<(), PbftError> {
         info!("{}: Got BlockNew: {:?}", self.state, block.block_id);
 
@@ -376,9 +386,12 @@ impl PbftNode {
         Ok(())
     }
 
-    // Handle a block commit from the Validator (the block was successfully committed)
-    // If we're a primary, initialize a new block
-    // For both node roles, change phase back to NotStarted
+    /// Handle a `BlockCommit` update from the Validator
+    /// Since the block was successfully committed, the primary is not faulty and the view change
+    /// timer can be stopped. If this node is a primary, then initialize a new block. Both node
+    /// roles transition back to the `NotStarted` phase. If this node is at a checkpoint after the
+    /// previously committed block (`checkpoint_period` blocks have been committed since the last
+    /// checkpoint), then start a checkpoint.
     pub fn on_block_commit(&mut self, block_id: BlockId) -> Result<(), PbftError> {
         debug!("{}: <<<<<< BlockCommit: {:?}", self.state, block_id);
 
@@ -409,8 +422,10 @@ impl PbftNode {
         Ok(())
     }
 
-    // Handle a valid block notice
-    // This message comes after check_blocks is called
+    /// Handle a `BlockValid` update
+    /// This message arrives after `check_blocks` is called, signifying that the validator has
+    /// successfully checked a block with this `BlockId`.
+    /// Once a `BlockValid` is received, transition to committing blocks.
     pub fn on_block_valid(&mut self, block_id: BlockId) -> Result<(), PbftError> {
         debug!("{}: <<<<<< BlockValid: {:?}", self.state, block_id);
         self.state.switch_phase(PbftPhase::Committing);
@@ -439,7 +454,10 @@ impl PbftNode {
 
     // ---------- Methods for periodically checking on and updating the state, called by the engine ----------
 
-    // The primary tries to finalize a block every so often
+    /// The primary tries to finalize a block every so often
+    /// # Panics
+    /// Panics if `finalize_block` fails. This is necessary because it means the validator wasn't
+    /// able to publish the new block.
     pub fn try_publish(&mut self) -> Result<(), PbftError> {
         // Try to finalize a block
         if self.state.is_primary() && self.state.phase == PbftPhase::NotStarted {
@@ -466,13 +484,13 @@ impl PbftNode {
         Ok(())
     }
 
-    // Check to see the state of the primary timeout
+    /// Check to see if the view change timeout has expired
     pub fn check_timeout_expired(&mut self) -> bool {
         self.state.timeout.is_expired()
     }
 
-    // Start the checkpoint process
-    // Primaries start the checkpoint to ensure sequence number correctness
+    /// Start the checkpoint process
+    /// Primaries start the checkpoint to ensure sequence number correctness
     pub fn start_checkpoint(&mut self) -> Result<(), PbftError> {
         if !self.state.is_primary() {
             return Ok(());
@@ -488,6 +506,7 @@ impl PbftNode {
         self._broadcast_pbft_message(s, &PbftMessageType::Checkpoint, PbftBlock::new())
     }
 
+    /// Retry messages from the backlog queue
     pub fn retry_backlog(&mut self) -> Result<(), PbftError> {
         let mut peer_res = Ok(());
         if let Some(msg) = self.msg_log.pop_backlog() {
@@ -503,10 +522,9 @@ impl PbftNode {
         peer_res
     }
 
-    // Initiate a view change (this node suspects that the primary is faulty)
-    //
-    // Drop everything when we're doing a view change - nodes will not process any peer messages
-    // until the view change is complete.
+    /// Initiate a view change (this node suspects that the primary is faulty)
+    /// Nodes drop everything when they're doing a view change - will not process any peer messages
+    /// other than `ViewChanges` until the view change is complete.
     pub fn start_view_change(&mut self) -> Result<(), PbftError> {
         if self.state.mode == PbftMode::ViewChanging {
             return Ok(());
@@ -900,7 +918,8 @@ fn pbft_block_from_block(block: Block) -> PbftBlock {
     pbft_block
 }
 
-// There should only be one block with a matching ID
+/// Get a block from the chain, using the Consensus API's service
+/// There should only be one block with a matching ID
 fn get_block_by_id(service: &mut Box<Service>, block_id: &BlockId) -> Option<Block> {
     let blocks: Vec<Block> = service
         .get_blocks(vec![block_id.clone()])
