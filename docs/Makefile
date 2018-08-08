@@ -22,8 +22,7 @@ help:
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
 pbft:
-	rm -rf $(HTMLDIR)/pbft_doc;
 	mkdir -p $(HTMLDIR)/pbft_doc;
 	cd ..; cargo doc --no-deps;
-	rm ../target/doc/.lock;
+	rm -f ../target/doc/.lock;
 	cp -r ../target/doc/* $(HTMLDIR)/pbft_doc;

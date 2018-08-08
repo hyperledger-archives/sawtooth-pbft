@@ -42,7 +42,7 @@ pub mod message_extensions;
 pub mod message_log;
 pub mod message_type;
 pub mod node;
-pub mod protos;
+mod protos;
 pub mod state;
 pub mod timing;
 
