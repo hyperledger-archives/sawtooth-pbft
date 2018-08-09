@@ -28,6 +28,8 @@ clap = "2.31"
 log = "0.4"
 log4rs = "0.8"
 
+[dev-dependencies]
+rust-crypto = "0.2"
 
 [build-dependencies]
 protoc-rust = "2"
