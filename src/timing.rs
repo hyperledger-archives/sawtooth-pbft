@@ -85,3 +85,62 @@ impl Timeout {
         self.start = Instant::now();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    macro_rules! assert_tolerance {
+        ($val1:expr, $val2:expr, $tol:expr) => {
+            if $val2 > $val1 && $val2 - $val1 > $tol {
+                panic!(
+                    "Value is not within tolerance ({:?} - {:?} > {:?})",
+                    $val2, $val1, $tol
+                );
+            }
+            if $val1 > $val2 && $val1 - $val2 > $tol {
+                panic!(
+                    "Value is not within tolerance ({:?} - {:?} > {:?})",
+                    $val1, $val2, $tol
+                );
+            }
+        };
+    }
+
+    /// Tell the ticker to wait for 100ms, then see if it actually waited 100 +/- 1ms
+    #[test]
+    fn ticker() {
+        let time = Duration::from_millis(100);
+        let mut t = Ticker::new(time);
+        let start_time = Instant::now();
+        let mut end_time = Instant::now();
+        let mut triggered = false;
+        while !triggered {
+            t.tick(|| {
+                end_time = Instant::now();
+                triggered = true;
+            })
+        }
+        assert_tolerance!(end_time - start_time, time, Duration::from_millis(1));
+    }
+
+    /// Create a Timeout that lasts for 100ms and check that it expires anytime after 100ms have
+    /// passed. Check whether `.start()` and `.stop()` work as expected.
+    #[test]
+    fn timeout() {
+        let start_time = Instant::now();
+        let mut t = Timeout::new(Duration::from_millis(100));
+        assert_eq!(t.state, TimeoutState::Inactive);
+        assert_tolerance!(t.start, start_time, Duration::from_millis(1));
+
+        t.start();
+        assert_eq!(t.state, TimeoutState::Active);
+        ::std::thread::sleep(Duration::from_millis(110));
+
+        assert!(t.is_expired());
+        assert_eq!(t.state, TimeoutState::Expired);
+
+        t.stop();
+        assert_eq!(t.state, TimeoutState::Inactive);
+    }
+}
