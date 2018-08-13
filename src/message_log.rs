@@ -120,6 +120,9 @@ impl PbftLog {
     // ---------- Methods to check a message against the log ----------
     // "prepared" predicate
     pub fn prepared(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
+        if deser_msg.get_info().get_msg_type() != String::from(&PbftMessageType::Prepare) {
+            return Err(PbftError::NotReadyForMessage);
+        }
         let info = deser_msg.get_info();
         let block_new_msgs = self.get_messages_of_type(
             &PbftMessageType::BlockNew,
@@ -170,8 +173,16 @@ impl PbftLog {
 
     // "committed" predicate
     pub fn committed(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
+        if deser_msg.get_info().get_msg_type() != String::from(&PbftMessageType::Commit) {
+            return Err(PbftError::NotReadyForMessage);
+        }
         self.check_msg_against_log(&deser_msg, true, 2 * f + 1)?;
-        self.prepared(deser_msg, f)?;
+
+        let mut prep_msg = deser_msg.clone();
+        let mut info = prep_msg.get_info().clone();
+        info.set_msg_type(String::from(&PbftMessageType::Prepare));
+        prep_msg.set_info(info);
+        self.prepared(&prep_msg, f)?;
         Ok(())
     }
 
