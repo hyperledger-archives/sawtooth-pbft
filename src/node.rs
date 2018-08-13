@@ -353,8 +353,8 @@ impl PbftNode {
             .get_chain_head()
             .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
 
-        if self.state.switch_phase(PbftPhase::PrePreparing).is_none()
-            || block.block_num > head.block_num + 1
+        if block.block_num > head.block_num + 1
+            || self.state.switch_phase(PbftPhase::PrePreparing).is_none()
         {
             debug!(
                 "{}: Not ready for block {}, pushing to backlog",
@@ -852,6 +852,16 @@ impl PbftNode {
             content: msg_bytes.to_vec(),
         };
         self.on_peer_message(peer_msg)
+    }
+
+    /// NOTE: Disabling self-sending for testing purposes
+    #[cfg(test)]
+    fn _broadcast_message(
+        &mut self,
+        _msg_type: &PbftMessageType,
+        _msg_bytes: &[u8],
+    ) -> Result<(), PbftError> {
+        return Ok(())
     }
 }
 

@@ -26,9 +26,6 @@ use timing;
 
 use error::PbftError;
 
-use std::fs::File;
-use std::io::prelude::*;
-
 pub struct PbftEngine {
     id: u64,
 }
@@ -57,11 +54,6 @@ impl Engine for PbftEngine {
         let mut node = PbftNode::new(self.id, &config, service);
 
         debug!("Starting state: {:#?}", node.state);
-
-        let mut mod_file = File::create(format!("state_{}.txt", self.id).as_str()).unwrap();
-        mod_file
-            .write_all(&format!("{:#?}", node.state).into_bytes())
-            .unwrap();
 
         // Event loop. Keep going until we receive a shutdown message.
         loop {
