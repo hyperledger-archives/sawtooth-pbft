@@ -421,3 +421,194 @@ fn num_unique_signers(msg_info_list: &[&PbftMessageInfo]) -> u64 {
 fn infos_match(m1: &PbftMessageInfo, m2: &PbftMessageInfo) -> bool {
     m1.get_view() == m2.get_view() && m1.get_seq_num() == m2.get_seq_num()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use config;
+    use sawtooth_sdk::consensus::engine::PeerId;
+    use std::collections::HashMap;
+
+    /// Create a PbftMessage, given its type, view, sequence number, and who it's from
+    fn make_msg(
+        msg_type: &PbftMessageType,
+        view: u64,
+        seq_num: u64,
+        signer_id: PeerId,
+    ) -> PbftMessage {
+        use crypto::digest::Digest;
+        use crypto::sha2::Sha256;
+
+        let mut info = PbftMessageInfo::new();
+        info.set_msg_type(String::from(msg_type));
+        info.set_view(view);
+        info.set_seq_num(seq_num);
+        info.set_signer_id(Vec::<u8>::from(signer_id.clone()));
+
+        let mut pbft_block = PbftBlock::new();
+        let mut sha = Sha256::new();
+        sha.input_str(format!("I'm a block with block num {}", seq_num).as_str());
+        pbft_block.set_block_id(sha.result_str().as_bytes().to_vec());
+        pbft_block.set_signer_id(Vec::<u8>::from(signer_id));
+        pbft_block.set_block_num(seq_num);
+
+        let mut msg = PbftMessage::new();
+        msg.set_info(info);
+        msg.set_block(pbft_block);
+        msg
+    }
+
+    /// Obtain the PeerId for node `which`
+    fn get_peer_id(cfg: &PbftConfig, which: u64) -> PeerId {
+        let peer_id_map: HashMap<u64, PeerId> = cfg
+            .peers
+            .clone()
+            .into_iter()
+            .map(|(peer_id, node_id)| (node_id, peer_id))
+            .collect();
+        peer_id_map[&which].clone()
+    }
+
+    /// Test that adding one message works as expected
+    #[test]
+    fn one_message() {
+        let cfg = config::mock_config(4);
+        let mut log = PbftLog::new(&cfg);
+
+        let msg = make_msg(&PbftMessageType::PrePrepare, 0, 1, get_peer_id(&cfg, 0));
+
+        log.add_message(msg.clone());
+
+        let gotten_msgs = log.get_messages_of_type(&PbftMessageType::PrePrepare, 1, 0);
+
+        assert_eq!(gotten_msgs.len(), 1);
+        assert_eq!(&msg, gotten_msgs[0]);
+    }
+
+    /// Test that `prepared` and `committed` predicates work properly
+    #[test]
+    fn prepared_committed() {
+        let cfg = config::mock_config(4);
+        let mut log = PbftLog::new(&cfg);
+
+        let msg = make_msg(&PbftMessageType::BlockNew, 0, 1, get_peer_id(&cfg, 1));
+        log.add_message(msg.clone());
+
+        assert_eq!(log.cycles, 1);
+        assert!(log.prepared(&msg, 1 as u64).is_err());
+        assert!(log.committed(&msg, 1 as u64).is_err());
+
+        let msg = make_msg(&PbftMessageType::PrePrepare, 0, 1, get_peer_id(&cfg, 0));
+        log.add_message(msg.clone());
+        assert!(log.prepared(&msg, 1 as u64).is_err());
+        assert!(log.committed(&msg, 1 as u64).is_err());
+
+        for peer in 0..4 {
+            let msg = make_msg(&PbftMessageType::Prepare, 0, 1, get_peer_id(&cfg, peer));
+
+            log.add_message(msg.clone());
+            if peer < 2 {
+                assert!(log.prepared(&msg, 1 as u64).is_err());
+                assert!(log.committed(&msg, 1 as u64).is_err());
+            } else {
+                assert!(log.prepared(&msg, 1 as u64).is_ok());
+                assert!(log.committed(&msg, 1 as u64).is_err());
+            }
+        }
+
+        for peer in 0..4 {
+            let msg = make_msg(&PbftMessageType::Commit, 0, 1, get_peer_id(&cfg, peer));
+
+            log.add_message(msg.clone());
+            if peer < 2 {
+                assert!(log.committed(&msg, 1 as u64).is_err());
+            } else {
+                assert!(log.committed(&msg, 1 as u64).is_ok());
+            }
+        }
+    }
+
+    /// Test that sequence number adjustments work as expected
+    /// (This is used by secondary nodes to adjust the sequence number of their `BlockNew`, when
+    /// they receive a `PrePrepare` from the primary)
+    #[test]
+    fn fix_seq_nums() {
+        let cfg = config::mock_config(4);
+        let mut log = PbftLog::new(&cfg);
+
+        let msg0 = make_msg(&PbftMessageType::BlockNew, 0, 0, get_peer_id(&cfg, 1));
+        log.add_message(msg0.clone());
+
+        let msg = make_msg(&PbftMessageType::PrePrepare, 0, 1, get_peer_id(&cfg, 0));
+        log.add_message(msg.clone());
+
+        let num_updated = log.fix_seq_nums(&PbftMessageType::BlockNew, 1, 0, msg0.get_block());
+
+        assert_eq!(num_updated, 1);
+    }
+
+    /// Make sure that the log doesn't start out checkpointing
+    #[test]
+    fn checkpoint_basics() {
+        let cfg = config::mock_config(4);
+        let log = PbftLog::new(&cfg);
+
+        assert_eq!(log.get_latest_checkpoint(), 0);
+        assert!(!log.at_checkpoint());
+    }
+
+    /// Make sure that log garbage collection works as expected
+    /// (All messages up to, but not including, the checkpoint are deleted)
+    #[test]
+    fn garbage_collection() {
+        let cfg = config::mock_config(4);
+        let mut log = PbftLog::new(&cfg);
+
+        for seq in 1..5 {
+            let msg = make_msg(&PbftMessageType::BlockNew, 0, seq, get_peer_id(&cfg, 1));
+            log.add_message(msg.clone());
+
+            let msg = make_msg(&PbftMessageType::PrePrepare, 0, seq, get_peer_id(&cfg, 0));
+            log.add_message(msg.clone());
+
+            for peer in 0..4 {
+                let msg = make_msg(&PbftMessageType::Prepare, 0, seq, get_peer_id(&cfg, peer));
+
+                log.add_message(msg.clone());
+            }
+
+            for peer in 0..4 {
+                let msg = make_msg(&PbftMessageType::Commit, 0, seq, get_peer_id(&cfg, peer));
+
+                log.add_message(msg.clone());
+            }
+        }
+
+        for peer in 0..4 {
+            let msg = make_msg(&PbftMessageType::Checkpoint, 0, 4, get_peer_id(&cfg, peer));
+
+            log.add_message(msg.clone());
+        }
+
+        log.garbage_collect(4, 0);
+
+        for old in 1..3 {
+            for msg_type in &[
+                PbftMessageType::BlockNew,
+                PbftMessageType::PrePrepare,
+                PbftMessageType::Prepare,
+                PbftMessageType::Commit,
+            ] {
+                assert_eq!(log.get_messages_of_type(&msg_type, old, 0).len(), 0);
+            }
+        }
+
+        for msg_type in &[PbftMessageType::BlockNew, PbftMessageType::PrePrepare] {
+            assert_eq!(log.get_messages_of_type(&msg_type, 4, 0).len(), 1);
+        }
+
+        for msg_type in &[PbftMessageType::Prepare, PbftMessageType::Commit] {
+            assert_eq!(log.get_messages_of_type(&msg_type, 4, 0).len(), 4);
+        }
+    }
+}
