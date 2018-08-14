@@ -23,7 +23,7 @@ use protobuf::error::ProtobufError;
 
 use protos::pbft_message::PbftBlock;
 
-use node::message_type::PbftMessageType;
+use message_type::PbftMessageType;
 
 #[derive(Debug, PartialEq)]
 pub enum PbftNotReadyType {

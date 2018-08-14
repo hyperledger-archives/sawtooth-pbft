@@ -29,9 +29,16 @@ use std::process;
 
 use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
 
-mod engine;
-mod node;
-mod protos;
+pub mod config;
+pub mod engine;
+pub mod error;
+pub mod message_extensions;
+pub mod message_log;
+pub mod message_type;
+pub mod node;
+pub mod protos;
+pub mod state;
+pub mod timing;
 
 fn main() {
     let matches = clap_app!(sawtooth_pbft =>

@@ -22,7 +22,10 @@ use std::collections::HashMap;
 
 use std::time::Duration;
 
-use sawtooth_sdk::consensus::{engine::{BlockId, PeerId}, service::Service};
+use sawtooth_sdk::consensus::{
+    engine::{BlockId, PeerId},
+    service::Service,
+};
 
 #[derive(Debug)]
 pub struct PbftConfig {

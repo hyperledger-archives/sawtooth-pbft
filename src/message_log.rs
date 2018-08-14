@@ -24,10 +24,10 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChan
 
 use sawtooth_sdk::consensus::engine::{Block, PeerMessage};
 
-use node::config::PbftConfig;
-use node::error::PbftError;
-use node::message_extensions::PbftGetInfo;
-use node::message_type::PbftMessageType;
+use config::PbftConfig;
+use error::PbftError;
+use message_extensions::PbftGetInfo;
+use message_type::PbftMessageType;
 
 // The log keeps track of the last stable checkpoint
 #[derive(Clone)]
@@ -68,7 +68,8 @@ pub struct PbftLog {
 
 impl fmt::Display for PbftLog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let msg_infos: Vec<PbftMessageInfo> = self.messages
+        let msg_infos: Vec<PbftMessageInfo> = self
+            .messages
             .iter()
             .map(|ref msg| msg.get_info().clone())
             .chain(
@@ -151,7 +152,7 @@ impl PbftLog {
             info.get_seq_num(),
             info.get_view(),
         );
-        for prep_msg in prep_msgs.iter() {
+        for prep_msg in &prep_msgs {
             // Make sure the contents match
             if (!infos_match(prep_msg.get_info(), &pre_prep_msgs[0].get_info())
                 && prep_msg.get_block() != pre_prep_msgs[0].get_block())
@@ -256,18 +257,20 @@ impl PbftLog {
         view: u64,
     ) -> Vec<&PbftMessageInfo> {
         let mut infos = vec![];
-        for msg in self.messages.iter() {
+        for msg in &self.messages {
             let info = msg.get_info();
             if info.get_msg_type() == String::from(msg_type)
-                && info.get_seq_num() == sequence_number && info.get_view() == view
+                && info.get_seq_num() == sequence_number
+                && info.get_view() == view
             {
                 infos.push(info);
             }
         }
-        for msg in self.view_changes.iter() {
+        for msg in &self.view_changes {
             let info = msg.get_info();
             if info.get_msg_type() == String::from(msg_type)
-                && info.get_seq_num() == sequence_number && info.get_view() == view
+                && info.get_seq_num() == sequence_number
+                && info.get_view() == view
             {
                 infos.push(info);
             }
@@ -283,25 +286,27 @@ impl PbftLog {
         view: u64,
         block: &PbftBlock,
     ) -> usize {
-        let zero_seq_msgs: Vec<PbftMessage> = self.get_messages_of_type(msg_type, 0, view)
+        let zero_seq_msgs: Vec<PbftMessage> = self
+            .get_messages_of_type(msg_type, 0, view)
             .iter()
             .map(|&msg| msg.clone())
             .collect();
 
-        for m in zero_seq_msgs.iter() {
+        for m in &zero_seq_msgs {
             self.messages.remove(m);
         }
 
         let mut fixed_msgs = Vec::<PbftMessage>::new();
         for mut m in zero_seq_msgs {
-            let mut info: PbftMessageInfo = m.get_info().clone();
             if m.get_info().get_msg_type() == String::from(msg_type)
                 && m.get_info().get_seq_num() == 0
                 && m.get_block().get_block_id() == block.get_block_id()
             {
+                let mut info: PbftMessageInfo = m.get_info().clone();
+                let mut new_msg = m.clone();
                 info.set_seq_num(new_sequence_number);
-                m.set_info(info);
-                fixed_msgs.push(m);
+                new_msg.set_info(info);
+                fixed_msgs.push(new_msg.clone());
             }
         }
 
@@ -315,13 +320,6 @@ impl PbftLog {
     // Methods for dealing with PbftViewChanges
     pub fn add_view_change(&mut self, vc: PbftViewChange) {
         self.view_changes.insert(vc);
-    }
-
-    pub fn get_view_change(&self, old_view: u64) -> Vec<&PbftViewChange> {
-        self.view_changes
-            .iter()
-            .filter(|&msg| (*msg).get_info().get_view() == old_view)
-            .collect()
     }
 
     // Get the latest stable checkpoint
@@ -345,11 +343,11 @@ impl PbftLog {
         self.cycles = 0;
 
         // Update the stable checkpoint
-        let cp_msgs: Vec<PbftMessage> =
-            self.get_messages_of_type(&PbftMessageType::Checkpoint, stable_checkpoint, view)
-                .iter()
-                .map(|&msg| msg.clone())
-                .collect();
+        let cp_msgs: Vec<PbftMessage> = self
+            .get_messages_of_type(&PbftMessageType::Checkpoint, stable_checkpoint, view)
+            .iter()
+            .map(|&cp| cp.clone())
+            .collect();
         let cp = PbftStableCheckpoint {
             seq_num: stable_checkpoint,
             checkpoint_messages: cp_msgs,
@@ -358,21 +356,23 @@ impl PbftLog {
 
         // Garbage collect logs, filter out all old messages (up to but not including the
         // checkpoint)
-        self.messages = self.messages
+        self.messages = self
+            .messages
             .iter()
             .filter(|ref msg| {
                 let seq_num = msg.get_info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
             })
-            .map(|msg| msg.clone())
+            .cloned()
             .collect();
-        self.view_changes = self.view_changes
+        self.view_changes = self
+            .view_changes
             .iter()
             .filter(|ref msg| {
                 let seq_num = msg.get_info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
             })
-            .map(|msg| msg.clone())
+            .cloned()
             .collect();
     }
 
@@ -394,7 +394,7 @@ impl PbftLog {
 }
 
 // Make sure messages are all from different nodes
-fn num_unique_signers(msg_info_list: &Vec<&PbftMessageInfo>) -> u64 {
+fn num_unique_signers(msg_info_list: &[&PbftMessageInfo]) -> u64 {
     let mut received_from: HashSet<&[u8]> = HashSet::new();
     let mut diff_msgs = 0;
     for info in msg_info_list {

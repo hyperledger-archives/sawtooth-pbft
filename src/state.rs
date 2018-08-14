@@ -24,10 +24,10 @@ use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
 
 use protos::pbft_message::PbftBlock;
 
-use node::config::PbftConfig;
-use node::error::PbftError;
-use node::message_type::PbftMessageType;
-use node::timing::Timeout;
+use config::PbftConfig;
+use error::PbftError;
+use message_type::PbftMessageType;
+use timing::Timeout;
 
 // Possible roles for a node
 // Primary is in charge of making consensus decisions
@@ -108,13 +108,6 @@ impl WorkingBlockOption {
     pub fn is_none(&self) -> bool {
         self == &WorkingBlockOption::NoWorkingBlock
     }
-
-    pub fn is_some(&self) -> bool {
-        match self {
-            &WorkingBlockOption::WorkingBlock(_) => true,
-            _ => false,
-        }
-    }
 }
 
 // Information about the PBFT algorithm's state
@@ -170,7 +163,7 @@ impl PbftState {
         }
 
         PbftState {
-            id: id,
+            id,
             seq_num: 0, // Default to unknown
             view: 0,    // Node ID 0 is default primary
             phase: PbftPhase::NotStarted,
@@ -181,9 +174,9 @@ impl PbftState {
             },
             mode: PbftMode::Normal,
             pre_checkpoint_mode: PbftMode::Normal,
-            f: f,
+            f,
             network_node_ids: peer_id_map,
-            timeout: Timeout::new(config.view_change_timeout.clone()),
+            timeout: Timeout::new(config.view_change_timeout),
             working_block: WorkingBlockOption::NoWorkingBlock,
         }
     }
@@ -203,13 +196,14 @@ impl PbftState {
     pub fn get_node_id_from_bytes(&self, peer_id: &[u8]) -> Result<u64, PbftError> {
         let deser_id = PeerId::from(peer_id.to_vec());
 
-        let matching_node_ids: Vec<u64> = self.network_node_ids
+        let matching_node_ids: Vec<u64> = self
+            .network_node_ids
             .iter()
             .filter(|(_node_id, network_peer_id)| *network_peer_id == &deser_id)
             .map(|(node_id, _network_peer_id)| *node_id)
             .collect();
 
-        if matching_node_ids.len() < 1 {
+        if matching_node_ids.is_empty() {
             Err(PbftError::NodeNotFound)
         } else {
             Ok(matching_node_ids[0])

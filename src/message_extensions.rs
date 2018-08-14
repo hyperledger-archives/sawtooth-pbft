@@ -15,9 +15,13 @@
  * -----------------------------------------------------------------------------
  */
 
+// We know that the property `k1 == k2 ==>  hash(k1) == hash(k2)` holds, since protobuf just compares
+// every field in the struct and that's exactly what the implementation of Hash is doing below
+#![allow(derive_hash_xor_eq)]
+
 use std::hash::{Hash, Hasher};
 
-use protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftViewChange};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 // All message types that have "info" inside of them
 pub trait PbftGetInfo<'a> {
@@ -36,8 +40,8 @@ impl<'a> PbftGetInfo<'a> for &'a PbftViewChange {
     }
 }
 
-impl Eq for PbftMessage {  }
-impl Eq for PbftViewChange {  }
+impl Eq for PbftMessage {}
+impl Eq for PbftViewChange {}
 
 impl Hash for PbftMessageInfo {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -48,14 +52,28 @@ impl Hash for PbftMessageInfo {
     }
 }
 
+impl Hash for PbftBlock {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_block_id().hash(state);
+        self.get_block_num().hash(state);
+        self.get_summary().hash(state);
+        self.get_signer_id().hash(state);
+    }
+}
+
 impl Hash for PbftMessage {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.get_info().hash(state);
+        self.get_block().hash(state);
     }
 }
 
 impl Hash for PbftViewChange {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.get_info().hash(state);
+        for msg in self.get_checkpoint_messages().iter() {
+            msg.get_info().hash(state);
+            msg.get_block().hash(state);
+        }
     }
 }

@@ -19,12 +19,12 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
 use sawtooth_sdk::consensus::{engine::*, service::Service};
 
-use node::node::PbftNode;
+use node::PbftNode;
 
-use node::config;
-use node::timing;
+use config;
+use timing;
 
-use node::error::PbftError;
+use error::PbftError;
 
 use std::fs::File;
 use std::io::prelude::*;
