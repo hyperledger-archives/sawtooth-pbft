@@ -1,0 +1,6 @@
+#!/bin/bash
+
+xo list --url http://rest-api-0:8008
+xo list --url http://rest-api-1:8008
+xo list --url http://rest-api-2:8008
+xo list --url http://rest-api-3:8008
