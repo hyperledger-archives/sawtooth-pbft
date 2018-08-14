@@ -1,4 +1,5 @@
 # Copyright 2018 Intel Corporation
+# Copyright 2018 Bitwise IO, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,3 +40,16 @@ RUN echo "deb [arch=amd64] http://repo.sawtooth.me/ubuntu/nightly xenial univers
     unzip \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -OLsS https://github.com/google/protobuf/releases/download/v3.5.1/protoc-3.5.1-linux-x86_64.zip \
+ && unzip protoc-3.5.1-linux-x86_64.zip -d protoc3 \
+ && rm protoc-3.5.1-linux-x86_64.zip
+
+RUN curl https://sh.rustup.rs -sSf > /usr/bin/rustup-init \
+ && chmod +x /usr/bin/rustup-init \
+ && rustup-init -y
+
+ENV PATH=$PATH:/protoc3/bin:/project/sawtooth-core/bin:/root/.cargo/bin \
+    CARGO_INCREMENTAL=0
+
+WORKDIR /project/sawtooth-pbft
