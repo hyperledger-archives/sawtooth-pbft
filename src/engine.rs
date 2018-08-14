@@ -35,7 +35,7 @@ pub struct PbftEngine {
 
 impl PbftEngine {
     pub fn new(id: u64) -> Self {
-        PbftEngine { id: id }
+        PbftEngine { id }
     }
 }
 
@@ -46,11 +46,7 @@ impl Engine for PbftEngine {
         mut service: Box<Service>,
         startup_state: StartupState,
     ) {
-        let StartupState {
-            chain_head,
-            peers,
-            local_peer_info: _,
-        } = startup_state;
+        let StartupState { chain_head, .. } = startup_state;
 
         // Load on-chain settings
         let config = config::load_pbft_config(chain_head.block_id, &mut service);
@@ -74,19 +70,25 @@ impl Engine for PbftEngine {
             let res = match incoming_message {
                 Ok(Update::BlockNew(block)) => node.on_block_new(block),
                 Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id),
-                Ok(Update::BlockInvalid(block_id)) => {
-                    warn!("{}: BlockInvalid received, starting view change", node.state);
+                Ok(Update::BlockInvalid(_)) => {
+                    warn!(
+                        "{}: BlockInvalid received, starting view change",
+                        node.state
+                    );
                     node.start_view_change()
                 }
                 Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id),
                 Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(message),
                 Ok(Update::Shutdown) => break,
+                Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
+                    error!("PBFT currently only supports static networks");
+                    Ok(())
+                }
                 Err(RecvTimeoutError::Timeout) => Err(PbftError::Timeout),
                 Err(RecvTimeoutError::Disconnected) => {
                     error!("Disconnected from validator");
                     break;
                 }
-                x => Ok(error!("THIS IS UNIMPLEMENTED {:?}", x)),
             };
             handle_pbft_result(res);
 
@@ -120,7 +122,7 @@ fn handle_pbft_result(res: Result<(), PbftError>) {
     if let Err(e) = res {
         match e {
             PbftError::Timeout => (),
-            PbftError::WrongNumMessages(_, _, _) => trace!("{}", e),
+            PbftError::WrongNumMessages(_, _, _) | PbftError::NotReadyForMessage => trace!("{}", e),
             _ => error!("{}", e),
         }
     }

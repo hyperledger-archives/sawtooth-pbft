@@ -761,8 +761,12 @@ impl PbftNode {
             self.state.upgrade_role();
             warn!("{}: I'm now a primary", self.state);
 
-            info!("{}: Trying to cancel the previous primary's initialized block", self.state);
-            self.service.cancel_block()
+            info!(
+                "{}: Trying to cancel the previous primary's initialized block",
+                self.state
+            );
+            self.service
+                .cancel_block()
                 .unwrap_or_else(|e| warn!("Couldn't cancel block: {}", e));
 
             // If we're the new primary, need to clean up the block mess from the view change and
