@@ -1,5 +1,8 @@
 # Sawtooth PBFT
 
+This repository contains an implementation of the Practical Byzantine Fault
+Tolerant (PBFT) consensus algorithm for Hyperledger Sawtooth.
+
 ## Status
 This project is in a highly experimental stage - there is a *significant* amount
 of work to be done before it is ready to be deployed in a production context.
@@ -61,37 +64,64 @@ The following features are desired (not a comprehensive list):
   documentation for this project
 
 ## Running PBFT
-This short guide assumes that you have Docker installed. Use the following
-steps to reproduce the liveness test on a four node network:
 
 + Clone this repo:
   `git clone https://github.com/bridger-herman/sawtooth-pbft.git`
   and checkout the branch you're interested in (probably `unit-tests`)
 + Run the following commands:
 
-```
-cd sawtooth-pbft
+Use the following steps to start a four-node network and run a liveness
+test:
 
-docker build . -f Dockerfile -t sawtooth-dev-pbft
+1.  Clone the PBFT repo:
+    `git clone https://github.com/bitwiseio/sawtooth-pbft.git`
 
-docker run -v $(pwd):/project/sawtooth-pbft -it sawtooth-dev-pbft bash
+2.  Run the following commands to connect to the `sawtooth-dev-pbft`
+    interactive shell:
 
-# You can optionally use this, if you have a cargo-registry Docker volume set up:
-# docker run -v $(pwd):/project/sawtooth-pbft -v cargo-registry:/root/.cargo/registry -it sawtooth-dev-pbft bash
+    ```
+    cd sawtooth-pbft
+
+    docker build . -f Dockerfile -t sawtooth-dev-pbft
+
+    docker run -v $(pwd):/project/sawtooth-pbft -it sawtooth-dev-pbft bash
+
+    # You can optionally use this to speed up your build times, if you have a cargo-registry Docker volume set up:
+    docker run -v $(pwd):/project/sawtooth-pbft -v cargo-registry:/root/.cargo/registry -it sawtooth-dev-pbft bash
+    ```
+
+3.  Once you have the `sawtooth-dev-pbft` interactive shell up, run:
+
+    ```
+    cargo build
+    ```
+
+4.  Once the project finishes building, exit the interactive shell and
+    run
+
+    ```
+    tests/pbft.sh
+    ```
+
+This script first builds a few docker images, then starts up a network of four
+nodes and goes through a liveness test of 55 blocks (using the Docker Compose
+file `test_liveness.yaml`). The default log level is `INFO`, so it prints out
+quite a bit of information as the algorithm executes. All of the on-chain
+settings (such as block duration and view change timeout) can be adjusted
+inside of the file `tests/test_liveness.yaml`, as well as the log level for
+each of the services in the network.
+
+If you'd like to specify a different Docker Compose file to use (such as
+`grafana.yaml`, `client.yaml`, or `pbft_unit_tests.yaml`), provide `pbft.sh`
+with an additional argument:
+
+```
+tests/pbft.sh pbft_unit_tests
 ```
 
-+ Now, inside the `sawtooth-dev-pbft` interactive shell, do
-```
-cargo build
-```
+If you'd like to pass additional arguments to Docker Compose, they go
+after the compose file you're using:
 
-+ Once the project finishes building, exit the Docker shell and run
 ```
-tests/pbft.sh
+tests/pbft.sh client --abort-on-container-exit
 ```
-
-This will first build a few docker images, then start up a network of four
-nodes, and go through a liveness test of 55 blocks. The default log level is
-`INFO`, so it will print out quite a bit of information as the algorithm
-executes. Parameters like `block_duration`, `checkpoint_period`, etc. can be
-adjusted inside of the file `tests/test_liveness.yaml`
