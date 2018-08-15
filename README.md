@@ -46,6 +46,9 @@ The following features have been implemented:
   malicious), the network changes views and a new primary is elected.
 + [x] **Log garbage collection:** Every so often, message logs should be garbage
   collected so as to not take up too much space.
++ [x] **Testing improvements:** Presently, a liveness test up to 55 blocks has
+  been performed on a network of four nodes. Unit tests are also included for
+  each individual component of the algorithm.
 
 The following features are desired (not a comprehensive list):
 + [ ] **Allow network changes:** Right now, the network is assumed to be
@@ -54,9 +57,6 @@ The following features are desired (not a comprehensive list):
 + [ ] **Persistent storage:** Nodes should be able to recover from crashes by
   saving their logs in persistent storage instead of keeping everything in
   memory
-+ [ ] **Testing improvements:** Presently, a liveness test up to 55 blocks has
-  been performed on a network of four nodes. Testing still needs to be
-  designed and implemented for nodes that crash, and/or are malicious.
 + [ ] **Documentation:** Use existing Sawtooth doc generation to create
   documentation for this project
 
@@ -64,7 +64,9 @@ The following features are desired (not a comprehensive list):
 This short guide assumes that you have Docker installed. Use the following
 steps to reproduce the liveness test on a four node network:
 
-+ Clone this repo: `git clone https://github.com/bridger-herman/sawtooth-pbft.git` and checkout the branch you're interested in (probably `pbft-pr`)
++ Clone this repo:
+  `git clone https://github.com/bridger-herman/sawtooth-pbft.git`
+  and checkout the branch you're interested in (probably `unit-tests`)
 + Run the following commands:
 
 ```
