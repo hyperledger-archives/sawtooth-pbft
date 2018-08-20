@@ -32,10 +32,10 @@ use sawtooth_sdk::consensus::service::Service;
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 use config::PbftConfig;
-use error::{PbftError, PbftNotReadyType};
+use error::PbftError;
 use handlers;
 use message_log::{PbftLog, PbftStableCheckpoint};
-use message_type::PbftMessageType;
+use message_type::{PbftHint, PbftMessageType};
 use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 
 /// Contains all of the components for operating a PBFT node.
@@ -81,7 +81,7 @@ impl PbftNode {
         let msg_type = PbftMessageType::from(msg_type.as_str());
 
         // Handle a multicast protocol message
-        let multicast_not_ready = if msg_type.is_multicast() {
+        let multicast_hint = if msg_type.is_multicast() {
             let pbft_message = protobuf::parse_from_bytes::<PbftMessage>(&msg.content)
                 .map_err(PbftError::SerializationError)?;
 
@@ -96,9 +96,9 @@ impl PbftNode {
                 &hex::encode(pbft_message.get_block().get_block_id())[..6],
             );
 
-            handlers::multicast(&self.state, pbft_message)
+            handlers::multicast_hint(&self.state, pbft_message)
         } else {
-            PbftNotReadyType::Proceed
+            PbftHint::PresentMessage
         };
 
         match msg_type {
@@ -107,8 +107,8 @@ impl PbftNode {
                     .map_err(PbftError::SerializationError)?;
 
                 // If we've got a BlockNew ready and the sequence number is our current plus one,
-                // then ignore whatever multicast_not_ready tells us to do.
-                let mut ignore_not_ready = false;
+                // then ignore whatever multicast_hint tells us to do.
+                let mut ignore_hint = false;
                 if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) =
                     self.state.working_block
                 {
@@ -116,7 +116,7 @@ impl PbftNode {
                         && pbft_message.get_info().get_seq_num() == self.state.seq_num + 1
                     {
                         debug!("{}: Ignoring not ready and starting multicast", self.state);
-                        ignore_not_ready = true;
+                        ignore_hint = true;
                     } else {
                         debug!(
                             "{}: Not starting multicast; ({} != {} or {} != {} + 1)",
@@ -129,10 +129,10 @@ impl PbftNode {
                     }
                 }
 
-                if !ignore_not_ready {
-                    handlers::not_ready(
+                if !ignore_hint {
+                    handlers::action_from_hint(
                         &mut self.msg_log,
-                        &multicast_not_ready,
+                        &multicast_hint,
                         &pbft_message,
                         msg.content.clone(),
                     )?;
@@ -162,9 +162,9 @@ impl PbftNode {
                 let pbft_message = protobuf::parse_from_bytes::<PbftMessage>(&msg.content)
                     .map_err(PbftError::SerializationError)?;
 
-                handlers::not_ready(
+                handlers::action_from_hint(
                     &mut self.msg_log,
-                    &multicast_not_ready,
+                    &multicast_hint,
                     &pbft_message,
                     msg.content.clone(),
                 )?;
@@ -190,9 +190,9 @@ impl PbftNode {
                 let pbft_message = protobuf::parse_from_bytes::<PbftMessage>(&msg.content)
                     .map_err(PbftError::SerializationError)?;
 
-                handlers::not_ready(
+                handlers::action_from_hint(
                     &mut self.msg_log,
-                    &multicast_not_ready,
+                    &multicast_hint,
                     &pbft_message,
                     msg.content.clone(),
                 )?;

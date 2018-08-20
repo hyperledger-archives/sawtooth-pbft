@@ -19,7 +19,20 @@
 
 use std::fmt;
 
-/// Messages related to PBFT consensus
+/// Enum for showing the difference between future messages, present messages, and past messages.
+#[derive(Debug, PartialEq)]
+pub enum PbftHint {
+    /// A future message. The node is not ready to process it yet.
+    FutureMessage,
+
+    /// A past message. It's possible the node may still need it though, so it is added to the log.
+    PastMessage,
+
+    /// A present message. The node is ready to process this message immediately.
+    PresentMessage,
+}
+
+// Messages related to PBFT consensus
 #[derive(Debug, PartialEq, PartialOrd)]
 pub enum PbftMessageType {
     /// Basic message types for the multicast protocol

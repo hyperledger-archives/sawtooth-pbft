@@ -27,19 +27,6 @@ use protos::pbft_message::PbftBlock;
 
 use message_type::PbftMessageType;
 
-/// Enum for showing the difference between future messages, present messages, and past messages.
-#[derive(Debug, PartialEq)]
-pub enum PbftNotReadyType {
-    /// A future message. The node is not ready to process it yet.
-    PushToBacklog,
-
-    /// A past message. It's possible the node may still need it though, so it is added to the log.
-    AddToLog,
-
-    /// A present message. The node is ready to process this message immediately.
-    Proceed,
-}
-
 /// Errors that might occur in a PbftNode
 #[derive(Debug)]
 pub enum PbftError {
