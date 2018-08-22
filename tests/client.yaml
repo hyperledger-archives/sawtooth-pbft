@@ -20,9 +20,11 @@ volumes:
 
 services:
   validator-0:
-    image: sawtooth-validator:$ISOLATION_ID
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
       - keys:/shared_keys
     expose:
       - 4004
@@ -41,7 +43,7 @@ services:
           -k /etc/sawtooth/keys/validator.priv \
           sawtooth.consensus.algorithm=None \
           sawtooth.consensus.pbft.peers=\\{'\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"':0,'\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"':1,'\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"':2,'\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"':3\\} \
-          sawtooth.consensus.pbft.block_duration=2000 \
+          sawtooth.consensus.pbft.block_duration=100 \
           sawtooth.consensus.pbft.checkpoint_period=10 \
           sawtooth.consensus.pbft.view_change_timeout=4000 \
           sawtooth.consensus.pbft.message_timeout=10 \
@@ -51,7 +53,7 @@ services:
           config-genesis.batch config.batch && \
         mv /etc/sawtooth/keys/validator-* /shared_keys && \
         echo $$(cat /etc/sawtooth/keys/validator.pub); \
-        sawtooth-validator -v \
+        sawtooth-validator \
             --endpoint tcp://validator-0:8800 \
             --bind component:tcp://eth0:4004 \
             --bind network:tcp://eth0:8800 \
@@ -63,9 +65,11 @@ services:
     stop_signal: SIGKILL
 
   validator-1:
-    image: sawtooth-validator:$ISOLATION_ID
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
       - keys:/shared_keys
     expose:
       - 4004
@@ -85,9 +89,11 @@ services:
     stop_signal: SIGKILL
 
   validator-2:
-    image: sawtooth-validator:$ISOLATION_ID
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
       - keys:/shared_keys
     expose:
       - 4004
@@ -107,9 +113,11 @@ services:
     stop_signal: SIGKILL
 
   validator-3:
-    image: sawtooth-validator:$ISOLATION_ID
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
       - keys:/shared_keys
     expose:
       - 4004
@@ -128,42 +136,57 @@ services:
     \""
     stop_signal: SIGKILL
 
+
   pbft-0:
-    image: sawtooth-dev-pbft:$ISOLATION_ID
+    image: sawtooth-pbft-engine-local:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: ../Dockerfile
     volumes:
-      - $SAWTOOTH_PBFT:/project/sawtooth-pbft
+      - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-0:5050 0 -d 15 -vv
+    command: ./target/debug/sawtooth-pbft --connect tcp://validator-0:5050 0 -v
     stop_signal: SIGKILL
 
   pbft-1:
-    image: sawtooth-dev-pbft:$ISOLATION_ID
+    image: sawtooth-pbft-engine-local:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: ../Dockerfile
     volumes:
-      - $SAWTOOTH_PBFT:/project/sawtooth-pbft
+      - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-1:5050 1 -vv
+    command: ./target/debug/sawtooth-pbft --connect tcp://validator-1:5050 1 -v
     stop_signal: SIGKILL
 
   pbft-2:
-    image: sawtooth-dev-pbft:$ISOLATION_ID
+    image: sawtooth-pbft-engine-local:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: ../Dockerfile
     volumes:
-      - $SAWTOOTH_PBFT:/project/sawtooth-pbft
+      - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-2:5050 2
+    command: ./target/debug/sawtooth-pbft --connect tcp://validator-2:5050 2 -v
     stop_signal: SIGKILL
 
   pbft-3:
-    image: sawtooth-dev-pbft:$ISOLATION_ID
+    image: sawtooth-pbft-engine-local:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: ../Dockerfile
     volumes:
-      - $SAWTOOTH_PBFT:/project/sawtooth-pbft
+      - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-3:5050 3
+    command: ./target/debug/sawtooth-pbft --connect tcp://validator-3:5050 3 -v
     stop_signal: SIGKILL
 
+
   rest-api-0:
-    image: sawtooth-rest-api:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
       - 8008
@@ -171,9 +194,10 @@ services:
     stop_signal: SIGKILL
 
   rest-api-1:
-    image: sawtooth-rest-api:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
       - 8008
@@ -181,9 +205,10 @@ services:
     stop_signal: SIGKILL
 
   rest-api-2:
-    image: sawtooth-rest-api:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
       - 8008
@@ -191,89 +216,100 @@ services:
     stop_signal: SIGKILL
 
   rest-api-3:
-    image: sawtooth-rest-api:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
       - 8008
     command: sawtooth-rest-api --connect tcp://validator-3:4004 --bind rest-api-3:8008
     stop_signal: SIGKILL
 
+
   xo-tp-0:
-    image: sawtooth-xo-tp-python:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
-    command: xo-tp-python -C tcp://validator-0:4004
+    command: xo-tp-go -C tcp://validator-0:4004
     stop_signal: SIGKILL
 
   xo-tp-1:
-    image: sawtooth-xo-tp-python:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
-    command: xo-tp-python -C tcp://validator-1:4004
+    command: xo-tp-go -C tcp://validator-1:4004
     stop_signal: SIGKILL
 
   xo-tp-2:
-    image: sawtooth-xo-tp-python:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
-    command: xo-tp-python -C tcp://validator-2:4004
+    command: xo-tp-go -C tcp://validator-2:4004
     stop_signal: SIGKILL
 
   xo-tp-3:
-    image: sawtooth-xo-tp-python:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
-    command: xo-tp-python -C tcp://validator-3:4004
+    command: xo-tp-go -C tcp://validator-3:4004
     stop_signal: SIGKILL
 
+
   settings-tp-0:
-    image: sawtooth-settings-tp:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
-    command: settings-tp -C tcp://validator-0:4004
+    command: settings-tp -C tcp://validator-0:4004 -v
     stop_signal: SIGKILL
 
   settings-tp-1:
-    image: sawtooth-settings-tp:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
-    command: settings-tp -C tcp://validator-1:4004
+    command: settings-tp -C tcp://validator-1:4004 -v
     stop_signal: SIGKILL
 
   settings-tp-2:
-    image: sawtooth-settings-tp:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
     command: settings-tp -C tcp://validator-2:4004
     stop_signal: SIGKILL
 
   settings-tp-3:
-    image: sawtooth-settings-tp:$ISOLATION_ID
-    volumes:
-      - $SAWTOOTH_CORE:/project/sawtooth-core
+    image: sawtooth-pbft-test:$ISOLATION_ID
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
     expose:
       - 4004
     command: settings-tp -C tcp://validator-3:4004
     stop_signal: SIGKILL
 
   client:
-    image: sawtooth-dev-python:latest
+    image: sawtooth-pbft-test:latest
     volumes:
       - $SAWTOOTH_CORE:/project/sawtooth-core
       - $SAWTOOTH_PBFT:/project/sawtooth-pbft
