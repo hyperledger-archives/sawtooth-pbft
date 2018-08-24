@@ -97,6 +97,16 @@ consensus algorithm operates as follows, inside the event loop of the
    consensus seal). This in turn sends out a ``BlockNew`` update to the
    network, starting the next cycle of the algorithm.
 
+A visual overview of the messages passed during ``Normal`` mode is presented
+in the following diagram:
+
+.. figure:: images/message_passing.png
+    :alt: Messages passed during normal operation
+
+    Overview of messages passed between nodes, and interactions with the
+    validators. Node 1 (N1) is the primary node, while N2-N4 are secondary
+    nodes.
+
 
 ViewChanging Mode
 =================
