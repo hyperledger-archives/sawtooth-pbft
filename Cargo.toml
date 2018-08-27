@@ -17,6 +17,17 @@
 name = "sawtooth-pbft"
 version = "0.1.0"
 authors = ["Bitwise IO, Inc"]
+description = "PBFT consensus algorithm for Hyperledger Sawtooth"
+
+[package.metadata.deb]
+maintainer = "sawtooth"
+depends = "$auto"
+assets = [
+    ["packaging/systemd/sawtooth-pbft.service", "/lib/systemd/system/sawtooth-pbft.service", "644"],
+    ["packaging/systemd/sawtooth-pbft", "/etc/default/sawtooth-pbft", "644"],
+    ["target/release/sawtooth-pbft", "/usr/bin/sawtooth-pbft", "755"]
+]
+maintainer-scripts = "packaging/ubuntu"
 
 [dependencies]
 sawtooth_sdk = { git = "https://github.com/hyperledger/sawtooth-core.git", branch = "master" }
