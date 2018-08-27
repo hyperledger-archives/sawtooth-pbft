@@ -353,8 +353,8 @@ impl PbftNode {
             .get_chain_head()
             .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
 
-        if self.state.switch_phase(PbftPhase::PrePreparing).is_none()
-            || block.block_num > head.block_num + 1
+        if block.block_num > head.block_num + 1
+            || self.state.switch_phase(PbftPhase::PrePreparing).is_none()
         {
             debug!(
                 "{}: Not ready for block {}, pushing to backlog",
@@ -835,6 +835,7 @@ impl PbftNode {
         self._broadcast_message(&msg_type, &msg_bytes)
     }
 
+    #[cfg(not(test))]
     fn _broadcast_message(
         &mut self,
         msg_type: &PbftMessageType,
@@ -852,6 +853,16 @@ impl PbftNode {
             content: msg_bytes.to_vec(),
         };
         self.on_peer_message(peer_msg)
+    }
+
+    /// NOTE: Disabling self-sending for testing purposes
+    #[cfg(test)]
+    fn _broadcast_message(
+        &mut self,
+        _msg_type: &PbftMessageType,
+        _msg_bytes: &[u8],
+    ) -> Result<(), PbftError> {
+        return Ok(())
     }
 }
 
@@ -901,5 +912,388 @@ fn get_block_by_id(service: &mut Box<Service>, block_id: &BlockId) -> Option<Blo
         None
     } else {
         Some(blocks[0].clone())
+    }
+}
+
+/// NOTE: Testing the PbftNode is a bit strange. Due to missing functionality in the Service,
+/// a node calling `broadcast()` doesn't include sending a message to itself. In order to get around
+/// this, `on_peer_message()` is called, which sometimes causes unintended side effects when
+/// testing. Self-sending has been disabled (see `broadcast()` method) for testing purposes.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use config::mock_config;
+    use crypto::digest::Digest;
+    use crypto::sha2::Sha256;
+    use sawtooth_sdk::consensus::engine::Error;
+    use serde_json;
+    use std::collections::HashMap;
+    use std::default::Default;
+    use std::fs::{remove_file, File};
+    use std::io::prelude::*;
+
+    const BLOCK_FILE: &str = "blocks.txt";
+
+    /// Mock service to roughly keep track of the blockchain
+    pub struct MockService {
+        pub chain: Vec<BlockId>,
+    }
+
+    impl MockService {
+        /// Serialize the chain into JSON, and write to a file
+        fn write_chain(&self) {
+            let mut block_file = File::create(BLOCK_FILE).unwrap();
+            let block_bytes: Vec<Vec<u8>> = self
+                .chain
+                .iter()
+                .map(|block: &BlockId| -> Vec<u8> { Vec::<u8>::from(block.clone()) })
+                .collect();
+
+            let ser_blocks = serde_json::to_string(&block_bytes).unwrap();
+            block_file.write_all(&ser_blocks.into_bytes()).unwrap();
+        }
+    }
+
+    impl Service for MockService {
+        fn send_to(
+            &mut self,
+            _peer: &PeerId,
+            _message_type: &str,
+            _payload: Vec<u8>,
+        ) -> Result<(), Error> {
+            Ok(())
+        }
+        fn broadcast(&mut self, _message_type: &str, _payload: Vec<u8>) -> Result<(), Error> {
+            Ok(())
+        }
+        fn initialize_block(&mut self, _previous_id: Option<BlockId>) -> Result<(), Error> {
+            Ok(())
+        }
+        fn summarize_block(&mut self) -> Result<Vec<u8>, Error> {
+            Ok(Default::default())
+        }
+        fn finalize_block(&mut self, _data: Vec<u8>) -> Result<BlockId, Error> {
+            Ok(Default::default())
+        }
+        fn cancel_block(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+        fn check_blocks(&mut self, _priority: Vec<BlockId>) -> Result<(), Error> {
+            Ok(())
+        }
+        fn commit_block(&mut self, block_id: BlockId) -> Result<(), Error> {
+            self.chain.push(block_id);
+            self.write_chain();
+            Ok(())
+        }
+        fn ignore_block(&mut self, _block_id: BlockId) -> Result<(), Error> {
+            Ok(())
+        }
+        fn fail_block(&mut self, _block_id: BlockId) -> Result<(), Error> {
+            Ok(())
+        }
+        fn get_blocks(
+            &mut self,
+            block_ids: Vec<BlockId>,
+        ) -> Result<HashMap<BlockId, Block>, Error> {
+            let mut res = HashMap::new();
+            for id in &block_ids {
+                let index = self
+                    .chain
+                    .iter()
+                    .position(|val| val == id)
+                    .unwrap_or(self.chain.len());
+                res.insert(id.clone(), mock_block(index as u64));
+            }
+            Ok(res)
+        }
+        fn get_chain_head(&mut self) -> Result<Block, Error> {
+            let prev_num = ::std::panic::catch_unwind(|| self.chain.len() - 2).unwrap_or(0);
+            Ok(Block {
+                block_id: self.chain.last().unwrap().clone(),
+                previous_id: self.chain.get(prev_num).unwrap().clone(),
+                signer_id: PeerId::from(vec![]),
+                block_num: self.chain.len() as u64,
+                payload: vec![],
+                summary: vec![],
+            })
+        }
+        fn get_settings(
+            &mut self,
+            _block_id: BlockId,
+            _settings: Vec<String>,
+        ) -> Result<HashMap<String, String>, Error> {
+            Ok(Default::default())
+        }
+        fn get_state(
+            &mut self,
+            _block_id: BlockId,
+            _addresses: Vec<String>,
+        ) -> Result<HashMap<String, Vec<u8>>, Error> {
+            Ok(Default::default())
+        }
+    }
+
+    /// Create a node, based on a given ID
+    fn mock_node(node_id: usize) -> PbftNode {
+        let service: Box<MockService> = Box::new(MockService {
+            // Create genesis block (but with actual ID)
+            chain: vec![mock_block_id(0)],
+        });
+        let cfg = mock_config(4);
+        PbftNode::new(node_id as u64, &cfg, service)
+    }
+
+    /// Create a deterministic BlockId hash based on a block number
+    fn mock_block_id(num: u64) -> BlockId {
+        let mut sha = Sha256::new();
+        sha.input_str(format!("I'm a block with block num {}", num).as_str());
+        BlockId::from(sha.result_str().as_bytes().to_vec())
+    }
+
+    /// Create a deterministic PeerId hash based on a peer number
+    fn mock_peer_id(num: u64) -> PeerId {
+        let mut sha = Sha256::new();
+        sha.input_str(format!("I'm a peer (number {})", num).as_str());
+        PeerId::from(sha.result_str().as_bytes().to_vec())
+    }
+
+    /// Create a mock Block, including only the BlockId, the BlockId of the previous block, and the
+    /// block number
+    fn mock_block(num: u64) -> Block {
+        Block {
+            block_id: mock_block_id(num),
+            previous_id: mock_block_id(num - 1),
+            signer_id: PeerId::from(vec![]),
+            block_num: num,
+            payload: vec![],
+            summary: vec![],
+        }
+    }
+
+    /// Create a mock PeerMessage
+    fn mock_msg(
+        msg_type: &PbftMessageType,
+        view: u64,
+        seq_num: u64,
+        block: Block,
+        from: u64,
+    ) -> PeerMessage {
+        let info = make_msg_info(&msg_type, view, seq_num, mock_peer_id(from));
+
+        let mut pbft_msg = PbftMessage::new();
+        pbft_msg.set_info(info);
+        pbft_msg.set_block(pbft_block_from_block(block.clone()));
+
+        let content = pbft_msg.write_to_bytes().expect("SerializationError");
+        PeerMessage {
+            message_type: String::from(msg_type),
+            content: content,
+        }
+    }
+
+    fn handle_pbft_err(e: PbftError) {
+        match e {
+            PbftError::Timeout => (),
+            PbftError::WrongNumMessages(_, _, _) | PbftError::NotReadyForMessage => {
+                println!("{}", e)
+            }
+            _ => panic!("{}", e),
+        }
+    }
+
+    /// Make sure that receiving a `BlockNew` update works as expected
+    #[test]
+    fn block_new() {
+        // NOTE: Special case for primary node
+        let mut node0 = mock_node(0);
+        node0
+            .on_block_new(mock_block(1))
+            .unwrap_or_else(handle_pbft_err);
+        assert_eq!(node0.state.phase, PbftPhase::PrePreparing);
+        assert_eq!(node0.state.seq_num, 1);
+        assert_eq!(
+            node0.state.working_block,
+            WorkingBlockOption::TentativeWorkingBlock(mock_block_id(1))
+        );
+
+        // Try the next block
+        let mut node1 = mock_node(1);
+        node1
+            .on_block_new(mock_block(1))
+            .unwrap_or_else(handle_pbft_err);
+        assert_eq!(node1.state.phase, PbftPhase::PrePreparing);
+        assert_eq!(
+            node1.state.working_block,
+            WorkingBlockOption::TentativeWorkingBlock(mock_block_id(1))
+        );
+        assert_eq!(node1.state.seq_num, 0);
+
+        // Try a block way in the future (push to backlog)
+        let mut node1 = mock_node(1);
+        node1
+            .on_block_new(mock_block(7))
+            .unwrap_or_else(handle_pbft_err);
+        assert_eq!(node1.state.phase, PbftPhase::NotStarted);
+        assert_eq!(
+            node1.state.working_block,
+            WorkingBlockOption::NoWorkingBlock
+        );
+        assert_eq!(node1.state.seq_num, 0);
+    }
+
+    /// Make sure that receiving a `BlockValid` update works as expected
+    #[test]
+    fn block_valid() {
+        let mut node = mock_node(0);
+        node.state.phase = PbftPhase::Checking;
+        node.on_block_valid(mock_block_id(1))
+            .unwrap_or_else(handle_pbft_err);
+        assert!(node.state.phase == PbftPhase::Committing);
+    }
+
+    /// Make sure that receiving a `BlockCommit` update works as expected
+    #[test]
+    fn block_commit() {
+        let mut node = mock_node(0);
+        node.state.phase = PbftPhase::Finished;
+        node.on_block_commit(mock_block_id(1))
+            .unwrap_or_else(handle_pbft_err);
+        assert!(node.state.phase == PbftPhase::NotStarted);
+    }
+
+    /// Test the multicast protocol (`PrePrepare` => `Prepare` => `Commit`)
+    #[test]
+    fn multicast_protocol() {
+        let mut node = mock_node(0);
+        let garbage_msg = PeerMessage {
+            message_type: String::from(&PbftMessageType::PrePrepare),
+            content: b"this message will result in an error".to_vec(),
+        };
+        assert!(node.on_peer_message(garbage_msg).is_err());
+
+        // Make sure BlockNew is in the log
+        let mut node1 = mock_node(1);
+        let block = mock_block(1);
+        node1
+            .on_block_new(block.clone())
+            .unwrap_or_else(handle_pbft_err);
+
+        // Receive a PrePrepare
+        let msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, block.clone(), 0);
+        node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+
+        assert_eq!(node1.state.phase, PbftPhase::Preparing);
+        assert_eq!(node1.state.seq_num, 1);
+        if let WorkingBlockOption::WorkingBlock(ref blk) = node1.state.working_block {
+            assert_eq!(BlockId::from(blk.clone().block_id), mock_block_id(1));
+        } else {
+            panic!("Wrong WorkingBlockOption");
+        }
+
+        // Receive 3 `Prepare` messages
+        for peer in 0..3 {
+            assert_eq!(node1.state.phase, PbftPhase::Preparing);
+            let msg = mock_msg(&PbftMessageType::Prepare, 0, 1, block.clone(), peer);
+            node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+        }
+        assert_eq!(node1.state.phase, PbftPhase::Checking);
+
+        // Spoof the `check_blocks()` call
+        assert!(node1.on_block_valid(mock_block_id(1)).is_ok());
+
+        // Receive 3 `Commit` messages
+        for peer in 0..3 {
+            assert_eq!(node1.state.phase, PbftPhase::Committing);
+            let msg = mock_msg(&PbftMessageType::Commit, 0, 1, block.clone(), peer);
+            node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+        }
+        assert_eq!(node1.state.phase, PbftPhase::Finished);
+
+        // Spoof the `commit_blocks()` call
+        assert!(node1.on_block_commit(mock_block_id(1)).is_ok());
+        assert_eq!(node1.state.phase, PbftPhase::NotStarted);
+
+        // Make sure the block was actually committed
+        let mut f = File::open(BLOCK_FILE).unwrap();
+        let mut buffer = String::new();
+        f.read_to_string(&mut buffer).unwrap();
+        let deser: Vec<Vec<u8>> = serde_json::from_str(&buffer).unwrap();
+        let blocks: Vec<BlockId> = deser
+            .iter()
+            .filter(|&block| !block.is_empty())
+            .map(|ref block| BlockId::from(block.clone().clone()))
+            .collect();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1], mock_block_id(1));
+
+        remove_file(BLOCK_FILE).unwrap();
+    }
+
+    /// Make sure that checkpointing works as expected:
+    /// + Node enters Normal mode again after checkpoint
+    /// + A stable checkpoint is created
+    #[test]
+    fn checkpoint() {
+        let mut node1 = mock_node(1);
+        // Pretend that the node just finished block 10
+        node1.state.seq_num = 10;
+        let block = mock_block(10);
+        assert_eq!(node1.state.mode, PbftMode::Normal);
+        assert!(node1.msg_log.latest_stable_checkpoint.is_none());
+
+        // Receive 3 `Checkpoint` messages
+        for peer in 0..3 {
+            let msg = mock_msg(&PbftMessageType::Checkpoint, 0, 10, block.clone(), peer);
+            node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+        }
+
+        assert_eq!(node1.state.mode, PbftMode::Normal);
+        assert!(node1.msg_log.latest_stable_checkpoint.is_some());
+    }
+
+    /// Test that view changes work as expected, and that nodes take the proper roles after a view
+    /// change
+    #[test]
+    fn view_change() {
+        let mut node1 = mock_node(1);
+
+        assert!(!node1.state.is_primary());
+
+        // Receive 3 `ViewChange` messages
+        for peer in 0..3 {
+            // It takes f + 1 `ViewChange` messages to trigger a view change, if it wasn't started
+            // by `start_view_change()`
+            if peer < 2 {
+                assert_eq!(node1.state.mode, PbftMode::Normal);
+            } else {
+                assert_eq!(node1.state.mode, PbftMode::ViewChanging);
+            }
+            let info = make_msg_info(&PbftMessageType::ViewChange, 1, 1, mock_peer_id(peer));
+            let mut vc_msg = PbftViewChange::new();
+            vc_msg.set_info(info);
+            vc_msg.set_checkpoint_messages(RepeatedField::default());
+
+            let msg_bytes = vc_msg.write_to_bytes().unwrap();
+            let msg = PeerMessage {
+                message_type: String::from(&PbftMessageType::ViewChange),
+                content: msg_bytes,
+            };
+            node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+        }
+
+        assert!(node1.state.is_primary());
+        assert_eq!(node1.state.view, 1);
+    }
+
+    /// Make sure that view changes start correctly
+    #[test]
+    fn start_view_change() {
+        let mut node1 = mock_node(1);
+        assert_eq!(node1.state.mode, PbftMode::Normal);
+
+        node1.start_view_change().unwrap_or_else(handle_pbft_err);
+
+        assert_eq!(node1.state.mode, PbftMode::ViewChanging);
     }
 }

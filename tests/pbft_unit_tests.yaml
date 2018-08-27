@@ -11,25 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# -----------------------------------------------------------------------------
 
-[package]
-name = "sawtooth-pbft"
-version = "0.1.0"
-authors = ["Bitwise IO, Inc"]
+version: "2.1"
 
-[dependencies]
-sawtooth_sdk = { git = "https://github.com/hyperledger/sawtooth-core.git", branch = "master" }
-simple_logger = "0.5.0"
-serde_json = "1"
-hex = "0.3"
-protobuf = "2"
-clap = "2.31"
-log = "0.4"
-log4rs = "0.8"
+volumes:
+  cargo-registry:
 
-[dev-dependencies]
-rust-crypto = "0.2"
-
-[build-dependencies]
-protoc-rust = "2"
+services:
+  sawtooth-pbft-test:
+    image: sawtooth-pbft-test
+    volumes:
+      - ..:/project/sawtooth-pbft
+      - cargo-registry:/root/.cargo/registry
+    build:
+      context: .
+      dockerfile: sawtooth-pbft-test.dockerfile
+    entrypoint: cargo test

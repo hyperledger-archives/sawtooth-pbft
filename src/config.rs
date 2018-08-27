@@ -136,3 +136,22 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftCo
 
     config
 }
+
+/// Create a mock configuration, given a number of nodes. PeerIds are generated using a Sha256
+/// hash.
+#[cfg(test)]
+pub fn mock_config(num_nodes: usize) -> PbftConfig {
+    use crypto::digest::Digest;
+    use crypto::sha2::Sha256;
+
+    let mut ids = HashMap::new();
+    for i in 0..num_nodes {
+        let mut sha = Sha256::new();
+        sha.input_str(format!("I'm a node with ID {}", i).as_str());
+        ids.insert(PeerId::from(sha.result_str().as_bytes().to_vec()), i as u64);
+    }
+
+    let mut config = PbftConfig::default();
+    config.peers = ids;
+    config
+}

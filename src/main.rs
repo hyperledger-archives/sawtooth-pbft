@@ -17,6 +17,8 @@
 
 #[macro_use]
 extern crate clap;
+#[cfg(test)]
+extern crate crypto;
 #[macro_use]
 extern crate log;
 extern crate hex;

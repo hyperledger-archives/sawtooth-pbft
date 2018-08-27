@@ -254,3 +254,93 @@ impl PbftState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use config::mock_config;
+
+    /// Check that state responds to having an inadequately sized network
+    #[test]
+    fn no_fault_tolerance() {
+        let config = mock_config(1);
+        let caught = ::std::panic::catch_unwind(|| {
+            PbftState::new(0, &config);
+        }).is_err();
+        assert!(caught);
+    }
+
+    /// Check that the initial configuration of state is as we expect:
+    /// + Primary is node 0, secondaries are other nodes
+    /// + The node is not expecting any particular message type
+    /// + `network_node_ids` got set properly
+    /// + The node's own PeerId got set properly
+    /// + The primary PeerId got se properly
+    #[test]
+    fn initial_config() {
+        let config = mock_config(4);
+        let state0 = PbftState::new(0, &config);
+        let state1 = PbftState::new(1, &config);
+
+        assert!(state0.is_primary());
+        assert!(!state1.is_primary());
+
+        assert_eq!(state0.f, 1);
+        assert_eq!(state1.f, 1);
+
+        assert_eq!(state0.check_msg_type(), PbftMessageType::Unset);
+        assert_eq!(state1.check_msg_type(), PbftMessageType::Unset);
+
+        assert_eq!(
+            state0
+                .get_node_id_from_bytes(&Vec::<u8>::from(state0.network_node_ids[&0].clone()))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            state1
+                .get_node_id_from_bytes(&Vec::<u8>::from(state1.network_node_ids[&1].clone()))
+                .unwrap(),
+            1
+        );
+
+        assert_eq!(state0.get_own_peer_id(), state0.network_node_ids[&0]);
+        assert_eq!(state1.get_own_peer_id(), state1.network_node_ids[&1]);
+
+        assert_eq!(state0.get_primary_peer_id(), state0.network_node_ids[&0]);
+        assert_eq!(state1.get_primary_peer_id(), state1.network_node_ids[&0]);
+    }
+
+    /// Make sure that nodes transition from primary to secondary and back smoothly
+    #[test]
+    fn role_changes() {
+        let config = mock_config(4);
+        let mut state = PbftState::new(0, &config);
+
+        state.downgrade_role();
+        assert!(!state.is_primary());
+
+        state.upgrade_role();
+        assert!(state.is_primary());
+    }
+
+    /// Make sure that a normal PBFT cycle works properly
+    /// `NotStarted` => `PrePreparing` => `Preparing` => `Committing` => `Finished` => `NotStarted`
+    /// Also make sure that no illegal phase changes are allowed to happen
+    /// (e.g. `NotStarted` => `Finished`)
+    #[test]
+    fn phase_changes() {
+        let config = mock_config(4);
+        let mut state = PbftState::new(0, &config);
+
+        assert!(state.switch_phase(PbftPhase::PrePreparing).is_some());
+        assert!(state.switch_phase(PbftPhase::Preparing).is_some());
+        assert!(state.switch_phase(PbftPhase::Checking).is_some());
+        assert!(state.switch_phase(PbftPhase::Committing).is_some());
+        assert!(state.switch_phase(PbftPhase::Finished).is_some());
+        assert!(state.switch_phase(PbftPhase::NotStarted).is_some());
+
+        assert!(state.switch_phase(PbftPhase::Finished).is_none());
+        assert!(state.switch_phase(PbftPhase::Preparing).is_none());
+    }
+}
