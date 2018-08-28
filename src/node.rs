@@ -237,6 +237,16 @@ impl PbftNode {
                     return Ok(());
                 }
 
+                // Not ready to receive checkpoint yet; only acceptable in NotStarted
+                if self.state.phase != PbftPhase::NotStarted {
+                    self.msg_log.push_backlog(PeerMessage {
+                        message_type: msg.message_type.clone(),
+                        content: msg.content.clone(),
+                    });
+                    debug!("{}: Not in NotStarted; not handling checkpoint yet", self.state);
+                    return Ok(());
+                }
+
                 // Add message to the log
                 self.msg_log.add_message(pbft_message.clone());
 
