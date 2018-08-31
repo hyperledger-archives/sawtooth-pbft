@@ -15,6 +15,10 @@
  * -----------------------------------------------------------------------------
  */
 
+//! Implementation of the [PBFT consensus
+//! algorithm](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/castro.html),
+//! modified for use with Hyperledger Sawtooth.
+
 #[macro_use]
 extern crate clap;
 #[cfg(test)]
@@ -38,7 +42,7 @@ pub mod message_extensions;
 pub mod message_log;
 pub mod message_type;
 pub mod node;
-pub mod protos;
+mod protos;
 pub mod state;
 pub mod timing;
 

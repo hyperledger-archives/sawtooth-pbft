@@ -15,9 +15,11 @@
  * ------------------------------------------------------------------------------
  */
 
+//! Timing-related structures
+
 use std::time::{Duration, Instant};
 
-// Encapsulates doing some work every time a timeout has elapsed
+/// Encapsulates calling a function every so often
 pub struct Ticker {
     last: Instant,
     timeout: Duration,
@@ -31,7 +33,7 @@ impl Ticker {
         }
     }
 
-    // Do some work if the timeout has elapsed
+    // Do some work if the timeout has expired
     pub fn tick<T: FnMut()>(&mut self, mut callback: T) {
         let elapsed = Instant::now() - self.last;
         if elapsed >= self.timeout {
@@ -48,7 +50,8 @@ enum TimeoutState {
     Expired,
 }
 
-// Check back on this timer every so often to see if it's expired
+/// A timer that expires after a given duration
+/// Check back on this timer every so often to see if it's expired
 #[derive(Debug)]
 pub struct Timeout {
     state: TimeoutState,
@@ -65,6 +68,7 @@ impl Timeout {
         }
     }
 
+    /// Update the timer state, and check if the timer is expired
     pub fn is_expired(&mut self) -> bool {
         if self.state == TimeoutState::Active && Instant::now() - self.start > self.duration {
             self.state = TimeoutState::Expired;

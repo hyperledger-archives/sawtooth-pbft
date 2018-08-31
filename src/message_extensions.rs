@@ -15,6 +15,8 @@
  * -----------------------------------------------------------------------------
  */
 
+//! Extensions for the Protobuf-defined message types
+
 // We know that the property `k1 == k2 ==>  hash(k1) == hash(k2)` holds, since protobuf just compares
 // every field in the struct and that's exactly what the implementation of Hash is doing below
 #![allow(derive_hash_xor_eq)]

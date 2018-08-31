@@ -15,6 +15,8 @@
  * -----------------------------------------------------------------------------
  */
 
+//! Entry point for the consensus algorithm, including the main event loop
+
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
 use sawtooth_sdk::consensus::{engine::*, service::Service};
@@ -102,11 +104,11 @@ impl Engine for PbftEngine {
     }
 
     fn version(&self) -> String {
-        String::from("0.1")
+        String::from(env!("CARGO_PKG_VERSION"))
     }
 
     fn name(&self) -> String {
-        String::from("sawtooth-pbft")
+        String::from(env!("CARGO_PKG_NAME"))
     }
 }
 

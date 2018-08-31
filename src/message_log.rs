@@ -15,6 +15,8 @@
  * -----------------------------------------------------------------------------
  */
 
+//! The message log used by PBFT nodes to save messages
+
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
 
@@ -29,40 +31,42 @@ use error::PbftError;
 use message_extensions::PbftGetInfo;
 use message_type::PbftMessageType;
 
-// The log keeps track of the last stable checkpoint
+/// The log keeps track of the last stable checkpoint
 #[derive(Clone)]
 pub struct PbftStableCheckpoint {
     pub seq_num: u64,
     pub checkpoint_messages: Vec<PbftMessage>,
 }
 
-// Struct for storing messages that a PbftNode receives
+/// Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
-    // Generic messages (BlockNew, PrePrepare, Prepare, Commit, CommitFinal, Checkpoint)
+    /// Generic messages (BlockNew, PrePrepare, Prepare, Commit, Checkpoint)
     messages: HashSet<PbftMessage>,
 
-    // View change related messages
+    /// View change messages
     view_changes: HashSet<PbftViewChange>,
 
-    // Watermarks (minimum/maximum sequence numbers)
-    // Ensures log does not get too large
+    /// Watermarks (minimum/maximum sequence numbers)
+    /// Ensure that log does not get too large
     low_water_mark: u64,
     high_water_mark: u64,
 
-    // Maximum log size, defined from on-chain settings
+    /// Maximum log size, defined from on-chain settings
     max_log_size: u64,
 
-    // How many cycles through the algorithm we've done (BlockNew messages)
+    /// How many cycles through the algorithm we've done (BlockNew messages)
     cycles: u64,
 
-    // How many cycles in between checkpoints
+    /// How many cycles in between checkpoints
     checkpoint_period: u64,
 
-    // Backlog of messages (from peers) and blocks (from BlockNews)
+    /// Backlog of messages (from peers) 
     backlog: VecDeque<PeerMessage>,
+
+    /// Backlog of blocks (from BlockNews messages)
     block_backlog: VecDeque<Block>,
 
-    // The most recent checkpoint that contains proof
+    /// The most recent checkpoint that contains proof
     pub latest_stable_checkpoint: Option<PbftStableCheckpoint>,
 }
 
@@ -117,8 +121,12 @@ impl PbftLog {
         }
     }
 
-    // ---------- Methods to check a message against the log ----------
-    // "prepared" predicate
+    /// `prepared` predicate
+    /// `prepared` is true for this node if the following messages are present in its log:
+    ///  + The original `BlockNew` message
+    ///  + A `PrePrepare` message matching the original message (in the current view)
+    ///  + `2f + 1` matching `Prepare` messages from different nodes that match
+    ///    `PrePrepare` message above (including its own)
     pub fn prepared(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
         if deser_msg.get_info().get_msg_type() != String::from(&PbftMessageType::Prepare) {
             return Err(PbftError::NotReadyForMessage);
@@ -171,7 +179,10 @@ impl PbftLog {
         Ok(())
     }
 
-    // "committed" predicate
+    /// "committed" predicate
+    /// `committed` is true if for this node:
+    ///   + `prepared` is true
+    ///   + This node has accepted `2f + 1` `Commit` messages, including its own
     pub fn committed(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
         if deser_msg.get_info().get_msg_type() != String::from(&PbftMessageType::Commit) {
             return Err(PbftError::NotReadyForMessage);
@@ -186,7 +197,7 @@ impl PbftLog {
         Ok(())
     }
 
-    // Check an incoming message against its counterparts in the message log
+    /// Check an incoming message against its counterparts in the message log
     pub fn check_msg_against_log<'a, T: PbftGetInfo<'a>>(
         &self,
         message: &'a T,
@@ -222,7 +233,7 @@ impl PbftLog {
         Ok(())
     }
 
-    // Methods for dealing with PbftMessages
+    /// Add a generic PBFT message to the log
     pub fn add_message(&mut self, msg: PbftMessage) {
         if msg.get_info().get_seq_num() < self.high_water_mark
             || msg.get_info().get_seq_num() >= self.low_water_mark
@@ -244,6 +255,7 @@ impl PbftLog {
         }
     }
 
+    /// Obtain messages from the log that match a given type, sequence number, and view
     pub fn get_messages_of_type(
         &self,
         msg_type: &PbftMessageType,
@@ -261,6 +273,8 @@ impl PbftLog {
             .collect()
     }
 
+    /// Obtain message information objects from the log that match a given type, sequence number,
+    /// and view
     pub fn get_message_infos(
         &self,
         msg_type: &PbftMessageType,
@@ -289,7 +303,9 @@ impl PbftLog {
         infos
     }
 
-    // Fix sequence numbers of generic messages that are defaulted to zero
+    /// Fix sequence numbers of generic PBFT messages that are defaulted to zero
+    /// This is used to fix the `BlockNew` messages in secondary nodes, once they receive a
+    /// `PrePrepare` message with the proper sequence number.
     pub fn fix_seq_nums(
         &mut self,
         msg_type: &PbftMessageType,
@@ -328,12 +344,12 @@ impl PbftLog {
         changed_msgs
     }
 
-    // Methods for dealing with PbftViewChanges
+    /// Add a `ViewChange` message to the log
     pub fn add_view_change(&mut self, vc: PbftViewChange) {
         self.view_changes.insert(vc);
     }
 
-    // Get the latest stable checkpoint
+    /// Get the latest stable checkpoint
     pub fn get_latest_checkpoint(&self) -> u64 {
         if let Some(ref cp) = self.latest_stable_checkpoint {
             cp.seq_num
@@ -342,12 +358,12 @@ impl PbftLog {
         }
     }
 
-    // Is this node ready for a checkpoint?
+    /// Is this node ready for a checkpoint?
     pub fn at_checkpoint(&self) -> bool {
         self.cycles >= self.checkpoint_period
     }
 
-    // Garbage collect the log, and create a stable checkpoint
+    /// Garbage collect the log, and create a stable checkpoint
     pub fn garbage_collect(&mut self, stable_checkpoint: u64, view: u64) {
         self.low_water_mark = stable_checkpoint;
         self.high_water_mark = self.low_water_mark + self.max_log_size;

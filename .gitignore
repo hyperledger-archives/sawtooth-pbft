@@ -3,3 +3,4 @@ Cargo.lock
 **/*.rs.bk
 *.swp
 /src/protos
+/docs/build
