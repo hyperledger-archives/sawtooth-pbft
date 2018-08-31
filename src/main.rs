@@ -53,8 +53,7 @@ fn main() {
         (@arg connect: -C --connect +takes_value
          "connection endpoint for validator")
         (@arg verbose: -v --verbose +multiple
-         "increase output verbosity")
-        (@arg ID: +required "the PBFT node's id"))
+         "increase output verbosity"))
         .get_matches();
 
     let log_level = match matches.occurrences_of("verbose") {
@@ -70,17 +69,14 @@ fn main() {
             .unwrap_or("tcp://localhost:5050"),
     );
 
-    let id = value_t!(matches.value_of("ID"), u64).unwrap_or_else(|e| e.exit());
-
     simple_logger::init_with_level(log_level).expect("Unable to initialize logger");
 
     warn!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
 
-    let pbft_engine = engine::PbftEngine::new(id);
+    let pbft_engine = engine::PbftEngine::new();
 
     let (driver, _stop) = ZmqDriver::new();
 
-    info!("PBFT Node {} connecting to '{}'", &id, &endpoint);
     driver.start(&endpoint, pbft_engine).unwrap_or_else(|err| {
         error!("{}", err);
         process::exit(1);

@@ -68,7 +68,7 @@ services:
         sawset proposal create \
           -k /etc/sawtooth/keys/validator.priv \
           sawtooth.consensus.algorithm=None \
-          sawtooth.consensus.pbft.peers=\\{'\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"':0,'\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"':1,'\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"':2,'\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"':3\\} \
+          sawtooth.consensus.pbft.peers=\\['\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"'\\] \
           sawtooth.consensus.pbft.block_duration=100 \
           sawtooth.consensus.pbft.checkpoint_period=10 \
           sawtooth.consensus.pbft.view_change_timeout=4000 \
@@ -179,7 +179,7 @@ services:
     volumes:
       - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-0:5050 0 -v
+    command: ./target/debug/sawtooth-pbft --connect tcp://validator-0:5050 -v
     stop_signal: SIGKILL
 
   pbft-1:
@@ -190,7 +190,7 @@ services:
     volumes:
       - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-1:5050 1 -v
+    command: ./target/debug/sawtooth-pbft --connect tcp://validator-1:5050 -v
     stop_signal: SIGKILL
 
   pbft-2:
@@ -201,7 +201,7 @@ services:
     volumes:
       - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-2:5050 2 -v
+    command: ./target/debug/sawtooth-pbft --connect tcp://validator-2:5050 -v
     stop_signal: SIGKILL
 
   pbft-3:
@@ -212,7 +212,7 @@ services:
     volumes:
       - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-3:5050 3 -v
+    command: ./target/debug/sawtooth-pbft --connect tcp://validator-3:5050 -v
     stop_signal: SIGKILL
 
 

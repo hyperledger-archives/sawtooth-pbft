@@ -880,7 +880,7 @@ impl PbftNode {
         _msg_type: &PbftMessageType,
         _msg_bytes: &[u8],
     ) -> Result<(), PbftError> {
-        return Ok(())
+        return Ok(());
     }
 }
 

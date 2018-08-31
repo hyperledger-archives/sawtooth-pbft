@@ -28,13 +28,11 @@ use timing;
 
 use error::PbftError;
 
-pub struct PbftEngine {
-    id: u64,
-}
+pub struct PbftEngine {}
 
 impl PbftEngine {
-    pub fn new(id: u64) -> Self {
-        PbftEngine { id }
+    pub fn new() -> Self {
+        PbftEngine {}
     }
 }
 
@@ -45,15 +43,26 @@ impl Engine for PbftEngine {
         mut service: Box<Service>,
         startup_state: StartupState,
     ) {
-        let StartupState { chain_head, .. } = startup_state;
+        let StartupState {
+            chain_head,
+            peers: _peers,
+            local_peer_info,
+        } = startup_state;
 
         // Load on-chain settings
         let config = config::load_pbft_config(chain_head.block_id, &mut service);
 
+        let node_id = config
+            .peers
+            .iter()
+            .position(|ref id| id == &&local_peer_info.peer_id)
+            .expect("This node is not in the peers list, which is necessary")
+            as u64;
+
         let mut working_ticker = timing::Ticker::new(config.block_duration);
         let mut backlog_ticker = timing::Ticker::new(config.message_timeout);
 
-        let mut node = PbftNode::new(self.id, &config, service);
+        let mut node = PbftNode::new(node_id, &config, service);
 
         debug!("Starting state: {:#?}", node.state);
 

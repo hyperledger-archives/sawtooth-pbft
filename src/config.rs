@@ -33,8 +33,8 @@ use sawtooth_sdk::consensus::{
 /// their absence.
 #[derive(Debug)]
 pub struct PbftConfig {
-    /// Peers that this node is connected to
-    pub peers: HashMap<PeerId, u64>,
+    // Peers that this node is connected to
+    pub peers: Vec<PeerId>,
 
     /// How long to wait in between trying to publish blocks
     pub block_duration: Duration,
@@ -56,7 +56,7 @@ pub struct PbftConfig {
 impl PbftConfig {
     pub fn default() -> Self {
         PbftConfig {
-            peers: HashMap::new(),
+            peers: Vec::new(),
             block_duration: Duration::from_millis(200),
             message_timeout: Duration::from_millis(10),
             view_change_timeout: Duration::from_millis(4000),
@@ -103,17 +103,12 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftCo
         .get("sawtooth.consensus.pbft.peers")
         .expect("'sawtooth.consensus.pbft.peers' must be set");
 
-    let peers: HashMap<String, u64> = serde_json::from_str(peers_string)
+    let peers: Vec<String> = serde_json::from_str(peers_string)
         .expect("Invalid value in 'sawtooth.consensus.pbft.peers'");
 
-    let peers: HashMap<PeerId, u64> = peers
+    let peers: Vec<PeerId> = peers
         .into_iter()
-        .map(|(s, id)| {
-            (
-                PeerId::from(hex::decode(s).expect("PeerId is not valid hex")),
-                id,
-            )
-        })
+        .map(|s| PeerId::from(hex::decode(s).expect("PeerId is not valid hex")))
         .collect();
 
     config.peers = peers;
@@ -162,11 +157,11 @@ pub fn mock_config(num_nodes: usize) -> PbftConfig {
     use crypto::digest::Digest;
     use crypto::sha2::Sha256;
 
-    let mut ids = HashMap::new();
+    let mut ids = Vec::new();
     for i in 0..num_nodes {
         let mut sha = Sha256::new();
         sha.input_str(format!("I'm a node with ID {}", i).as_str());
-        ids.insert(PeerId::from(sha.result_str().as_bytes().to_vec()), i as u64);
+        ids.push(PeerId::from(sha.result_str().as_bytes().to_vec()));
     }
 
     let mut config = PbftConfig::default();

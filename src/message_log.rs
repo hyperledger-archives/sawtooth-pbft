@@ -443,7 +443,6 @@ mod tests {
     use super::*;
     use config;
     use sawtooth_sdk::consensus::engine::PeerId;
-    use std::collections::HashMap;
 
     /// Create a PbftMessage, given its type, view, sequence number, and who it's from
     fn make_msg(
@@ -476,13 +475,7 @@ mod tests {
 
     /// Obtain the PeerId for node `which`
     fn get_peer_id(cfg: &PbftConfig, which: u64) -> PeerId {
-        let peer_id_map: HashMap<u64, PeerId> = cfg
-            .peers
-            .clone()
-            .into_iter()
-            .map(|(peer_id, node_id)| (node_id, peer_id))
-            .collect();
-        peer_id_map[&which].clone()
+        cfg.peers[which as usize].clone()
     }
 
     /// Test that adding one message works as expected
