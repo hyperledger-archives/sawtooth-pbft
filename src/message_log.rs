@@ -60,7 +60,7 @@ pub struct PbftLog {
     /// How many cycles in between checkpoints
     checkpoint_period: u64,
 
-    /// Backlog of messages (from peers) 
+    /// Backlog of messages (from peers)
     backlog: VecDeque<PeerMessage>,
 
     /// Backlog of blocks (from BlockNews messages)
