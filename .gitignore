@@ -1,5 +1,12 @@
+# Rust files
 Cargo.lock
 /target
 **/*.rs.bk
 *.swp
 /docs/build
+
+# IDE files
+.idea/
+
+# Python files
+__pycache__/
