@@ -28,6 +28,7 @@ use timing;
 
 use error::PbftError;
 
+#[derive(Default)]
 pub struct PbftEngine {}
 
 impl PbftEngine {
