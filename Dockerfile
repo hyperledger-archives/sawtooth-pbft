@@ -33,12 +33,16 @@ RUN curl -OLsS https://github.com/google/protobuf/releases/download/v3.5.1/proto
  && unzip protoc-3.5.1-linux-x86_64.zip -d protoc3 \
  && rm protoc-3.5.1-linux-x86_64.zip
 
+ENV PATH=$PATH:/protoc3/bin:/root/.cargo/bin \
+    CARGO_INCREMENTAL=0
+
 RUN curl https://sh.rustup.rs -sSf > /usr/bin/rustup-init \
  && chmod +x /usr/bin/rustup-init \
- && rustup-init -y
+ && rustup-init -y \
+ && rustup component add rustfmt-preview \
+ && rustup toolchain add nightly \
+ && rustup component add clippy-preview --toolchain=nightly
 
-ENV PATH=$PATH:/protoc3/bin:/project/sawtooth-core/bin:/root/.cargo/bin \
-    CARGO_INCREMENTAL=0
 
 WORKDIR /project/sawtooth-pbft
 
