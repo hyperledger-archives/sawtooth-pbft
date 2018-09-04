@@ -19,7 +19,6 @@
 
 use hex;
 
-use std::collections::HashMap;
 use std::convert::From;
 use std::error::Error;
 
@@ -346,7 +345,7 @@ pub fn view_change(
 fn get_block_by_id(service: &mut Service, block_id: BlockId) -> Option<Block> {
     let blocks: Vec<Block> = service
         .get_blocks(vec![block_id.clone()])
-        .unwrap_or(HashMap::new())
+        .unwrap_or_default()
         .into_iter()
         .map(|(_block_id, block)| block)
         .collect();
