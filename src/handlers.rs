@@ -188,7 +188,7 @@ pub fn commit(
         .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
     let cur_block = get_block_by_id(
         &mut *service,
-        BlockId::from(pbft_message.get_block().get_block_id().to_vec()),
+        &BlockId::from(pbft_message.get_block().get_block_id().to_vec()),
     ).ok_or_else(|| PbftError::WrongNumBlocks)?;
     if cur_block.previous_id != head.block_id {
         warn!(
@@ -227,7 +227,7 @@ pub fn commit(
 /// which in turn call `action_from_hint()`, and either push to backlog for future messages, or add
 /// to message log for past messages. This usually only makes sense for regular multicast messages
 /// (`PrePrepare`, `Prepare`, and `Commit`)
-pub fn multicast_hint(state: &PbftState, pbft_message: PbftMessage) -> PbftHint {
+pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint {
     let msg_type = PbftMessageType::from(pbft_message.get_info().get_msg_type());
 
     if pbft_message.get_info().get_seq_num() > state.seq_num {
@@ -342,7 +342,7 @@ pub fn view_change(
 }
 
 // There should only be one block with a matching ID
-fn get_block_by_id(service: &mut Service, block_id: BlockId) -> Option<Block> {
+fn get_block_by_id(service: &mut Service, block_id: &BlockId) -> Option<Block> {
     let blocks: Vec<Block> = service
         .get_blocks(vec![block_id.clone()])
         .unwrap_or_default()
@@ -462,30 +462,30 @@ mod tests {
 
         // Past (past sequence number)
         let past_msg = mock_msg(&PbftMessageType::Prepare, 0, 1, mock_block(1), 0);
-        assert_eq!(multicast_hint(&state, past_msg), PbftHint::PastMessage);
+        assert_eq!(multicast_hint(&state, &past_msg), PbftHint::PastMessage);
 
         // Past (current sequence number, past phase)
         state.phase = PbftPhase::Committing;
         state.working_block =
             WorkingBlockOption::WorkingBlock(pbft_block_from_block(mock_block(5)));
         let past_msg = mock_msg(&PbftMessageType::Prepare, 0, 5, mock_block(5), 0);
-        assert_eq!(multicast_hint(&state, past_msg), PbftHint::PastMessage);
+        assert_eq!(multicast_hint(&state, &past_msg), PbftHint::PastMessage);
 
         // Present
         let present_msg = mock_msg(&PbftMessageType::Commit, 0, 5, mock_block(5), 0);
         assert_eq!(
-            multicast_hint(&state, present_msg),
+            multicast_hint(&state, &present_msg),
             PbftHint::PresentMessage
         );
 
         // Future (current sequence number, future phase)
         state.phase = PbftPhase::Preparing;
         let future_msg = mock_msg(&PbftMessageType::Commit, 0, 5, mock_block(5), 0);
-        assert_eq!(multicast_hint(&state, future_msg), PbftHint::FutureMessage);
+        assert_eq!(multicast_hint(&state, &future_msg), PbftHint::FutureMessage);
 
         // Future (future sequence number)
         state.phase = PbftPhase::NotStarted;
         let future_msg = mock_msg(&PbftMessageType::Commit, 0, 15, mock_block(15), 0);
-        assert_eq!(multicast_hint(&state, future_msg), PbftHint::FutureMessage);
+        assert_eq!(multicast_hint(&state, &future_msg), PbftHint::FutureMessage);
     }
 }

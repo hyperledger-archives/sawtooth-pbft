@@ -76,7 +76,7 @@ impl PbftNode {
     /// This method handles all messages from other nodes. Such messages may include `PrePrepare`,
     /// `Prepare`, `Commit`, `Checkpoint`, or `ViewChange`. If a node receives a type of message
     /// before it is ready to do so, the message is pushed into a backlog queue.
-    pub fn on_peer_message(&mut self, msg: PeerMessage) -> Result<(), PbftError> {
+    pub fn on_peer_message(&mut self, msg: &PeerMessage) -> Result<(), PbftError> {
         let msg_type = msg.message_type.clone();
         let msg_type = PbftMessageType::from(msg_type.as_str());
 
@@ -96,7 +96,7 @@ impl PbftNode {
                 &hex::encode(pbft_message.get_block().get_block_id())[..6],
             );
 
-            handlers::multicast_hint(&self.state, pbft_message)
+            handlers::multicast_hint(&self.state, &pbft_message)
         } else {
             PbftHint::PresentMessage
         };
@@ -497,7 +497,7 @@ impl PbftNode {
         let mut peer_res = Ok(());
         if let Some(msg) = self.msg_log.pop_backlog() {
             debug!("{}: Popping from backlog {}", self.state, msg.message_type);
-            peer_res = self.on_peer_message(msg);
+            peer_res = self.on_peer_message(&msg);
         }
         if self.state.mode == PbftMode::Normal && self.state.phase == PbftPhase::NotStarted {
             if let Some(msg) = self.msg_log.pop_block_backlog() {
@@ -594,7 +594,7 @@ impl PbftNode {
             message_type: String::from(msg_type),
             content: msg_bytes.to_vec(),
         };
-        self.on_peer_message(peer_msg)
+        self.on_peer_message(&peer_msg)
     }
 
     /// NOTE: Disabling self-sending for testing purposes
@@ -882,7 +882,7 @@ mod tests {
             message_type: String::from(&PbftMessageType::PrePrepare),
             content: b"this message will result in an error".to_vec(),
         };
-        assert!(node.on_peer_message(garbage_msg).is_err());
+        assert!(node.on_peer_message(&garbage_msg).is_err());
 
         // Make sure BlockNew is in the log
         let mut node1 = mock_node(1);
@@ -893,7 +893,7 @@ mod tests {
 
         // Receive a PrePrepare
         let msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, block.clone(), 0);
-        node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+        node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
 
         assert_eq!(node1.state.phase, PbftPhase::Preparing);
         assert_eq!(node1.state.seq_num, 1);
@@ -907,7 +907,7 @@ mod tests {
         for peer in 0..3 {
             assert_eq!(node1.state.phase, PbftPhase::Preparing);
             let msg = mock_msg(&PbftMessageType::Prepare, 0, 1, block.clone(), peer);
-            node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+            node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(node1.state.phase, PbftPhase::Checking);
 
@@ -918,7 +918,7 @@ mod tests {
         for peer in 0..3 {
             assert_eq!(node1.state.phase, PbftPhase::Committing);
             let msg = mock_msg(&PbftMessageType::Commit, 0, 1, block.clone(), peer);
-            node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+            node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(node1.state.phase, PbftPhase::Finished);
 
@@ -957,7 +957,7 @@ mod tests {
         // Receive 3 `Checkpoint` messages
         for peer in 0..3 {
             let msg = mock_msg(&PbftMessageType::Checkpoint, 0, 10, block.clone(), peer);
-            node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+            node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
         }
 
         assert_eq!(node1.state.mode, PbftMode::Normal);
@@ -991,7 +991,7 @@ mod tests {
                 message_type: String::from(&PbftMessageType::ViewChange),
                 content: msg_bytes,
             };
-            node1.on_peer_message(msg).unwrap_or_else(handle_pbft_err);
+            node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
         }
 
         assert!(node1.state.is_primary());

@@ -81,7 +81,7 @@ impl Engine for PbftEngine {
                     node.start_view_change()
                 }
                 Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id),
-                Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(message),
+                Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(&message),
                 Ok(Update::Shutdown) => break,
                 Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
                     error!("PBFT currently only supports static networks");
