@@ -50,7 +50,7 @@ impl Engine for PbftEngine {
         } = startup_state;
 
         // Load on-chain settings
-        let config = config::load_pbft_config(chain_head.block_id, &mut service);
+        let config = config::load_pbft_config(chain_head.block_id, &mut *service);
 
         let node_id = config
             .peers

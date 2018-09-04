@@ -205,7 +205,7 @@ impl PbftNode {
                     handlers::commit(
                         &mut self.state,
                         &mut self.msg_log,
-                        &mut self.service,
+                        &mut *self.service,
                         &pbft_message,
                         msg.content.clone(),
                     )?;
@@ -305,7 +305,7 @@ impl PbftNode {
                 handlers::view_change(
                     &mut self.state,
                     &mut self.msg_log,
-                    &mut self.service,
+                    &mut *self.service,
                     &vc_message,
                 )?;
             }

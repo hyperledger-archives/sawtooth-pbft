@@ -155,7 +155,7 @@ pub fn pre_prepare(
 pub fn commit(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
-    mut service: &mut Box<Service>,
+    service: &mut Service,
     pbft_message: &PbftMessage,
     msg_content: Vec<u8>,
 ) -> Result<(), PbftError> {
@@ -188,7 +188,7 @@ pub fn commit(
         .get_chain_head()
         .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
     let cur_block = get_block_by_id(
-        &mut service,
+        &mut *service,
         BlockId::from(pbft_message.get_block().get_block_id().to_vec()),
     ).ok_or_else(|| PbftError::WrongNumBlocks)?;
     if cur_block.previous_id != head.block_id {
@@ -291,7 +291,7 @@ pub fn multicast_hint(state: &PbftState, pbft_message: PbftMessage) -> PbftHint 
 pub fn view_change(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
-    service: &mut Box<Service>,
+    service: &mut Service,
     vc_message: &PbftViewChange,
 ) -> Result<(), PbftError> {
     msg_log.check_msg_against_log(&vc_message, true, 2 * state.f + 1)?;
@@ -343,7 +343,7 @@ pub fn view_change(
 }
 
 // There should only be one block with a matching ID
-fn get_block_by_id(service: &mut Box<Service>, block_id: BlockId) -> Option<Block> {
+fn get_block_by_id(service: &mut Service, block_id: BlockId) -> Option<Block> {
     let blocks: Vec<Block> = service
         .get_blocks(vec![block_id.clone()])
         .unwrap_or(HashMap::new())

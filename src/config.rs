@@ -80,7 +80,7 @@ impl PbftConfig {
 /// + If the `sawtooth.consensus.pbft.peers` setting is not provided
 /// + If settings loading fails entirely
 /// + If block duration is greater than the view change timeout
-pub fn load_pbft_config(block_id: BlockId, service: &mut Box<Service>) -> PbftConfig {
+pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig {
     let mut config = PbftConfig::default();
 
     let sawtooth_settings: HashMap<String, String> = service
