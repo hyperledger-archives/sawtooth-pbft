@@ -85,7 +85,7 @@ pub fn pre_prepare(
             info.get_view(),
         );
 
-        if existing_pre_prep_msgs.len() > 0 {
+        if !existing_pre_prep_msgs.is_empty() {
             return Err(PbftError::MessageExists(PbftMessageType::PrePrepare));
         }
     }
@@ -350,7 +350,7 @@ fn get_block_by_id(service: &mut Box<Service>, block_id: BlockId) -> Option<Bloc
         .into_iter()
         .map(|(_block_id, block)| block)
         .collect();
-    if blocks.len() < 1 {
+    if blocks.is_empty() {
         None
     } else {
         Some(blocks[0].clone())
