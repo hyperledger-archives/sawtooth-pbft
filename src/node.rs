@@ -800,7 +800,7 @@ mod tests {
         let content = pbft_msg.write_to_bytes().expect("SerializationError");
         PeerMessage {
             message_type: String::from(msg_type),
-            content: content,
+            content,
         }
     }
 
