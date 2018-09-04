@@ -472,7 +472,7 @@ impl PbftNode {
 
     /// Check to see if the view change timeout has expired
     pub fn check_timeout_expired(&mut self) -> bool {
-        self.state.timeout.is_expired()
+        self.state.timeout.check_expired()
     }
 
     /// Start the checkpoint process

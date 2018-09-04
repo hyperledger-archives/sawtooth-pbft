@@ -69,7 +69,7 @@ impl Timeout {
     }
 
     /// Update the timer state, and check if the timer is expired
-    pub fn is_expired(&mut self) -> bool {
+    pub fn check_expired(&mut self) -> bool {
         if self.state == TimeoutState::Active && Instant::now() - self.start > self.duration {
             self.state = TimeoutState::Expired;
         }
@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(t.state, TimeoutState::Active);
         ::std::thread::sleep(Duration::from_millis(110));
 
-        assert!(t.is_expired());
+        assert!(t.check_expired());
         assert_eq!(t.state, TimeoutState::Expired);
 
         t.stop();
