@@ -28,6 +28,7 @@ use timing;
 
 use error::PbftError;
 
+#[derive(Default)]
 pub struct PbftEngine {}
 
 impl PbftEngine {
@@ -50,7 +51,7 @@ impl Engine for PbftEngine {
         } = startup_state;
 
         // Load on-chain settings
-        let config = config::load_pbft_config(chain_head.block_id, &mut service);
+        let config = config::load_pbft_config(chain_head.block_id, &mut *service);
 
         let node_id = config
             .peers
@@ -81,7 +82,7 @@ impl Engine for PbftEngine {
                     node.start_view_change()
                 }
                 Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id),
-                Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(message),
+                Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(&message),
                 Ok(Update::Shutdown) => break,
                 Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
                     error!("PBFT currently only supports static networks");
