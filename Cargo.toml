@@ -37,7 +37,6 @@ hex = "0.3"
 protobuf = "2"
 clap = "2.31"
 log = "0.4"
-log4rs = "0.8"
 
 [dev-dependencies]
 rust-crypto = "0.2"
