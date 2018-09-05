@@ -6,3 +6,4 @@
 | Adam Ludvik    | aludvik        | adamludvik    |
 | James Mitchell | jsmitchell     | jsmitchell    |
 | Logan Seeley   | ltseeley       | ltseeley      |
+| Kenneth Koski  | knkski         | knkski        |
