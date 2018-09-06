@@ -17,6 +17,9 @@ version: "3.6"
 
 volumes:
   keys:
+  cargo-registry:
+  cargo-git:
+  cargo-target:
 
 services:
 
@@ -170,6 +173,9 @@ services:
       dockerfile: ../Dockerfile
     volumes:
       - ..:/project/sawtooth-pbft
+      - cargo-registry:/root/.cargo/registry
+      - cargo-git:/root/.cargo/git
+      - cargo-target:/project/sawtooth-pbft/target
     working_dir: /project/sawtooth-pbft/
     command: ./target/debug/sawtooth-pbft --connect tcp://validator-0:5050 -v
     stop_signal: SIGKILL
@@ -181,6 +187,9 @@ services:
       dockerfile: ../Dockerfile
     volumes:
       - ..:/project/sawtooth-pbft
+      - cargo-registry:/root/.cargo/registry
+      - cargo-git:/root/.cargo/git
+      - cargo-target:/project/sawtooth-pbft/target
     working_dir: /project/sawtooth-pbft/
     command: ./target/debug/sawtooth-pbft --connect tcp://validator-1:5050 -v
     stop_signal: SIGKILL
@@ -192,6 +201,9 @@ services:
       dockerfile: ../Dockerfile
     volumes:
       - ..:/project/sawtooth-pbft
+      - cargo-registry:/root/.cargo/registry
+      - cargo-git:/root/.cargo/git
+      - cargo-target:/project/sawtooth-pbft/target
     working_dir: /project/sawtooth-pbft/
     command: ./target/debug/sawtooth-pbft --connect tcp://validator-2:5050 -v
     stop_signal: SIGKILL
@@ -203,6 +215,9 @@ services:
       dockerfile: ../Dockerfile
     volumes:
       - ..:/project/sawtooth-pbft
+      - cargo-registry:/root/.cargo/registry
+      - cargo-git:/root/.cargo/git
+      - cargo-target:/project/sawtooth-pbft/target
     working_dir: /project/sawtooth-pbft/
     command: ./target/debug/sawtooth-pbft --connect tcp://validator-3:5050 -v
     stop_signal: SIGKILL
