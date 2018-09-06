@@ -637,13 +637,13 @@ mod tests {
     use config::mock_config;
     use crypto::digest::Digest;
     use crypto::sha2::Sha256;
+    use handlers::make_msg_info;
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
     use serde_json;
     use std::collections::HashMap;
     use std::default::Default;
     use std::fs::{remove_file, File};
     use std::io::prelude::*;
-    use handlers::make_msg_info;
 
     const BLOCK_FILE: &str = "blocks.txt";
 
