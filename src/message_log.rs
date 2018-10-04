@@ -127,11 +127,11 @@ impl PbftLog {
     ///  + A `PrePrepare` message matching the original message (in the current view)
     ///  + `2f + 1` matching `Prepare` messages from different nodes that match
     ///    `PrePrepare` message above (including its own)
-    pub fn prepared(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
-        if deser_msg.get_info().get_msg_type() != String::from(&PbftMessageType::Prepare) {
+    pub fn prepared(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
+        if pbft_message.get_info().get_msg_type() != String::from(&PbftMessageType::Prepare) {
             return Err(PbftError::NotReadyForMessage);
         }
-        let info = deser_msg.get_info();
+        let info = pbft_message.get_info();
         let block_new_msgs = self.get_messages_of_type(
             &PbftMessageType::BlockNew,
             info.get_seq_num(),
@@ -174,7 +174,7 @@ impl PbftLog {
             }
         }
 
-        self.check_msg_against_log(&deser_msg, true, 2 * f + 1)?;
+        self.check_msg_against_log(&pbft_message, true, 2 * f + 1)?;
 
         Ok(())
     }
@@ -183,17 +183,17 @@ impl PbftLog {
     /// `committed` is true if for this node:
     ///   + `prepared` is true
     ///   + This node has accepted `2f + 1` `Commit` messages, including its own
-    pub fn committed(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
-        if deser_msg.get_info().get_msg_type() != String::from(&PbftMessageType::Commit) {
+    pub fn committed(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
+        if pbft_message.get_info().get_msg_type() != String::from(&PbftMessageType::Commit) {
             return Err(PbftError::NotReadyForMessage);
         }
-        self.check_msg_against_log(&deser_msg, true, 2 * f + 1)?;
+        self.check_msg_against_log(&pbft_message, true, 2 * f + 1)?;
 
-        let mut prep_msg = deser_msg.clone();
-        let mut info = prep_msg.get_info().clone();
+        let mut prepare_message = pbft_message.clone();
+        let mut info = prepare_message.get_info().clone();
         info.set_msg_type(String::from(&PbftMessageType::Prepare));
-        prep_msg.set_info(info);
-        self.prepared(&prep_msg, f)?;
+        prepare_message.set_info(info);
+        self.prepared(&prepare_message, f)?;
         Ok(())
     }
 
