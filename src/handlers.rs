@@ -228,9 +228,10 @@ pub fn commit(
 /// to message log for past messages. This usually only makes sense for regular multicast messages
 /// (`PrePrepare`, `Prepare`, and `Commit`)
 pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint {
-    let msg_type = PbftMessageType::from(pbft_message.get_info().get_msg_type());
+    let msg_info = pbft_message.get_info();
+    let msg_type = PbftMessageType::from(msg_info.get_msg_type());
 
-    if pbft_message.get_info().get_seq_num() > state.seq_num {
+    if msg_info.get_seq_num() > state.seq_num {
         debug!(
             "{}: seq {} > {}, accept all.",
             state,
@@ -238,12 +239,12 @@ pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint
             state.seq_num
         );
         return PbftHint::FutureMessage;
-    } else if pbft_message.get_info().get_seq_num() == state.seq_num {
+    } else if msg_info.get_seq_num() == state.seq_num {
         if state.working_block.is_none() {
             debug!(
                 "{}: seq {} == {}, in limbo",
                 state,
-                pbft_message.get_info().get_seq_num(),
+                msg_info.get_seq_num(),
                 state.seq_num,
             );
             return PbftHint::PastMessage;
@@ -267,7 +268,7 @@ pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint
             debug!(
                 "{}: seq {} == {}, in limbo",
                 state,
-                pbft_message.get_info().get_seq_num(),
+                msg_info.get_seq_num(),
                 state.seq_num,
             );
             return PbftHint::PastMessage;
@@ -275,7 +276,7 @@ pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint
         debug!(
             "{}: seq {} < {}, skip but add to log.",
             state,
-            pbft_message.get_info().get_seq_num(),
+            msg_info.get_seq_num(),
             state.seq_num
         );
         return PbftHint::PastMessage;
