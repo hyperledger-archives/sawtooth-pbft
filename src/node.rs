@@ -77,8 +77,7 @@ impl PbftNode {
     /// `Prepare`, `Commit`, `Checkpoint`, or `ViewChange`. If a node receives a type of message
     /// before it is ready to do so, the message is pushed into a backlog queue.
     pub fn on_peer_message(&mut self, msg: &PeerMessage) -> Result<(), PbftError> {
-        let msg_type = msg.message_type.clone();
-        let msg_type = PbftMessageType::from(msg_type.as_str());
+        let msg_type = PbftMessageType::from(msg.message_type.as_str());
 
         // Handle a multicast protocol message
         let multicast_hint = if msg_type.is_multicast() {
