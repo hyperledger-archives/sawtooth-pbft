@@ -154,9 +154,21 @@ fn merge_setting_if_set<T: ::std::str::FromStr>(
     setting_field: &mut T,
     setting_key: &str,
 ) {
+    merge_setting_if_set_and_map(settings_map, setting_field, setting_key, |setting| setting)
+}
+
+fn merge_setting_if_set_and_map<U, F, T>(
+    settings_map: &HashMap<String, String>,
+    setting_field: &mut U,
+    setting_key: &str,
+    map: F,
+) where
+    F: Fn(T) -> U,
+    T: ::std::str::FromStr,
+{
     if let Some(setting) = settings_map.get(setting_key) {
         if let Ok(setting_value) = setting.parse() {
-            *setting_field = setting_value;
+            *setting_field = map(setting_value);
         }
     }
 }
@@ -166,11 +178,12 @@ fn merge_millis_setting_if_set(
     setting_field: &mut Duration,
     setting_key: &str,
 ) {
-    if let Some(setting) = settings_map.get(setting_key) {
-        if let Ok(setting_value) = setting.parse() {
-            *setting_field = Duration::from_millis(setting_value);
-        }
-    }
+    merge_setting_if_set_and_map(
+        settings_map,
+        setting_field,
+        setting_key,
+        Duration::from_millis,
+    )
 }
 
 /// Create a mock configuration, given a number of nodes. PeerIds are generated using a Sha256
