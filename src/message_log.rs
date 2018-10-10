@@ -82,8 +82,7 @@ impl fmt::Display for PbftLog {
                 self.view_changes
                     .iter()
                     .map(|ref msg| msg.get_info().clone()),
-            )
-            .collect();
+            ).collect();
         let string_infos: Vec<String> = msg_infos
             .iter()
             .map(|info: &PbftMessageInfo| -> String {
@@ -94,8 +93,7 @@ impl fmt::Display for PbftLog {
                     info.get_seq_num(),
                     hex::encode(info.get_signer_id()),
                 )
-            })
-            .collect();
+            }).collect();
 
         write!(
             f,
@@ -105,6 +103,18 @@ impl fmt::Display for PbftLog {
             string_infos.join("\n")
         )
     }
+}
+
+fn check_msg_has_type(pbft_message: &PbftMessage, check_type: &PbftMessageType) -> bool {
+    pbft_message.get_info().get_msg_type() != String::from(check_type)
+}
+
+fn commit_msg_into_prepare_msg(pbft_message: &PbftMessage) -> PbftMessage {
+    let mut prepare_message = pbft_message.clone();
+    let mut info = prepare_message.get_info().clone();
+    info.set_msg_type(String::from(&PbftMessageType::Prepare));
+    prepare_message.set_info(info);
+    prepare_message
 }
 
 impl PbftLog {
@@ -129,37 +139,66 @@ impl PbftLog {
     ///  + A `PrePrepare` message matching the original message (in the current view)
     ///  + `2f + 1` matching `Prepare` messages from different nodes that match
     ///    `PrePrepare` message above (including its own)
-    pub fn prepared(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
-        if deser_msg.get_info().get_msg_type() != String::from(&PbftMessageType::Prepare) {
+    pub fn prepared(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
+        if check_msg_has_type(pbft_message, &PbftMessageType::Prepare) {
             return Err(PbftError::NotReadyForMessage);
         }
-        let info = deser_msg.get_info();
+        let info = pbft_message.get_info();
+        let block_new_msgs = self.check_log_has_one_block_new_msg(info)?;
+        let pre_prep_msgs = self.check_log_has_one_pre_prepared_msg(info)?;
+        self.check_log_prepare_msgs_match(&block_new_msgs, &pre_prep_msgs, info)?;
+
+        self.check_msg_against_log(&pbft_message, true, 2 * f + 1)?;
+
+        Ok(())
+    }
+
+    fn check_log_has_one_block_new_msg(
+        &self,
+        info: &PbftMessageInfo,
+    ) -> Result<Vec<&PbftMessage>, PbftError> {
         let block_new_msgs = self.get_messages_of_type(
             &PbftMessageType::BlockNew,
             info.get_seq_num(),
             info.get_view(),
         );
         if block_new_msgs.len() != 1 {
-            return Err(PbftError::WrongNumMessages(
+            Err(PbftError::WrongNumMessages(
                 PbftMessageType::BlockNew,
                 1,
                 block_new_msgs.len(),
-            ));
+            ))
+        } else {
+            Ok(block_new_msgs)
         }
+    }
 
+    fn check_log_has_one_pre_prepared_msg(
+        &self,
+        info: &PbftMessageInfo,
+    ) -> Result<Vec<&PbftMessage>, PbftError> {
         let pre_prep_msgs = self.get_messages_of_type(
             &PbftMessageType::PrePrepare,
             info.get_seq_num(),
             info.get_view(),
         );
         if pre_prep_msgs.len() != 1 {
-            return Err(PbftError::WrongNumMessages(
+            Err(PbftError::WrongNumMessages(
                 PbftMessageType::PrePrepare,
                 1,
                 pre_prep_msgs.len(),
-            ));
+            ))
+        } else {
+            Ok(pre_prep_msgs)
         }
+    }
 
+    fn check_log_prepare_msgs_match(
+        &self,
+        block_new_msgs: &[&PbftMessage],
+        pre_prep_msgs: &[&PbftMessage],
+        info: &PbftMessageInfo,
+    ) -> Result<(), PbftError> {
         let prep_msgs = self.get_messages_of_type(
             &PbftMessageType::Prepare,
             info.get_seq_num(),
@@ -175,9 +214,6 @@ impl PbftLog {
                 return Err(PbftError::MessageMismatch(PbftMessageType::Prepare));
             }
         }
-
-        self.check_msg_against_log(&deser_msg, true, 2 * f + 1)?;
-
         Ok(())
     }
 
@@ -185,17 +221,13 @@ impl PbftLog {
     /// `committed` is true if for this node:
     ///   + `prepared` is true
     ///   + This node has accepted `2f + 1` `Commit` messages, including its own
-    pub fn committed(&self, deser_msg: &PbftMessage, f: u64) -> Result<(), PbftError> {
-        if deser_msg.get_info().get_msg_type() != String::from(&PbftMessageType::Commit) {
+    pub fn committed(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
+        if check_msg_has_type(pbft_message, &PbftMessageType::Commit) {
             return Err(PbftError::NotReadyForMessage);
         }
-        self.check_msg_against_log(&deser_msg, true, 2 * f + 1)?;
+        self.check_msg_against_log(&pbft_message, true, 2 * f + 1)?;
 
-        let mut prep_msg = deser_msg.clone();
-        let mut info = prep_msg.get_info().clone();
-        info.set_msg_type(String::from(&PbftMessageType::Prepare));
-        prep_msg.set_info(info);
-        self.prepared(&prep_msg, f)?;
+        self.prepared(&commit_msg_into_prepare_msg(&pbft_message), f)?;
         Ok(())
     }
 
@@ -271,8 +303,7 @@ impl PbftLog {
                 info.get_msg_type() == String::from(msg_type)
                     && info.get_seq_num() == sequence_number
                     && info.get_view() == view
-            })
-            .collect()
+            }).collect()
     }
 
     /// Obtain message information objects from the log that match a given type, sequence number,
@@ -393,8 +424,7 @@ impl PbftLog {
             .filter(|ref msg| {
                 let seq_num = msg.get_info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
-            })
-            .cloned()
+            }).cloned()
             .collect();
         self.view_changes = self
             .view_changes
@@ -402,8 +432,7 @@ impl PbftLog {
             .filter(|ref msg| {
                 let seq_num = msg.get_info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
-            })
-            .cloned()
+            }).cloned()
             .collect();
     }
 
