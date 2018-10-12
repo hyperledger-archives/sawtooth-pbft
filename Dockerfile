@@ -40,8 +40,7 @@ RUN curl https://sh.rustup.rs -sSf > /usr/bin/rustup-init \
  && chmod +x /usr/bin/rustup-init \
  && rustup-init -y \
  && rustup component add rustfmt-preview \
- && rustup toolchain add nightly \
- && rustup component add clippy-preview --toolchain=nightly \
+ && rustup component add clippy-preview \
  && cargo install cargo-deb
 
 
