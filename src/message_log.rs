@@ -82,8 +82,7 @@ impl fmt::Display for PbftLog {
                 self.view_changes
                     .iter()
                     .map(|ref msg| msg.get_info().clone()),
-            )
-            .collect();
+            ).collect();
         let string_infos: Vec<String> = msg_infos
             .iter()
             .map(|info: &PbftMessageInfo| -> String {
@@ -94,8 +93,7 @@ impl fmt::Display for PbftLog {
                     info.get_seq_num(),
                     hex::encode(info.get_signer_id()),
                 )
-            })
-            .collect();
+            }).collect();
 
         write!(
             f,
@@ -271,8 +269,7 @@ impl PbftLog {
                 info.get_msg_type() == String::from(msg_type)
                     && info.get_seq_num() == sequence_number
                     && info.get_view() == view
-            })
-            .collect()
+            }).collect()
     }
 
     /// Obtain message information objects from the log that match a given type, sequence number,
@@ -393,8 +390,7 @@ impl PbftLog {
             .filter(|ref msg| {
                 let seq_num = msg.get_info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
-            })
-            .cloned()
+            }).cloned()
             .collect();
         self.view_changes = self
             .view_changes
@@ -402,8 +398,7 @@ impl PbftLog {
             .filter(|ref msg| {
                 let seq_num = msg.get_info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
-            })
-            .cloned()
+            }).cloned()
             .collect();
     }
 
