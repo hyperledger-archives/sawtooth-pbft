@@ -179,8 +179,7 @@ impl PbftNode {
                     self.service
                         .check_blocks(vec![BlockId::from(
                             pbft_message.get_block().clone().block_id,
-                        )])
-                        .map_err(|_| {
+                        )]).map_err(|_| {
                             PbftError::InternalError(String::from("Failed to check blocks"))
                         })?;
                 }
@@ -243,7 +242,10 @@ impl PbftNode {
                         message_type: msg.message_type.clone(),
                         content: msg.content.clone(),
                     });
-                    debug!("{}: Not in NotStarted; not handling checkpoint yet", self.state);
+                    debug!(
+                        "{}: Not in NotStarted; not handling checkpoint yet",
+                        self.state
+                    );
                     return Ok(());
                 }
 
@@ -262,8 +264,11 @@ impl PbftNode {
                 }
 
                 if self.state.mode == PbftMode::Checkpointing {
-                    self.msg_log
-                        .check_msg_against_log(&&pbft_message, true, 2 * self.state.f + 1)?;
+                    self.msg_log.check_msg_against_log(
+                        &&pbft_message,
+                        true,
+                        2 * self.state.f + 1,
+                    )?;
                     warn!(
                         "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
                         self.state,
