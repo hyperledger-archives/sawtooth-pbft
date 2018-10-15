@@ -71,30 +71,12 @@ impl Engine for PbftEngine {
         loop {
             let incoming_message = updates.recv_timeout(config.message_timeout);
 
-            let res = match incoming_message {
-                Ok(Update::BlockNew(block)) => node.on_block_new(block),
-                Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id),
-                Ok(Update::BlockInvalid(_)) => {
-                    warn!(
-                        "{}: BlockInvalid received, starting view change",
-                        node.state
-                    );
-                    node.start_view_change()
-                }
-                Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id),
-                Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(&message),
-                Ok(Update::Shutdown) => break,
-                Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
-                    error!("PBFT currently only supports static networks");
-                    Ok(())
-                }
-                Err(RecvTimeoutError::Timeout) => Err(PbftError::Timeout),
-                Err(RecvTimeoutError::Disconnected) => {
-                    error!("Disconnected from validator");
+            match handle_update(&mut node, incoming_message) {
+                Ok(again) => if !again {
                     break;
-                }
-            };
-            handle_pbft_result(res);
+                },
+                Err(err) => handle_pbft_result(Err(err)),
+            }
 
             working_ticker.tick(|| {
                 if let Err(e) = node.try_publish() {
@@ -120,6 +102,36 @@ impl Engine for PbftEngine {
     fn name(&self) -> String {
         String::from(env!("CARGO_PKG_NAME"))
     }
+}
+
+fn handle_update(
+    node: &mut PbftNode,
+    incoming_message: Result<Update, RecvTimeoutError>,
+) -> Result<bool, PbftError> {
+    match incoming_message {
+        Ok(Update::BlockNew(block)) => node.on_block_new(block)?,
+        Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id)?,
+        Ok(Update::BlockInvalid(_)) => {
+            warn!(
+                "{}: BlockInvalid received, starting view change",
+                node.state
+            );
+            node.start_view_change()?
+        }
+        Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id)?,
+        Ok(Update::PeerMessage(message, _sender_id)) => node.on_peer_message(&message)?,
+        Ok(Update::Shutdown) => return Ok(false),
+        Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
+            error!("PBFT currently only supports static networks");
+        }
+        Err(RecvTimeoutError::Timeout) => return Err(PbftError::Timeout),
+        Err(RecvTimeoutError::Disconnected) => {
+            error!("Disconnected from validator");
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 fn handle_pbft_result(res: Result<(), PbftError>) {

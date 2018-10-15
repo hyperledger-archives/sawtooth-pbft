@@ -68,83 +68,118 @@ pub fn pre_prepare(
 ) -> Result<(), PbftError> {
     let info = pbft_message.get_info();
 
+    check_view_mismatch(state, info)?;
+
+    check_pre_prepare_does_not_exist(msg_log, info)?;
+
+    if state.is_primary() {
+        check_pre_prepare_matches_original_block_new(msg_log, pbft_message, info)?;
+    } else {
+        set_seq_num_and_fix_block_new_seq_num(state, msg_log, &pbft_message, info)?;
+    }
+
+    set_current_working_block(state, pbft_message);
+
+    Ok(())
+}
+
+fn check_view_mismatch(state: &PbftState, info: &PbftMessageInfo) -> Result<(), PbftError> {
     if info.get_view() != state.view {
-        return Err(PbftError::ViewMismatch(
+        Err(PbftError::ViewMismatch(
             info.get_view() as usize,
             state.view as usize,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn check_pre_prepare_does_not_exist(
+    msg_log: &PbftLog,
+    info: &PbftMessageInfo,
+) -> Result<(), PbftError> {
+    // Check that this PrePrepare doesn't already exist
+    let existing_pre_prep_msgs = msg_log.get_messages_of_type(
+        &PbftMessageType::PrePrepare,
+        info.get_seq_num(),
+        info.get_view(),
+    );
+
+    if !existing_pre_prep_msgs.is_empty() {
+        return Err(PbftError::MessageExists(PbftMessageType::PrePrepare));
+    }
+
+    Ok(())
+}
+
+fn check_pre_prepare_matches_original_block_new(
+    msg_log: &PbftLog,
+    pbft_message: &PbftMessage,
+    info: &PbftMessageInfo,
+) -> Result<(), PbftError> {
+    let block_new_msgs = msg_log.get_messages_of_type(
+        &PbftMessageType::BlockNew,
+        info.get_seq_num(),
+        info.get_view(),
+    );
+
+    if block_new_msgs.len() != 1 {
+        return Err(PbftError::WrongNumMessages(
+            PbftMessageType::BlockNew,
+            1,
+            block_new_msgs.len(),
         ));
     }
 
-    // Immutably borrow msg_log for a bit, in a context
-    {
-        // Check that this PrePrepare doesn't already exist
-        let existing_pre_prep_msgs = msg_log.get_messages_of_type(
-            &PbftMessageType::PrePrepare,
-            info.get_seq_num(),
-            info.get_view(),
-        );
-
-        if !existing_pre_prep_msgs.is_empty() {
-            return Err(PbftError::MessageExists(PbftMessageType::PrePrepare));
-        }
+    if block_new_msgs[0].get_block() != pbft_message.get_block() {
+        return Err(PbftError::BlockMismatch(
+            block_new_msgs[0].get_block().clone(),
+            pbft_message.get_block().clone(),
+        ));
     }
-
-    if state.is_primary() {
-        // Check that incoming PrePrepare matches original BlockNew
-        let block_new_msgs = msg_log.get_messages_of_type(
-            &PbftMessageType::BlockNew,
-            info.get_seq_num(),
-            info.get_view(),
-        );
-
-        if block_new_msgs.len() != 1 {
-            return Err(PbftError::WrongNumMessages(
-                PbftMessageType::BlockNew,
-                1,
-                block_new_msgs.len(),
-            ));
-        }
-
-        if block_new_msgs[0].get_block() != pbft_message.get_block() {
-            return Err(PbftError::BlockMismatch(
-                block_new_msgs[0].get_block().clone(),
-                pbft_message.get_block().clone(),
-            ));
-        }
-    } else {
-        // Set this secondary's sequence number from the PrePrepare message
-        // (this was originally set by the primary)...
-        state.seq_num = info.get_seq_num();
-
-        // ...then update the BlockNew message we received with the correct
-        // sequence number
-        let num_updated = msg_log.fix_seq_nums(
-            &PbftMessageType::BlockNew,
-            info.get_seq_num(),
-            info.get_view(),
-            pbft_message.get_block(),
-        );
-
-        debug!(
-            "{}: The log updated {} BlockNew messages to seq num {}",
-            state,
-            num_updated,
-            info.get_seq_num()
-        );
-
-        if num_updated < 1 {
-            return Err(PbftError::WrongNumMessages(
-                PbftMessageType::BlockNew,
-                1,
-                num_updated,
-            ));
-        }
-    }
-
-    // Take the working block from PrePrepare message as our current working block
-    state.working_block = WorkingBlockOption::WorkingBlock(pbft_message.get_block().clone());
 
     Ok(())
+}
+
+fn set_seq_num_and_fix_block_new_seq_num(
+    state: &mut PbftState,
+    msg_log: &mut PbftLog,
+    pbft_message: &PbftMessage,
+    info: &PbftMessageInfo,
+) -> Result<(), PbftError> {
+    // Set this secondary's sequence number from the PrePrepare message
+    // (this was originally set by the primary)...
+    state.seq_num = info.get_seq_num();
+
+    // ...then update the BlockNew message we received with the correct
+    // sequence number
+    let num_updated = msg_log.fix_seq_nums(
+        &PbftMessageType::BlockNew,
+        info.get_seq_num(),
+        info.get_view(),
+        pbft_message.get_block(),
+    );
+
+    debug!(
+        "{}: The log updated {} BlockNew messages to seq num {}",
+        state,
+        num_updated,
+        info.get_seq_num()
+    );
+
+    if num_updated < 1 {
+        Err(PbftError::WrongNumMessages(
+            PbftMessageType::BlockNew,
+            1,
+            num_updated,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn set_current_working_block(state: &mut PbftState, pbft_message: &PbftMessage) {
+    state.working_block = WorkingBlockOption::WorkingBlock(pbft_message.get_block().clone());
 }
 
 /// Handle a `Commit` message
@@ -158,14 +193,47 @@ pub fn commit(
     pbft_message: &PbftMessage,
     msg_content: Vec<u8>,
 ) -> Result<(), PbftError> {
-    let working_block = if let WorkingBlockOption::WorkingBlock(ref wb) = state.working_block {
-        Ok(wb.clone())
-    } else {
-        Err(PbftError::NoWorkingBlock)
-    }?;
+    let working_block = clone_working_block(state)?;
 
     state.switch_phase(PbftPhase::Finished);
 
+    check_if_block_already_seen(state, &working_block, pbft_message)?;
+
+    check_if_commiting_with_current_chain_head(
+        state,
+        msg_log,
+        service,
+        pbft_message,
+        msg_content,
+        &working_block,
+    )?;
+
+    info!(
+        "{}: Committing block {:?}",
+        state,
+        BlockId::from(pbft_message.get_block().block_id.clone())
+    );
+
+    commit_block_from_message(service, pbft_message)?;
+
+    reset_working_block(state);
+
+    Ok(())
+}
+
+fn clone_working_block(state: &PbftState) -> Result<PbftBlock, PbftError> {
+    if let WorkingBlockOption::WorkingBlock(ref wb) = state.working_block {
+        Ok(wb.clone())
+    } else {
+        Err(PbftError::NoWorkingBlock)
+    }
+}
+
+fn check_if_block_already_seen(
+    state: &PbftState,
+    working_block: &PbftBlock,
+    pbft_message: &PbftMessage,
+) -> Result<(), PbftError> {
     // Don't commit if we've seen this block already, but go ahead if we somehow
     // skipped a block.
     if pbft_message.get_block().get_block_id() != working_block.get_block_id()
@@ -176,13 +244,23 @@ pub fn commit(
             state,
             BlockId::from(pbft_message.get_block().block_id.clone())
         );
-        return Err(PbftError::BlockMismatch(
+        Err(PbftError::BlockMismatch(
             pbft_message.get_block().clone(),
             working_block.clone(),
-        ));
+        ))
+    } else {
+        Ok(())
     }
+}
 
-    // Also make sure that we're committing on top of the current chain head
+fn check_if_commiting_with_current_chain_head(
+    state: &mut PbftState,
+    msg_log: &mut PbftLog,
+    service: &mut Service,
+    pbft_message: &PbftMessage,
+    msg_content: Vec<u8>,
+    working_block: &PbftBlock,
+) -> Result<(), PbftError> {
     let head = service
         .get_chain_head()
         .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
@@ -201,25 +279,26 @@ pub fn commit(
             content: msg_content,
         };
         msg_log.push_backlog(msg);
-        return Err(PbftError::BlockMismatch(
+        Err(PbftError::BlockMismatch(
             pbft_message.get_block().clone(),
             working_block.clone(),
-        ));
+        ))
+    } else {
+        Ok(())
     }
+}
 
-    info!(
-        "{}: Committing block {:?}",
-        state,
-        BlockId::from(pbft_message.get_block().block_id.clone())
-    );
-
+fn commit_block_from_message(
+    service: &mut Service,
+    pbft_message: &PbftMessage,
+) -> Result<(), PbftError> {
     service
         .commit_block(BlockId::from(pbft_message.get_block().block_id.clone()))
-        .map_err(|_| PbftError::InternalError(String::from("Failed to commit block")))?;
+        .map_err(|_| PbftError::InternalError(String::from("Failed to commit block")))
+}
 
-    // Previous block is sent to the validator; reset the working block
+fn reset_working_block(state: &mut PbftState) {
     state.working_block = WorkingBlockOption::NoWorkingBlock;
-    Ok(())
 }
 
 /// Decide if this message is a future message, past message, or current message.
@@ -228,9 +307,10 @@ pub fn commit(
 /// to message log for past messages. This usually only makes sense for regular multicast messages
 /// (`PrePrepare`, `Prepare`, and `Commit`)
 pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint {
-    let msg_type = PbftMessageType::from(pbft_message.get_info().get_msg_type());
+    let msg_info = pbft_message.get_info();
+    let msg_type = PbftMessageType::from(msg_info.get_msg_type());
 
-    if pbft_message.get_info().get_seq_num() > state.seq_num {
+    if msg_info.get_seq_num() > state.seq_num {
         debug!(
             "{}: seq {} > {}, accept all.",
             state,
@@ -238,12 +318,12 @@ pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint
             state.seq_num
         );
         return PbftHint::FutureMessage;
-    } else if pbft_message.get_info().get_seq_num() == state.seq_num {
+    } else if msg_info.get_seq_num() == state.seq_num {
         if state.working_block.is_none() {
             debug!(
                 "{}: seq {} == {}, in limbo",
                 state,
-                pbft_message.get_info().get_seq_num(),
+                msg_info.get_seq_num(),
                 state.seq_num,
             );
             return PbftHint::PastMessage;
@@ -267,7 +347,7 @@ pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint
             debug!(
                 "{}: seq {} == {}, in limbo",
                 state,
-                pbft_message.get_info().get_seq_num(),
+                msg_info.get_seq_num(),
                 state.seq_num,
             );
             return PbftHint::PastMessage;
@@ -275,7 +355,7 @@ pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint
         debug!(
             "{}: seq {} < {}, skip but add to log.",
             state,
-            pbft_message.get_info().get_seq_num(),
+            msg_info.get_seq_num(),
             state.seq_num
         );
         return PbftHint::PastMessage;
@@ -293,43 +373,72 @@ pub fn view_change(
     service: &mut Service,
     vc_message: &PbftViewChange,
 ) -> Result<(), PbftError> {
-    msg_log.check_msg_against_log(&vc_message, true, 2 * state.f + 1)?;
+    check_received_enough_view_changes(state, msg_log, vc_message)?;
 
-    // Update current view and stop timeout
-    state.view = vc_message.get_info().get_view();
-    warn!("{}: Updating to view {}", state, state.view);
+    set_current_view(state, vc_message);
 
     // Upgrade this node to primary, if its ID is correct
-    if state.get_own_peer_id() == state.get_primary_peer_id() {
-        state.upgrade_role();
-        warn!("{}: I'm now a primary", state);
-
-        // If we're the new primary, need to clean up the block mess from the view change and
-        // initialize a new block.
-        if let WorkingBlockOption::WorkingBlock(ref working_block) = state.working_block {
-            info!(
-                "{}: Ignoring block {}",
-                state,
-                &hex::encode(working_block.get_block_id())
-            );
-            service
-                .ignore_block(BlockId::from(working_block.get_block_id().to_vec()))
-                .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
-        } else if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = state.working_block
-        {
-            info!("{}: Ignoring block {}", state, &hex::encode(block_id));
-            service
-                .ignore_block(block_id.clone())
-                .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
-        }
-        info!("{}: Initializing block", state);
-        service
-            .initialize_block(None)
-            .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+    if check_is_primary(state) {
+        become_primary(state, service)
     } else {
-        warn!("{}: I'm now a secondary", state);
-        state.downgrade_role();
+        become_secondary(state)
     }
+
+    set_normal_mode(state);
+
+    Ok(())
+}
+
+fn check_received_enough_view_changes(
+    state: &PbftState,
+    msg_log: &PbftLog,
+    vc_message: &PbftViewChange,
+) -> Result<(), PbftError> {
+    msg_log.check_msg_against_log(&vc_message, true, 2 * state.f + 1)
+}
+
+fn set_current_view(state: &mut PbftState, vc_message: &PbftViewChange) {
+    state.view = vc_message.get_info().get_view();
+    warn!("{}: Updating to view {}", state, state.view);
+}
+
+fn check_is_primary(state: &PbftState) -> bool {
+    state.get_own_peer_id() == state.get_primary_peer_id()
+}
+
+fn become_primary(state: &mut PbftState, service: &mut Service) {
+    state.upgrade_role();
+    warn!("{}: I'm now a primary", state);
+
+    // If we're the new primary, need to clean up the block mess from the view change and
+    // initialize a new block.
+    if let WorkingBlockOption::WorkingBlock(ref working_block) = state.working_block {
+        info!(
+            "{}: Ignoring block {}",
+            state,
+            &hex::encode(working_block.get_block_id())
+        );
+        service
+            .ignore_block(BlockId::from(working_block.get_block_id().to_vec()))
+            .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
+    } else if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = state.working_block {
+        info!("{}: Ignoring block {}", state, &hex::encode(block_id));
+        service
+            .ignore_block(block_id.clone())
+            .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
+    }
+    info!("{}: Initializing block", state);
+    service
+        .initialize_block(None)
+        .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+}
+
+fn become_secondary(state: &mut PbftState) {
+    warn!("{}: I'm now a secondary", state);
+    state.downgrade_role();
+}
+
+fn set_normal_mode(state: &mut PbftState) {
     state.working_block = WorkingBlockOption::NoWorkingBlock;
     state.phase = PbftPhase::NotStarted;
     state.mode = PbftMode::Normal;
@@ -338,7 +447,6 @@ pub fn view_change(
         "{}: Entered normal mode in new view {} and stopped timeout",
         state, state.view
     );
-    Ok(())
 }
 
 // There should only be one block with a matching ID
