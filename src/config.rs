@@ -83,7 +83,7 @@ impl PbftConfig {
 pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig {
     let mut config = PbftConfig::default();
 
-    let sawtooth_settings: HashMap<String, String> = service
+    let settings: HashMap<String, String> = service
         .get_settings(
             block_id,
             vec![
@@ -98,7 +98,7 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
 
     // Get the peers associated with this node (including ourselves). Panic if it is not provided;
     // the network cannot function without this setting.
-    let peers_string = sawtooth_settings
+    let peers_string = settings
         .get("sawtooth.consensus.pbft.peers")
         .expect("'sawtooth.consensus.pbft.peers' must be set");
 
@@ -113,21 +113,21 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
     config.peers = peers;
 
     // Get various durations
-    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.block_duration") {
-        if let Ok(block_duration) = s.parse() {
-            config.block_duration = Duration::from_millis(block_duration);
-        }
-    }
-    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.message_timeout") {
-        if let Ok(message_timeout) = s.parse() {
-            config.message_timeout = Duration::from_millis(message_timeout);
-        }
-    }
-    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.view_change_timeout") {
-        if let Ok(view_change_timeout) = s.parse() {
-            config.view_change_timeout = Duration::from_millis(view_change_timeout);
-        }
-    }
+    merge_millis_setting_if_set(
+        &settings,
+        &mut config.block_duration,
+        "sawtooth.consensus.pbft.block_duration",
+    );
+    merge_millis_setting_if_set(
+        &settings,
+        &mut config.message_timeout,
+        "sawtooth.consensus.pbft.message_timeout",
+    );
+    merge_millis_setting_if_set(
+        &settings,
+        &mut config.view_change_timeout,
+        "sawtooth.consensus.pbft.view_change_timeout",
+    );
 
     // Check to make sure block_duration < view_change_timeout
     if config.block_duration >= config.view_change_timeout {
@@ -135,18 +135,55 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
     }
 
     // Get various integer constants
-    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.checkpoint_period") {
-        if let Ok(checkpoint_period) = s.parse() {
-            config.checkpoint_period = checkpoint_period;
-        }
-    }
-    if let Some(s) = sawtooth_settings.get("sawtooth.consensus.pbft.max_log_size") {
-        if let Ok(max_log_size) = s.parse() {
-            config.max_log_size = max_log_size;
-        }
-    }
+    merge_setting_if_set(
+        &settings,
+        &mut config.checkpoint_period,
+        "sawtooth.consensus.pbft.checkpoint_period",
+    );
+    merge_setting_if_set(
+        &settings,
+        &mut config.max_log_size,
+        "sawtooth.consensus.pbft.max_log_size",
+    );
 
     config
+}
+
+fn merge_setting_if_set<T: ::std::str::FromStr>(
+    settings_map: &HashMap<String, String>,
+    setting_field: &mut T,
+    setting_key: &str,
+) {
+    merge_setting_if_set_and_map(settings_map, setting_field, setting_key, |setting| setting)
+}
+
+fn merge_setting_if_set_and_map<U, F, T>(
+    settings_map: &HashMap<String, String>,
+    setting_field: &mut U,
+    setting_key: &str,
+    map: F,
+) where
+    F: Fn(T) -> U,
+    T: ::std::str::FromStr,
+{
+    if let Some(setting) = settings_map.get(setting_key) {
+        if let Ok(setting_value) = setting.parse() {
+            *setting_field = map(setting_value);
+        }
+    }
+}
+
+fn merge_millis_setting_if_set(
+    settings_map: &HashMap<String, String>,
+    setting_field: &mut Duration,
+    setting_key: &str,
+) {
+    merge_setting_if_set_and_map(
+        settings_map,
+        setting_field,
+        setting_key,
+        Duration::from_millis,
+    )
 }
 
 /// Create a mock configuration, given a number of nodes. PeerIds are generated using a Sha256
