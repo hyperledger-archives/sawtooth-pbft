@@ -142,9 +142,10 @@ pub struct PbftState {
     /// The maximum number of faulty nodes in the network
     pub f: u64,
 
-    // Timer used to make sure the primary is executing BlockCommits in a timely manner. If not,
+    /// Timer used to make sure the primary is executing BlockCommits in a timely manner. If not,
     /// then this node will initiate a view change.
-    pub timeout: Timeout,
+    pub commit_timeout: Timeout,
+
 
     /// The current block this node is working on
     pub working_block: WorkingBlockOption,
@@ -176,7 +177,7 @@ impl PbftState {
             pre_checkpoint_mode: PbftMode::Normal,
             f,
             peer_ids: config.peers.clone(),
-            timeout: Timeout::new(config.view_change_timeout),
+            commit_timeout: Timeout::new(config.commit_timeout),
             working_block: WorkingBlockOption::NoWorkingBlock,
         }
     }

@@ -449,7 +449,7 @@ fn set_normal_mode(state: &mut PbftState) {
     state.working_block = WorkingBlockOption::NoWorkingBlock;
     state.phase = PbftPhase::NotStarted;
     state.mode = PbftMode::Normal;
-    state.timeout.stop();
+    state.commit_timeout.stop();
     warn!(
         "{}: Entered normal mode in new view {} and stopped timeout",
         state, state.view

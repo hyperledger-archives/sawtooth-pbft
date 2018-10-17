@@ -90,8 +90,9 @@ impl Engine for PbftEngine {
                     error!("{}", e);
                 }
 
-                // Every so often, check to see if timeout has expired; initiate ViewChange if necessary
-                if node.check_timeout_expired(state) {
+                // Every so often, check to see if commit timeout has expired; initiate ViewChange
+                // if necessary
+                if node.check_commit_timeout_expired(state) {
                     handle_pbft_result(node.start_view_change(state));
                 }
             });

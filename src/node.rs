@@ -441,7 +441,7 @@ impl PbftNode {
 
         self.msg_log.add_message(msg);
         state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id);
-        state.timeout.start();
+        state.commit_timeout.start();
 
         if state.is_primary() {
             let s = state.seq_num;
@@ -485,7 +485,7 @@ impl PbftNode {
         }
 
         // The primary processessed this block in a timely manner, so stop the timeout.
-        state.timeout.stop();
+        state.commit_timeout.stop();
 
         Ok(())
     }
@@ -558,8 +558,8 @@ impl PbftNode {
     }
 
     /// Check to see if the view change timeout has expired
-    pub fn check_timeout_expired(&mut self, state: &mut PbftState) -> bool {
-        state.timeout.check_expired()
+    pub fn check_commit_timeout_expired(&mut self, state: &mut PbftState) -> bool {
+        state.commit_timeout.check_expired()
     }
 
     /// Start the checkpoint process
