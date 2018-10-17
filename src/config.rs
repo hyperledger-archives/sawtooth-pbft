@@ -46,6 +46,10 @@ pub struct PbftConfig {
     /// Should be longer than block_duration
     pub commit_timeout: Duration,
 
+    /// How long to wait to initiate a ViewChange between a block being committed and a new block
+    /// being proposed.
+    pub idle_timeout: Duration,
+
     /// How many requests in between each checkpoint
     pub checkpoint_period: u64,
 
@@ -63,6 +67,7 @@ impl PbftConfig {
             block_duration: Duration::from_millis(200),
             message_timeout: Duration::from_millis(10),
             commit_timeout: Duration::from_millis(4000),
+            idle_timeout: Duration::from_millis(30_000),
             checkpoint_period: 100,
             max_log_size: 1000,
             storage: "memory".into(),
@@ -77,6 +82,7 @@ impl PbftConfig {
 /// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
 /// + `sawtooth.consensus.pbft.checkpoint_period` (optional, default 10 ms)
 /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 4s)
+/// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30s)
 /// + `sawtooth.consensus.pbft.message_timeout` (optional, default 100 blocks)
 /// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
 /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
@@ -96,6 +102,7 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
                 String::from("sawtooth.consensus.pbft.block_duration"),
                 String::from("sawtooth.consensus.pbft.checkpoint_period"),
                 String::from("sawtooth.consensus.pbft.commit_timeout"),
+                String::from("sawtooth.consensus.pbft.idle_timeout"),
                 String::from("sawtooth.consensus.pbft.message_timeout"),
                 String::from("sawtooth.consensus.pbft.max_log_size"),
             ],
@@ -132,6 +139,11 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
         &settings,
         &mut config.commit_timeout,
         "sawtooth.consensus.pbft.commit_timeout",
+    );
+    merge_millis_setting_if_set(
+        &settings,
+        &mut config.idle_timeout,
+        "sawtooth.consensus.pbft.idle_timeout",
     );
 
     // Check to make sure block_duration < commit_timeout

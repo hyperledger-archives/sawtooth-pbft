@@ -146,6 +146,9 @@ pub struct PbftState {
     /// then this node will initiate a view change.
     pub commit_timeout: Timeout,
 
+    /// Timer used to force view changes if too much idle time has elapsed between the last block
+    /// being committed and the next block being proposed.
+    pub idle_timeout: Timeout,
 
     /// The current block this node is working on
     pub working_block: WorkingBlockOption,
@@ -178,6 +181,7 @@ impl PbftState {
             f,
             peer_ids: config.peers.clone(),
             commit_timeout: Timeout::new(config.commit_timeout),
+            idle_timeout: Timeout::new(config.idle_timeout),
             working_block: WorkingBlockOption::NoWorkingBlock,
         }
     }
