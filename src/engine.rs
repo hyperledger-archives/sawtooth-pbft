@@ -95,12 +95,12 @@ impl Engine for PbftEngine {
                 // Every so often, check to see if commit timeout has expired; initiate ViewChange
                 // if necessary
                 if node.check_commit_timeout_expired(state) {
-                    handle_pbft_result(node.start_view_change(state));
+                    handle_pbft_result(node.propose_view_change(state));
                 }
                 // Every so often, check to see if idle timeout has expired; initiate ViewChange if
                 // necessary
                 if node.check_idle_timeout_expired(state) {
-                    handle_pbft_result(node.start_view_change(state));
+                    handle_pbft_result(node.propose_view_change(state));
                 }
             });
 
@@ -131,7 +131,7 @@ fn handle_update(
         Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id, state)?,
         Ok(Update::BlockInvalid(_)) => {
             warn!("{}: BlockInvalid received, starting view change", state);
-            node.start_view_change(state)?
+            node.propose_view_change(state)?
         }
         Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state)?,
         Ok(Update::PeerMessage(message, sender_id)) => {

@@ -150,6 +150,8 @@ pub struct PbftState {
     /// being committed and the next block being proposed.
     pub idle_timeout: Timeout,
 
+    pub forced_view_change_period: u64,
+
     /// The current block this node is working on
     pub working_block: WorkingBlockOption,
 }
@@ -182,6 +184,7 @@ impl PbftState {
             peer_ids: config.peers.clone(),
             commit_timeout: Timeout::new(config.commit_timeout),
             idle_timeout: Timeout::new(config.idle_timeout),
+            forced_view_change_period: config.forced_view_change_period,
             working_block: WorkingBlockOption::NoWorkingBlock,
         }
     }
@@ -254,6 +257,10 @@ impl PbftState {
             debug!("{}: Didn't change to {:?}", self, desired_phase);
             None
         }
+    }
+
+    pub fn at_forced_view_change(&self) -> bool {
+        self.seq_num % self.forced_view_change_period == 0
     }
 }
 

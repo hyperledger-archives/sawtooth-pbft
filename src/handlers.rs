@@ -382,7 +382,7 @@ pub fn view_change(
 ) -> Result<(), PbftError> {
     check_received_enough_view_changes(state, msg_log, vc_message)?;
 
-    set_current_view(state, vc_message);
+    set_current_view_from_msg(state, vc_message);
 
     // Upgrade this node to primary, if its ID is correct
     if check_is_primary(state) {
@@ -396,6 +396,20 @@ pub fn view_change(
     Ok(())
 }
 
+pub fn force_view_change(state: &mut PbftState, service: &mut Service) {
+    let next_view = state.view + 1;
+    set_current_view(state, next_view);
+
+    // Upgrade this node to primary, if its ID is correct
+    if check_is_primary(state) {
+        become_primary(state, service)
+    } else {
+        become_secondary(state)
+    }
+
+    set_normal_mode(state);
+}
+
 fn check_received_enough_view_changes(
     state: &PbftState,
     msg_log: &PbftLog,
@@ -404,8 +418,12 @@ fn check_received_enough_view_changes(
     msg_log.check_msg_against_log(&vc_message, true, 2 * state.f + 1)
 }
 
-fn set_current_view(state: &mut PbftState, vc_message: &PbftViewChange) {
-    state.view = vc_message.get_info().get_view();
+fn set_current_view_from_msg(state: &mut PbftState, vc_message: &PbftViewChange) {
+    set_current_view(state, vc_message.get_info().get_view())
+}
+
+fn set_current_view(state: &mut PbftState, view: u64) {
+    state.view = view;
     warn!("{}: Updating to view {}", state, state.view);
 }
 
