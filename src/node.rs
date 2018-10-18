@@ -26,7 +26,7 @@ use protobuf::{Message, ProtobufError};
 use std::convert::From;
 use std::error::Error;
 
-use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerMessage};
+use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId, PeerMessage};
 use sawtooth_sdk::consensus::service::Service;
 
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
@@ -34,6 +34,7 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChan
 use config::PbftConfig;
 use error::PbftError;
 use handlers;
+use message_extensions::PbftGetInfo;
 use message_log::{PbftLog, PbftStableCheckpoint};
 use message_type::{PbftHint, PbftMessageType};
 use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
@@ -79,7 +80,11 @@ impl PbftNode {
     /// This method handles all messages from other nodes. Such messages may include `PrePrepare`,
     /// `Prepare`, `Commit`, `Checkpoint`, or `ViewChange`. If a node receives a type of message
     /// before it is ready to do so, the message is pushed into a backlog queue.
-    pub fn on_peer_message(&mut self, msg: &PeerMessage) -> Result<(), PbftError> {
+    pub fn on_peer_message(
+        &mut self,
+        msg: &PeerMessage,
+        sender_id: &PeerId
+    ) -> Result<(), PbftError> {
         let msg_type = PbftMessageType::from(msg.message_type.as_str());
 
         // Handle a multicast protocol message
@@ -89,12 +94,21 @@ impl PbftNode {
             PbftMessageType::PrePrepare => {
                 let pbft_message: PbftMessage = extract_message(&msg)?;
 
+                if !verify_message_sender(&&pbft_message, sender_id) {
+                    warn!(
+                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
+                        pbft_message, sender_id
+                    );
+                    return Ok(())
+                }
+
                 if !ignore_hint_pre_prepare(&self.state, &pbft_message) {
                     handlers::action_from_hint(
                         &mut self.msg_log,
                         &multicast_hint,
                         &pbft_message,
                         msg.content.clone(),
+                        sender_id,
                     )?;
                 }
 
@@ -111,11 +125,20 @@ impl PbftNode {
             PbftMessageType::Prepare => {
                 let pbft_message: PbftMessage = extract_message(&msg)?;
 
+                if !verify_message_sender(&&pbft_message, sender_id) {
+                    warn!(
+                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
+                        pbft_message, sender_id
+                    );
+                    return Ok(())
+                }
+
                 handlers::action_from_hint(
                     &mut self.msg_log,
                     &multicast_hint,
                     &pbft_message,
                     msg.content.clone(),
+                    sender_id,
                 )?;
 
                 self.msg_log.add_message(pbft_message.clone());
@@ -128,28 +151,45 @@ impl PbftNode {
             PbftMessageType::Commit => {
                 let pbft_message: PbftMessage = extract_message(&msg)?;
 
+                if !verify_message_sender(&&pbft_message, sender_id) {
+                    warn!(
+                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
+                        pbft_message, sender_id
+                    );
+                    return Ok(())
+                }
+
                 handlers::action_from_hint(
                     &mut self.msg_log,
                     &multicast_hint,
                     &pbft_message,
                     msg.content.clone(),
+                    sender_id,
                 )?;
 
                 self.msg_log.add_message(pbft_message.clone());
 
                 self.msg_log.committed(&pbft_message, self.state.f)?;
 
-                self.commit_block_if_committing(msg, &pbft_message)?;
+                self.commit_block_if_committing(msg, &pbft_message, &sender_id)?;
             }
 
             PbftMessageType::Checkpoint => {
                 let pbft_message: PbftMessage = extract_message(&msg)?;
 
+                if !verify_message_sender(&&pbft_message, sender_id) {
+                    warn!(
+                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
+                        pbft_message, sender_id
+                    );
+                    return Ok(())
+                }
+
                 if self.check_if_stale_checkpoint(&pbft_message)? {
                     return Ok(());
                 }
 
-                if !self.check_if_checkpoint_started(msg) {
+                if !self.check_if_checkpoint_started(msg, sender_id) {
                     return Ok(());
                 }
 
@@ -165,6 +205,14 @@ impl PbftNode {
 
             PbftMessageType::ViewChange => {
                 let vc_message: PbftViewChange = extract_message(&msg)?;
+
+                if !verify_message_sender(&&vc_message, sender_id) {
+                    warn!(
+                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
+                        vc_message, sender_id
+                    );
+                    return Ok(())
+                }
 
                 debug!(
                     "{}: Received ViewChange message from Node {:02} (v {}, seq {})",
@@ -227,6 +275,7 @@ impl PbftNode {
         &mut self,
         msg: &PeerMessage,
         pbft_message: &PbftMessage,
+        sender_id: &PeerId,
     ) -> Result<(), PbftError> {
         if self.state.phase == PbftPhase::Committing {
             handlers::commit(
@@ -235,6 +284,7 @@ impl PbftNode {
                 &mut *self.service,
                 &pbft_message,
                 msg.content.clone(),
+                sender_id,
             )
         } else {
             debug!(
@@ -265,13 +315,13 @@ impl PbftNode {
         }
     }
 
-    fn check_if_checkpoint_started(&mut self, msg: &PeerMessage) -> bool {
+    fn check_if_checkpoint_started(&mut self, msg: &PeerMessage, sender_id: &PeerId) -> bool {
         // Not ready to receive checkpoint yet; only acceptable in NotStarted
         if self.state.phase != PbftPhase::NotStarted {
-            self.msg_log.push_backlog(PeerMessage {
-                message_type: msg.message_type.clone(),
-                content: msg.content.clone(),
-            });
+            self.msg_log.push_backlog(
+                msg.clone(),
+                sender_id.clone()
+            );
             debug!(
                 "{}: Not in NotStarted; not handling checkpoint yet",
                 self.state
@@ -524,9 +574,12 @@ impl PbftNode {
     /// Retry messages from the backlog queue
     pub fn retry_backlog(&mut self) -> Result<(), PbftError> {
         let mut peer_res = Ok(());
-        if let Some(msg) = self.msg_log.pop_backlog() {
-            debug!("{}: Popping from backlog {}", self.state, msg.message_type);
-            peer_res = self.on_peer_message(&msg);
+        if let Some((msg, sender_id)) = self.msg_log.pop_backlog() {
+            debug!(
+                "{}: Popping from backlog {} from {:?}",
+                self.state, msg.message_type, sender_id
+            );
+            peer_res = self.on_peer_message(&msg, &sender_id);
         }
         if self.state.mode == PbftMode::Normal && self.state.phase == PbftPhase::NotStarted {
             if let Some(msg) = self.msg_log.pop_block_backlog() {
@@ -623,7 +676,8 @@ impl PbftNode {
             message_type: String::from(msg_type),
             content: msg_bytes.to_vec(),
         };
-        self.on_peer_message(&peer_msg)
+        let own_peer_id = self.state.get_own_peer_id();
+        self.on_peer_message(&peer_msg, &own_peer_id)
     }
 
     /// NOTE: Disabling self-sending for testing purposes
@@ -686,6 +740,11 @@ fn extract_multicast_hint(
     } else {
         Ok(PbftHint::PresentMessage)
     }
+}
+
+fn verify_message_sender<'a, T: PbftGetInfo<'a>>(msg: &T, sender_id: &PeerId) -> bool {
+    let signer_id = PeerId::from(msg.get_msg_info().get_signer_id().to_vec());
+    &signer_id == sender_id
 }
 
 fn extract_message<T: Message>(msg: &PeerMessage) -> Result<T, PbftError> {
@@ -967,7 +1026,7 @@ mod tests {
             message_type: String::from(&PbftMessageType::PrePrepare),
             content: b"this message will result in an error".to_vec(),
         };
-        assert!(node.on_peer_message(&garbage_msg).is_err());
+        assert!(node.on_peer_message(&garbage_msg, &mock_peer_id(0)).is_err());
 
         // Make sure BlockNew is in the log
         let mut node1 = mock_node(1);
@@ -978,7 +1037,7 @@ mod tests {
 
         // Receive a PrePrepare
         let msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, block.clone(), 0);
-        node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
+        node1.on_peer_message(&msg, &mock_peer_id(0)).unwrap_or_else(handle_pbft_err);
 
         assert_eq!(node1.state.phase, PbftPhase::Preparing);
         assert_eq!(node1.state.seq_num, 1);
@@ -992,7 +1051,7 @@ mod tests {
         for peer in 0..3 {
             assert_eq!(node1.state.phase, PbftPhase::Preparing);
             let msg = mock_msg(&PbftMessageType::Prepare, 0, 1, block.clone(), peer);
-            node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
+            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(node1.state.phase, PbftPhase::Checking);
 
@@ -1003,7 +1062,7 @@ mod tests {
         for peer in 0..3 {
             assert_eq!(node1.state.phase, PbftPhase::Committing);
             let msg = mock_msg(&PbftMessageType::Commit, 0, 1, block.clone(), peer);
-            node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
+            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(node1.state.phase, PbftPhase::Finished);
 
@@ -1042,7 +1101,7 @@ mod tests {
         // Receive 3 `Checkpoint` messages
         for peer in 0..3 {
             let msg = mock_msg(&PbftMessageType::Checkpoint, 0, 10, block.clone(), peer);
-            node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
+            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
         }
 
         assert_eq!(node1.state.mode, PbftMode::Normal);
@@ -1076,7 +1135,7 @@ mod tests {
                 message_type: String::from(&PbftMessageType::ViewChange),
                 content: msg_bytes,
             };
-            node1.on_peer_message(&msg).unwrap_or_else(handle_pbft_err);
+            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
         }
 
         assert!(node1.state.is_primary());
@@ -1092,5 +1151,18 @@ mod tests {
         node1.start_view_change().unwrap_or_else(handle_pbft_err);
 
         assert_eq!(node1.state.mode, PbftMode::ViewChanging);
+    }
+
+    /// Test that the legitimacy of message senders is verified correctly
+    #[test]
+    fn message_sender_verification() {
+        let peer_msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, mock_block(1), 0);
+        let msg: PbftMessage = extract_message(&peer_msg).unwrap();
+
+        // Make sure a legitimate message is accepted
+        assert!(verify_message_sender(&&msg, &mock_peer_id(0)));
+
+        // Make sure an illegitimate message is rejected
+        assert!(!verify_message_sender(&&msg, &mock_peer_id(1)));
     }
 }

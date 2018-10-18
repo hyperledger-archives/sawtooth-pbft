@@ -26,7 +26,7 @@ use hex;
 
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
-use sawtooth_sdk::consensus::engine::{Block, PeerMessage};
+use sawtooth_sdk::consensus::engine::{Block, PeerId, PeerMessage};
 
 use config::PbftConfig;
 use error::PbftError;
@@ -62,8 +62,8 @@ pub struct PbftLog {
     /// How many cycles in between checkpoints
     checkpoint_period: u64,
 
-    /// Backlog of messages (from peers)
-    backlog: VecDeque<PeerMessage>,
+    /// Backlog of messages (from peers) with sender's ID
+    backlog: VecDeque<(PeerMessage, PeerId)>,
 
     /// Backlog of blocks (from BlockNews messages)
     block_backlog: VecDeque<Block>,
@@ -436,11 +436,11 @@ impl PbftLog {
             .collect();
     }
 
-    pub fn push_backlog(&mut self, msg: PeerMessage) {
-        self.backlog.push_back(msg);
+    pub fn push_backlog(&mut self, msg: PeerMessage, sender_id: PeerId) {
+        self.backlog.push_back((msg, sender_id));
     }
 
-    pub fn pop_backlog(&mut self) -> Option<PeerMessage> {
+    pub fn pop_backlog(&mut self) -> Option<(PeerMessage, PeerId)> {
         self.backlog.pop_front()
     }
 

@@ -39,6 +39,7 @@ pub fn action_from_hint(
     hint: &PbftHint,
     pbft_message: &PbftMessage,
     msg_content: Vec<u8>,
+    sender_id: &PeerId,
 ) -> Result<(), PbftError> {
     let msg = PeerMessage {
         message_type: String::from(pbft_message.get_info().get_msg_type()),
@@ -46,7 +47,7 @@ pub fn action_from_hint(
     };
     match hint {
         PbftHint::FutureMessage => {
-            msg_log.push_backlog(msg);
+            msg_log.push_backlog(msg, sender_id.clone());
             Err(PbftError::NotReadyForMessage)
         }
         PbftHint::PastMessage => {
@@ -192,6 +193,7 @@ pub fn commit(
     service: &mut Service,
     pbft_message: &PbftMessage,
     msg_content: Vec<u8>,
+    sender_id: &PeerId,
 ) -> Result<(), PbftError> {
     let working_block = clone_working_block(state)?;
 
@@ -206,6 +208,7 @@ pub fn commit(
         pbft_message,
         msg_content,
         &working_block,
+        sender_id,
     )?;
 
     info!(
@@ -260,6 +263,7 @@ fn check_if_commiting_with_current_chain_head(
     pbft_message: &PbftMessage,
     msg_content: Vec<u8>,
     working_block: &PbftBlock,
+    sender_id: &PeerId,
 ) -> Result<(), PbftError> {
     let head = service
         .get_chain_head()
@@ -278,7 +282,7 @@ fn check_if_commiting_with_current_chain_head(
             message_type: String::from(pbft_message.get_info().get_msg_type()),
             content: msg_content,
         };
-        msg_log.push_backlog(msg);
+        msg_log.push_backlog(msg, sender_id.clone());
         Err(PbftError::BlockMismatch(
             pbft_message.get_block().clone(),
             working_block.clone(),
