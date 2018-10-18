@@ -43,7 +43,7 @@ impl Engine for PbftEngine {
         updates: Receiver<Update>,
         mut service: Box<Service>,
         startup_state: StartupState,
-    ) {
+    ) -> Result<(), Error> {
         let StartupState {
             chain_head,
             peers: _peers,
@@ -57,7 +57,7 @@ impl Engine for PbftEngine {
             .peers
             .iter()
             .position(|ref id| id == &&local_peer_info.peer_id)
-            .expect("This node is not in the peers list, which is necessary")
+            .ok_or(Error::UnknownPeer("This node is not in the peers list, which is necessary".into()))?
             as u64;
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
@@ -93,6 +93,8 @@ impl Engine for PbftEngine {
                 handle_pbft_result(node.retry_backlog());
             })
         }
+
+        Ok(())
     }
 
     fn version(&self) -> String {
