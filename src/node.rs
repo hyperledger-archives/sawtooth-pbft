@@ -536,7 +536,7 @@ impl PbftNode {
         if state.is_primary() && state.phase == PbftPhase::NotStarted {
             debug!("{}: Summarizing block", state);
             if let Err(e) = self.service.summarize_block() {
-                info!(
+                debug!(
                     "{}: Couldn't summarize, so not finalizing: {}",
                     state,
                     e.description().to_string()
