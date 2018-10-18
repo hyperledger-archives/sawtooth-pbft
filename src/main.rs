@@ -50,6 +50,23 @@ pub mod state;
 pub mod timing;
 
 fn main() {
+    let args = parse_args();
+
+    simple_logger::init_with_level(args.log_level).expect("Unable to initialize logger");
+
+    warn!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
+
+    let pbft_engine = engine::PbftEngine::new();
+
+    let (driver, _stop) = ZmqDriver::new();
+
+    driver.start(&args.endpoint, pbft_engine).unwrap_or_else(|err| {
+        error!("{}", err);
+        process::exit(1);
+    });
+}
+
+fn parse_args() -> PbftCliArgs {
     let matches = clap_app!(sawtooth_pbft =>
         (version: crate_version!())
         (about: "PBFT consensus for Sawtooth")
@@ -71,16 +88,13 @@ fn main() {
             .unwrap_or("tcp://localhost:5050"),
     );
 
-    simple_logger::init_with_level(log_level).expect("Unable to initialize logger");
+    PbftCliArgs {
+        log_level,
+        endpoint,
+    }
+}
 
-    warn!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
-
-    let pbft_engine = engine::PbftEngine::new();
-
-    let (driver, _stop) = ZmqDriver::new();
-
-    driver.start(&endpoint, pbft_engine).unwrap_or_else(|err| {
-        error!("{}", err);
-        process::exit(1);
-    });
+pub struct PbftCliArgs {
+    log_level: log::Level,
+    endpoint: String,
 }
