@@ -1,0 +1,9 @@
+appenders:
+  syslog:
+    kind: libc-syslog
+    encoder:
+      pattern: "{h({l:5.5})} | {({M}:{L}):20.20} | {m}{n}"
+root:
+  level: warn
+  appenders:
+    - syslog

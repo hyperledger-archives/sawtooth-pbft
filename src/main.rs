@@ -27,13 +27,18 @@ extern crate clap;
 extern crate crypto;
 #[macro_use]
 extern crate log;
+extern crate log4rs;
+extern crate log4rs_syslog;
 extern crate hex;
 extern crate protobuf;
 extern crate sawtooth_sdk;
 extern crate serde_json;
-extern crate simple_logger;
 
 use std::process;
+
+use log4rs::append::console::ConsoleAppender;
+use log4rs::config::{Appender, Config, Root};
+use log4rs::encode::pattern::PatternEncoder;
 
 use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
 
@@ -52,7 +57,37 @@ pub mod timing;
 fn main() {
     let args = parse_args();
 
-    simple_logger::init_with_level(args.log_level).expect("Unable to initialize logger");
+    let config = match args.log_config {
+        Some(path) => {
+            // Register deserializer for syslog so we can load syslog appender(s)
+            let mut deserializers = log4rs::file::Deserializers::new();
+            log4rs_syslog::register(&mut deserializers);
+
+            match log4rs::load_config_file(path, deserializers) {
+                Ok(mut config) => {
+                    {
+                        let mut root = config.root_mut();
+                        root.set_level(args.log_level);
+                    }
+                    config
+                }
+                Err(err) => {
+                    eprintln!(
+                        "Error loading logging configuration file: {:?}\
+                         \nFalling back to console logging.",
+                        err
+                    );
+                    get_console_config(args.log_level)
+                }
+            }
+        }
+        None => get_console_config(args.log_level),
+    };
+
+    log4rs::init_config(config).unwrap_or_else(|err| {
+        eprintln!("Error initializing logging configuration: {:?}", err);
+        process::exit(1)
+    });
 
     warn!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
 
@@ -66,6 +101,21 @@ fn main() {
     });
 }
 
+fn get_console_config(log_level: log::LevelFilter) -> Config {
+    let stdout = ConsoleAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(
+            "{h({l:5.5})} | {({M}:{L}):20.20} | {m}{n}",
+        ))).build();
+
+    Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .build(Root::builder().appender("stdout").build(log_level))
+        .unwrap_or_else(|err| {
+            eprintln!("Error building logging configuration: {:?}", err);
+            process::exit(1)
+        })
+}
+
 fn parse_args() -> PbftCliArgs {
     let matches = clap_app!(sawtooth_pbft =>
         (version: crate_version!())
@@ -73,13 +123,18 @@ fn parse_args() -> PbftCliArgs {
         (@arg connect: -C --connect +takes_value
          "connection endpoint for validator")
         (@arg verbose: -v --verbose +multiple
-         "increase output verbosity")).get_matches();
+         "increase output verbosity")
+        (@arg logconfig: -L --log_config +takes_value
+         "path to logging config file"))
+        .get_matches();
+
+    let log_config = matches.value_of("logconfig").map(|s| s.into());
 
     let log_level = match matches.occurrences_of("verbose") {
-        0 => log::Level::Warn,
-        1 => log::Level::Info,
-        2 => log::Level::Debug,
-        3 | _ => log::Level::Trace,
+        0 => log::LevelFilter::Warn,
+        1 => log::LevelFilter::Info,
+        2 => log::LevelFilter::Debug,
+        3 | _ => log::LevelFilter::Trace,
     };
 
     let endpoint = String::from(
@@ -89,12 +144,14 @@ fn parse_args() -> PbftCliArgs {
     );
 
     PbftCliArgs {
+        log_config,
         log_level,
         endpoint,
     }
 }
 
 pub struct PbftCliArgs {
-    log_level: log::Level,
+    log_config: Option<String>,
+    log_level: log::LevelFilter,
     endpoint: String,
 }
