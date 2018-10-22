@@ -57,9 +57,9 @@ impl Engine for PbftEngine {
             .peers
             .iter()
             .position(|ref id| id == &&local_peer_info.peer_id)
-            .ok_or(Error::UnknownPeer(
-                "This node is not in the peers list, which is necessary".into(),
-            ))? as u64;
+            .ok_or_else(|| {
+                Error::UnknownPeer("This node is not in the peers list, which is necessary".into())
+            })? as u64;
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
         let mut backlog_ticker = timing::Ticker::new(config.message_timeout);
