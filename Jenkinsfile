@@ -24,6 +24,7 @@ pipeline {
 
     environment {
         ISOLATION_ID = sh(returnStdout: true, script: 'printf $BUILD_TAG | sha256sum | cut -c1-64').trim()
+        JENKINS_UID = sh(returnStdout: true, script: "id -u ${USER}").trim()
     }
 
     stages {
@@ -89,14 +90,14 @@ pipeline {
 
         stage('Build deb') {
             steps {
-                sh 'docker-compose run --rm sawtooth-pbft cargo deb'
+                sh "docker-compose run --rm sawtooth-pbft bash -c \"cargo deb && cp target/debian/*.deb ./ && chown ${JENKINS_UID} ./*.deb\""
             }
         }
     }
 
     post {
         success {
-            archiveArtifacts 'target/debian/*.deb'
+            archiveArtifacts '*.deb'
         }
     }
 }
