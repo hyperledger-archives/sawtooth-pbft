@@ -83,7 +83,7 @@ impl PbftNode {
     pub fn on_peer_message(
         &mut self,
         msg: &PeerMessage,
-        sender_id: &PeerId
+        sender_id: &PeerId,
     ) -> Result<(), PbftError> {
         let msg_type = PbftMessageType::from(msg.message_type.as_str());
 
@@ -99,7 +99,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         pbft_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 if !ignore_hint_pre_prepare(&self.state, &pbft_message) {
@@ -130,7 +130,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         pbft_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 handlers::action_from_hint(
@@ -156,7 +156,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         pbft_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 handlers::action_from_hint(
@@ -182,7 +182,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         pbft_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 if self.check_if_stale_checkpoint(&pbft_message)? {
@@ -211,7 +211,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         vc_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 debug!(
@@ -318,10 +318,7 @@ impl PbftNode {
     fn check_if_checkpoint_started(&mut self, msg: &PeerMessage, sender_id: &PeerId) -> bool {
         // Not ready to receive checkpoint yet; only acceptable in NotStarted
         if self.state.phase != PbftPhase::NotStarted {
-            self.msg_log.push_backlog(
-                msg.clone(),
-                sender_id.clone()
-            );
+            self.msg_log.push_backlog(msg.clone(), sender_id.clone());
             debug!(
                 "{}: Not in NotStarted; not handling checkpoint yet",
                 self.state
@@ -1026,7 +1023,10 @@ mod tests {
             message_type: String::from(&PbftMessageType::PrePrepare),
             content: b"this message will result in an error".to_vec(),
         };
-        assert!(node.on_peer_message(&garbage_msg, &mock_peer_id(0)).is_err());
+        assert!(
+            node.on_peer_message(&garbage_msg, &mock_peer_id(0))
+                .is_err()
+        );
 
         // Make sure BlockNew is in the log
         let mut node1 = mock_node(1);
@@ -1037,7 +1037,9 @@ mod tests {
 
         // Receive a PrePrepare
         let msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, block.clone(), 0);
-        node1.on_peer_message(&msg, &mock_peer_id(0)).unwrap_or_else(handle_pbft_err);
+        node1
+            .on_peer_message(&msg, &mock_peer_id(0))
+            .unwrap_or_else(handle_pbft_err);
 
         assert_eq!(node1.state.phase, PbftPhase::Preparing);
         assert_eq!(node1.state.seq_num, 1);
@@ -1051,7 +1053,9 @@ mod tests {
         for peer in 0..3 {
             assert_eq!(node1.state.phase, PbftPhase::Preparing);
             let msg = mock_msg(&PbftMessageType::Prepare, 0, 1, block.clone(), peer);
-            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
+            node1
+                .on_peer_message(&msg, &mock_peer_id(peer))
+                .unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(node1.state.phase, PbftPhase::Checking);
 
@@ -1062,7 +1066,9 @@ mod tests {
         for peer in 0..3 {
             assert_eq!(node1.state.phase, PbftPhase::Committing);
             let msg = mock_msg(&PbftMessageType::Commit, 0, 1, block.clone(), peer);
-            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
+            node1
+                .on_peer_message(&msg, &mock_peer_id(peer))
+                .unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(node1.state.phase, PbftPhase::Finished);
 
@@ -1101,7 +1107,9 @@ mod tests {
         // Receive 3 `Checkpoint` messages
         for peer in 0..3 {
             let msg = mock_msg(&PbftMessageType::Checkpoint, 0, 10, block.clone(), peer);
-            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
+            node1
+                .on_peer_message(&msg, &mock_peer_id(peer))
+                .unwrap_or_else(handle_pbft_err);
         }
 
         assert_eq!(node1.state.mode, PbftMode::Normal);
@@ -1135,7 +1143,9 @@ mod tests {
                 message_type: String::from(&PbftMessageType::ViewChange),
                 content: msg_bytes,
             };
-            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
+            node1
+                .on_peer_message(&msg, &mock_peer_id(peer))
+                .unwrap_or_else(handle_pbft_err);
         }
 
         assert!(node1.state.is_primary());
