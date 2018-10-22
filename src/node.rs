@@ -788,7 +788,7 @@ mod tests {
     use std::fs::{remove_file, File};
     use std::io::prelude::*;
 
-    const BLOCK_FILE: &str = "blocks.txt";
+    const BLOCK_FILE: &str = "target/blocks.txt";
 
     /// Mock service to roughly keep track of the blockchain
     pub struct MockService {
