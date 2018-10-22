@@ -32,7 +32,11 @@ extern crate log4rs;
 extern crate log4rs_syslog;
 extern crate protobuf;
 extern crate sawtooth_sdk;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde_json;
+extern crate serde_millis;
 
 use std::process;
 

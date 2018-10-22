@@ -36,7 +36,10 @@ fn main() {
         out_dir: &dest_path.to_str().unwrap(),
         input: &[proto_path.join("pbft_message.proto").to_str().unwrap()],
         includes: &[proto_path.to_str().unwrap()],
-        customize: Customize::default(),
+        customize: Customize {
+            serde_derive: Some(true),
+            ..Default::default()
+        },
     }).expect("Protoc Error");
 
     // Create mod.rs accordingly
