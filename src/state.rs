@@ -195,7 +195,7 @@ impl PbftState {
 
     /// Obtain the node ID (u64) from a serialized PeerId
     pub fn get_node_id_from_bytes(&self, peer_id: &[u8]) -> Result<u64, PbftError> {
-        let deser_id = PeerId::from(peer_id.to_vec());
+        let deser_id = peer_id.to_vec();
 
         if let Some(node_id) = self.peer_ids.iter().position(|ref info| info == &&deser_id) {
             Ok(node_id as u64)

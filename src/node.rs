@@ -265,9 +265,8 @@ impl PbftNode {
             self.state.switch_phase(PbftPhase::Checking);
             debug!("{}: Checking blocks", self.state);
             self.service
-                .check_blocks(vec![BlockId::from(
-                    pbft_message.get_block().clone().block_id,
-                )]).map_err(|_| PbftError::InternalError(String::from("Failed to check blocks")))?
+                .check_blocks(vec![pbft_message.get_block().clone().block_id])
+                .map_err(|_| PbftError::InternalError(String::from("Failed to check blocks")))?
         }
         Ok(())
     }
@@ -292,7 +291,7 @@ impl PbftNode {
             debug!(
                 "{}: Already committed block {:?}",
                 self.state,
-                BlockId::from(pbft_message.get_block().block_id.clone())
+                pbft_message.get_block().block_id
             );
             Ok(())
         }
@@ -434,7 +433,7 @@ impl PbftNode {
             debug!(
                 "{}: Not ready for block {}, pushing to backlog",
                 self.state,
-                &hex::encode(Vec::<u8>::from(block.block_id.clone()))[..6]
+                &hex::encode(block.block_id.clone())[..6]
             );
             self.msg_log.push_block_backlog(block.clone());
             return Ok(());
@@ -697,7 +696,7 @@ fn check_if_secondary(state: &PbftState) -> bool {
 
 fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &PbftMessage) -> bool {
     if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = state.working_block {
-        if block_id == &BlockId::from(pbft_message.get_block().get_block_id().to_vec())
+        if block_id == &pbft_message.get_block().get_block_id()
             && pbft_message.get_info().get_seq_num() == state.seq_num + 1
         {
             debug!("{}: Ignoring not ready and starting multicast", state);
@@ -706,7 +705,7 @@ fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &PbftMessage) -> boo
             debug!(
                 "{}: Not starting multicast; ({} != {} or {} != {} + 1)",
                 state,
-                &hex::encode(Vec::<u8>::from(block_id.clone()))[..6],
+                &hex::encode(block_id.clone())[..6],
                 &hex::encode(pbft_message.get_block().get_block_id())[..6],
                 pbft_message.get_info().get_seq_num(),
                 state.seq_num,
@@ -744,7 +743,7 @@ fn extract_multicast_hint(
 
 #[allow(ptr_arg)]
 fn verify_message_sender<'a, T: PbftGetInfo<'a>>(msg: &T, sender_id: &PeerId) -> bool {
-    let signer_id = PeerId::from(msg.get_msg_info().get_signer_id().to_vec());
+    let signer_id = msg.get_msg_info().get_signer_id().to_vec();
     &signer_id == sender_id
 }
 
@@ -764,8 +763,8 @@ fn make_msg_bytes(info: PbftMessageInfo, block: PbftBlock) -> Result<Vec<u8>, Pr
 // the block - this keeps blocks lighter weight)
 fn pbft_block_from_block(block: Block) -> PbftBlock {
     let mut pbft_block = PbftBlock::new();
-    pbft_block.set_block_id(Vec::<u8>::from(block.block_id));
-    pbft_block.set_signer_id(Vec::<u8>::from(block.signer_id));
+    pbft_block.set_block_id(block.block_id);
+    pbft_block.set_signer_id(block.signer_id);
     pbft_block.set_block_num(block.block_num);
     pbft_block.set_summary(block.summary);
     pbft_block

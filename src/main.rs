@@ -19,6 +19,8 @@
 //! algorithm](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/castro.html),
 //! modified for use with Hyperledger Sawtooth.
 
+#![allow(unknown_lints)]
+
 #[macro_use]
 extern crate clap;
 #[cfg(test)]

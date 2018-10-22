@@ -107,7 +107,7 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
 
     let peers: Vec<PeerId> = peers
         .into_iter()
-        .map(|s| PeerId::from(hex::decode(s).expect("PeerId is not valid hex")))
+        .map(|s| hex::decode(s).expect("PeerId is not valid hex"))
         .collect();
 
     config.peers = peers;
