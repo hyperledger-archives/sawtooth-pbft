@@ -26,6 +26,7 @@ RUN apt-get update \
     libzmq3-dev \
     openssl \
     pkg-config \
+    python3 \
     unzip \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
@@ -43,6 +44,7 @@ COPY . /project/sawtooth-pbft
 
 WORKDIR /project/sawtooth-pbft
 
+RUN sed -i -e s/version.*$/version\ =\ \"$(bin/get_version)\"/ Cargo.toml
 RUN /root/.cargo/bin/cargo deb
 
 # -------------=== pbft docker build ===-------------
