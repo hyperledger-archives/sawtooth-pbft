@@ -94,9 +94,10 @@ pipeline {
             }
         }
 
-        stage('Build deb') {
+        stage("Archive Build artifacts") {
             steps {
-                sh "docker-compose run --rm sawtooth-pbft bash -c \"cargo deb && cp target/debian/*.deb ./ && chown ${JENKINS_UID} ./*.deb\""
+                sh 'docker-compose -f docker-compose-installed.yaml build'
+                sh 'docker run --rm -v $(pwd)/build/debs:/build sawtooth-pbft-engine:${ISOLATION_ID} bash -c "cp /tmp/sawtooth-pbft-engine*.deb /build"'
             }
         }
     }
@@ -106,7 +107,7 @@ pipeline {
             sh 'docker-compose down'
         }
         success {
-            archiveArtifacts '*.deb'
+            archiveArtifacts 'build/debs/*.deb'
         }
     }
 }
