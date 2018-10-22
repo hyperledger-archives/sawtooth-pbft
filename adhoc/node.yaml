@@ -1,0 +1,138 @@
+# Copyright 2018 Intel Corporation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------------------------
+
+version: "3.6"
+
+# Validators across all compose files join this docker network for inter-node
+# communication
+networks:
+  validators:
+    external:
+      name: pbft_validators
+  rest_apis:
+    external:
+      name: pbft_rest_apis
+
+volumes:
+  pbft_shared_data:
+    external: true
+
+services:
+
+  validator:
+    image: sawtooth-validator
+    labels:
+      - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
+    command: "bash -c \"\
+      if [ ! -e /etc/sawtooth/keys/validator.pub ]; then sawadm keygen; fi && \
+      if [ ! -e /shared_data/validators/$$(hostname) ]; then \
+        cat /etc/sawtooth/keys/validator.pub > /shared_data/validators/$$(hostname); \
+      fi && \
+      echo \\\"-- /var/lib/sawtooth\\\" && ls /var/lib/sawtooth && \
+      echo \\\"-- /shared_data/validators \\\" && ls /shared_data/validators && \
+      if [ ${GENESIS:-0} != 0 -a ! -e /shared_data/genesis.batch ]; then \
+        echo \\\"Running Genesis\\\" && \
+        sawset genesis \
+          -k /shared_data/keys/settings.priv \
+          -o config-genesis.batch && \
+        sawset proposal create \
+          -k /shared_data/keys/settings.priv \
+          sawtooth.consensus.algorithm=pbft \
+          sawtooth.consensus.pbft.peers=\\['\\\"'$$(cd /shared_data/validators && paste $$(ls -1) -d , | sed s/,/\\\\\\\",\\\\\\\"/g)'\\\"'\\]
+          -o config.batch && \
+        sawadm genesis \
+          config-genesis.batch config.batch && \
+        cp /var/lib/sawtooth/genesis.batch /shared_data/genesis.batch && \
+        ls /var/lib/sawtooth; \
+      fi && \
+      export PEERS=$$(for host in $$(ls /shared_data/validators -1); do \
+            if [ $$host != $$(hostname) ]; then \
+              echo \\\"tcp://$$host:8800\\\"; \
+            fi; done | tr \\\"\n\\\" \\\",\\\" | sed s\\/,$$\\/\\\n\\/); \
+      echo \\\"-- PEERS \\\" && echo \\\"PEERS=$$PEERS\\\"; \
+      if [ \\\"$$PEERS\\\" = \\\"\\\" ]; then \
+        echo \\\"No peers to connect to...\\\";
+        sawtooth-validator -vv \
+            --endpoint tcp://$$(hostname):8800 \
+            --bind component:tcp://eth0:4004 \
+            --bind network:tcp://eth1:8800 \
+            --bind consensus:tcp://eth0:5050 \
+            --peering static \
+            --scheduler parallel; \
+      else \
+        echo \\\"Connecting to $$PEERS\\\";
+        sawtooth-validator -vv \
+            --endpoint tcp://$$(hostname):8800 \
+            --bind component:tcp://eth0:4004 \
+            --bind network:tcp://eth1:8800 \
+            --bind consensus:tcp://eth0:5050 \
+            --peering static \
+            --peers $$PEERS \
+            --scheduler parallel; \
+      fi \
+    \""
+    volumes:
+      - pbft_shared_data:/shared_data
+    networks:
+      default:
+      validators:
+    expose:
+      - 8800
+    stop_signal: SIGKILL
+
+  pbft:
+    image: sawtooth-pbft-engine-local
+    labels:
+      - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
+    build:
+      context: .
+      dockerfile: ../Dockerfile
+    volumes:
+      - ${SAWOOTH_PBFT:-..}:/project/sawtooth-pbft
+    working_dir: /project/sawtooth-pbft/
+    command: ./target/debug/sawtooth-pbft --connect tcp://validator:5050 -v
+
+  rest-api:
+    image: sawtooth-rest-api
+    labels:
+      - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
+    command: "bash -c \"
+      if [ ! -e /shared_data/rest_apis/$$(hostname) ]; then \
+        touch /shared_data/rest_apis/$$(hostname);
+      fi && \
+      sawtooth-rest-api --connect tcp://validator:4004 --bind $$(hostname):8008 \
+    \""
+    volumes:
+      - pbft_shared_data:/shared_data
+    networks:
+      default:
+      rest_apis:
+    expose:
+      - 8008
+    stop_signal: SIGKILL
+
+  intkey-tp-python:
+    image: sawtooth-intkey-tp-python
+    labels:
+      - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
+    command: intkey-tp-python -vv -C tcp://validator:4004
+    stop_signal: SIGKILL
+
+  settings-tp:
+    image: sawtooth-settings-tp
+    labels:
+      - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
+    command: settings-tp -C tcp://validator:4004 -v
+    stop_signal: SIGKILL

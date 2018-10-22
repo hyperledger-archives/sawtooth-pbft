@@ -102,19 +102,19 @@ transaction family
 
 - ``sawtooth.consensus.pbft.peers`` (required):
 
-  Map of the peers in a Sawtooth PBFT network; a JSON-formatted string of
-  ``{<public-key-1>:1, <public-key-2>:2, ..., <public-key-n>:n}`` mappings.
+  List of the peers in a Sawtooth PBFT network; a JSON-formatted string of
+  ``[<public-key-1>, <public-key-2>, ..., <public-key-n>]``.
   ``sawtooth.consensus.pbft.peers`` could look something like this in a
   four-node network:
 
   .. code-block:: console
 
-     \\{ \
-     '\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"':0, \
-     '\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"':1, \
-     '\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"':2, \
-     '\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"':3 \
-     \\}
+     \\[ \
+     '\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"', \
+     '\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"', \
+     '\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"', \
+     '\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"' \
+     \\]
 
 - | ``sawtooth.consensus.pbft.block_duration`` (optional, default 200 ms):
   | How often to try to publish a block
