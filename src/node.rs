@@ -80,6 +80,7 @@ impl PbftNode {
     /// This method handles all messages from other nodes. Such messages may include `PrePrepare`,
     /// `Prepare`, `Commit`, `Checkpoint`, or `ViewChange`. If a node receives a type of message
     /// before it is ready to do so, the message is pushed into a backlog queue.
+    #[allow(ptr_arg)]
     pub fn on_peer_message(
         &mut self,
         msg: &PeerMessage,
@@ -271,6 +272,7 @@ impl PbftNode {
         Ok(())
     }
 
+    #[allow(ptr_arg)]
     fn commit_block_if_committing(
         &mut self,
         msg: &PeerMessage,
@@ -315,6 +317,7 @@ impl PbftNode {
         }
     }
 
+    #[allow(ptr_arg)]
     fn check_if_checkpoint_started(&mut self, msg: &PeerMessage, sender_id: &PeerId) -> bool {
         // Not ready to receive checkpoint yet; only acceptable in NotStarted
         if self.state.phase != PbftPhase::NotStarted {
@@ -739,6 +742,7 @@ fn extract_multicast_hint(
     }
 }
 
+#[allow(ptr_arg)]
 fn verify_message_sender<'a, T: PbftGetInfo<'a>>(msg: &T, sender_id: &PeerId) -> bool {
     let signer_id = PeerId::from(msg.get_msg_info().get_signer_id().to_vec());
     &signer_id == sender_id
