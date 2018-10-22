@@ -21,6 +21,7 @@
 
 #![allow(unknown_lints)]
 
+extern crate atomicwrites;
 #[macro_use]
 extern crate clap;
 #[cfg(test)]
@@ -56,6 +57,7 @@ pub mod message_type;
 pub mod node;
 mod protos;
 pub mod state;
+pub mod storage;
 pub mod timing;
 
 fn main() {
