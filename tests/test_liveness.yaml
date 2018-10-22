@@ -29,7 +29,7 @@ services:
       context: .
       dockerfile: sawtooth-pbft-test.dockerfile
     volumes:
-      - ..:/project/sawtooth-pbft
+      - ..:/project/sawtooth-pbft:ro
     command: nose2-3
         -vv
         -s /project/sawtooth-pbft/tests
