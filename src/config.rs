@@ -51,6 +51,9 @@ pub struct PbftConfig {
 
     /// How large the PbftLog is allowed to get
     pub max_log_size: u64,
+
+    /// Where to store PbftState
+    pub storage: String,
 }
 
 impl PbftConfig {
@@ -62,6 +65,7 @@ impl PbftConfig {
             view_change_timeout: Duration::from_millis(4000),
             checkpoint_period: 100,
             max_log_size: 1000,
+            storage: "memory".into(),
         }
     }
 }
@@ -75,6 +79,7 @@ impl PbftConfig {
 /// + `sawtooth.consensus.pbft.view_change_timeout` (optional, default 4000 ms)
 /// + `sawtooth.consensus.pbft.message_timeout` (optional, default 100 blocks)
 /// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
+/// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
 ///
 /// # Panics
 /// + If the `sawtooth.consensus.pbft.peers` setting is not provided

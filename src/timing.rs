@@ -16,7 +16,7 @@
  */
 
 //! Timing-related structures
-
+use serde_millis;
 use std::time::{Duration, Instant};
 
 /// Encapsulates calling a function every so often
@@ -43,7 +43,7 @@ impl Ticker {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 enum TimeoutState {
     Active,
     Inactive,
@@ -52,10 +52,11 @@ enum TimeoutState {
 
 /// A timer that expires after a given duration
 /// Check back on this timer every so often to see if it's expired
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Timeout {
     state: TimeoutState,
     duration: Duration,
+    #[serde(with = "serde_millis")]
     start: Instant,
 }
 

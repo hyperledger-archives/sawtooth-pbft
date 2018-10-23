@@ -32,14 +32,14 @@ use timing::Timeout;
 
 // Possible roles for a node
 // Primary is in charge of making consensus decisions
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 enum PbftNodeRole {
     Primary,
     Secondary,
 }
 
 /// Phases of the PBFT algorithm, in `Normal` mode
-#[derive(Debug, PartialEq, PartialOrd, Clone)]
+#[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize)]
 pub enum PbftPhase {
     NotStarted,
     PrePreparing,
@@ -50,7 +50,7 @@ pub enum PbftPhase {
 }
 
 /// Modes that the PBFT algorithm can possibly be in
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum PbftMode {
     Normal,
     ViewChanging,
@@ -94,7 +94,7 @@ impl fmt::Display for PbftState {
 }
 
 /// Possible options for the current block
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum WorkingBlockOption {
     /// There is no working block
     NoWorkingBlock,
@@ -114,7 +114,7 @@ impl WorkingBlockOption {
 }
 
 /// Information about the PBFT algorithm's state
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PbftState {
     /// This node's ID
     pub id: u64,

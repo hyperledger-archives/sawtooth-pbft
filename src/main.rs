@@ -21,6 +21,7 @@
 
 #![allow(unknown_lints)]
 
+extern crate atomicwrites;
 #[macro_use]
 extern crate clap;
 #[cfg(test)]
@@ -32,7 +33,11 @@ extern crate log4rs;
 extern crate log4rs_syslog;
 extern crate protobuf;
 extern crate sawtooth_sdk;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde_json;
+extern crate serde_millis;
 
 use std::process;
 
@@ -52,6 +57,7 @@ pub mod message_type;
 pub mod node;
 mod protos;
 pub mod state;
+pub mod storage;
 pub mod timing;
 
 fn main() {
