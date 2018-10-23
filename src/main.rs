@@ -27,9 +27,9 @@ extern crate clap;
 extern crate crypto;
 #[macro_use]
 extern crate log;
+extern crate hex;
 extern crate log4rs;
 extern crate log4rs_syslog;
-extern crate hex;
 extern crate protobuf;
 extern crate sawtooth_sdk;
 extern crate serde_json;
@@ -95,10 +95,12 @@ fn main() {
 
     let (driver, _stop) = ZmqDriver::new();
 
-    driver.start(&args.endpoint, pbft_engine).unwrap_or_else(|err| {
-        error!("{}", err);
-        process::exit(1);
-    });
+    driver
+        .start(&args.endpoint, pbft_engine)
+        .unwrap_or_else(|err| {
+            error!("{}", err);
+            process::exit(1);
+        });
 }
 
 fn get_console_config(log_level: log::LevelFilter) -> Config {
@@ -125,8 +127,7 @@ fn parse_args() -> PbftCliArgs {
         (@arg verbose: -v --verbose +multiple
          "increase output verbosity")
         (@arg logconfig: -L --log_config +takes_value
-         "path to logging config file"))
-        .get_matches();
+         "path to logging config file")).get_matches();
 
     let log_config = matches.value_of("logconfig").map(|s| s.into());
 
