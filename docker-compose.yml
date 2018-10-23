@@ -17,12 +17,14 @@ version: "3.6"
 volumes:
   cargo-registry:
   cargo-git:
+  cargo-target:
 
 services:
   sawtooth-pbft:
     image: sawtooth-pbft:$ISOLATION_ID
     volumes:
       - .:/project/sawtooth-pbft
+      - cargo-target:/project/sawtooth-pbft/target
       - cargo-registry:/root/.cargo/registry
       - cargo-git:/root/.cargo/git
     build: .

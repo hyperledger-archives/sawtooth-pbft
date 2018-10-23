@@ -57,8 +57,9 @@ impl Engine for PbftEngine {
             .peers
             .iter()
             .position(|ref id| id == &&local_peer_info.peer_id)
-            .ok_or(Error::UnknownPeer("This node is not in the peers list, which is necessary".into()))?
-            as u64;
+            .ok_or_else(|| {
+                Error::UnknownPeer("This node is not in the peers list, which is necessary".into())
+            })? as u64;
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
         let mut backlog_ticker = timing::Ticker::new(config.message_timeout);
@@ -121,7 +122,9 @@ fn handle_update(
             node.start_view_change()?
         }
         Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id)?,
-        Ok(Update::PeerMessage(message, sender_id)) => node.on_peer_message(&message, &sender_id)?,
+        Ok(Update::PeerMessage(message, sender_id)) => {
+            node.on_peer_message(&message, &sender_id)?
+        }
         Ok(Update::Shutdown) => return Ok(false),
         Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
             error!("PBFT currently only supports static networks");

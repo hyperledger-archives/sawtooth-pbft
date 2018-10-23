@@ -34,6 +34,7 @@ use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 
 /// Take action based on a `PbftHint`
 /// Either push to backlog or add message to log, depending on which type of hint
+#[allow(ptr_arg)]
 pub fn action_from_hint(
     msg_log: &mut PbftLog,
     hint: &PbftHint,
@@ -187,6 +188,7 @@ fn set_current_working_block(state: &mut PbftState, pbft_message: &PbftMessage) 
 /// Once a `2f + 1` `Commit` messages are received, the primary node can commit the block to the
 /// chain. If the block in the message isn't the one that belongs on top of the current chain head,
 /// then the message gets pushed to the backlog.
+#[allow(ptr_arg)]
 pub fn commit(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
@@ -214,7 +216,7 @@ pub fn commit(
     info!(
         "{}: Committing block {:?}",
         state,
-        BlockId::from(pbft_message.get_block().block_id.clone())
+        pbft_message.get_block().block_id.clone()
     );
 
     commit_block_from_message(service, pbft_message)?;
@@ -245,7 +247,7 @@ fn check_if_block_already_seen(
         warn!(
             "{}: Not committing block {:?}",
             state,
-            BlockId::from(pbft_message.get_block().block_id.clone())
+            pbft_message.get_block().block_id
         );
         Err(PbftError::BlockMismatch(
             pbft_message.get_block().clone(),
@@ -256,6 +258,7 @@ fn check_if_block_already_seen(
     }
 }
 
+#[allow(ptr_arg)]
 fn check_if_commiting_with_current_chain_head(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
@@ -270,13 +273,13 @@ fn check_if_commiting_with_current_chain_head(
         .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
     let cur_block = get_block_by_id(
         &mut *service,
-        &BlockId::from(pbft_message.get_block().get_block_id().to_vec()),
+        &pbft_message.get_block().get_block_id().to_vec(),
     ).ok_or_else(|| PbftError::WrongNumBlocks)?;
     if cur_block.previous_id != head.block_id {
         warn!(
             "{}: Not committing block {:?} but pushing to backlog",
             state,
-            BlockId::from(pbft_message.get_block().block_id.clone())
+            pbft_message.get_block().block_id.clone()
         );
         let msg = PeerMessage {
             message_type: String::from(pbft_message.get_info().get_msg_type()),
@@ -297,7 +300,7 @@ fn commit_block_from_message(
     pbft_message: &PbftMessage,
 ) -> Result<(), PbftError> {
     service
-        .commit_block(BlockId::from(pbft_message.get_block().block_id.clone()))
+        .commit_block(pbft_message.get_block().block_id.clone())
         .map_err(|_| PbftError::InternalError(String::from("Failed to commit block")))
 }
 
@@ -423,7 +426,7 @@ fn become_primary(state: &mut PbftState, service: &mut Service) {
             &hex::encode(working_block.get_block_id())
         );
         service
-            .ignore_block(BlockId::from(working_block.get_block_id().to_vec()))
+            .ignore_block(working_block.get_block_id().to_vec())
             .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
     } else if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = state.working_block {
         info!("{}: Ignoring block {}", state, &hex::encode(block_id));
@@ -453,6 +456,7 @@ fn set_normal_mode(state: &mut PbftState) {
     );
 }
 
+#[allow(ptr_arg)]
 // There should only be one block with a matching ID
 fn get_block_by_id(service: &mut Service, block_id: &BlockId) -> Option<Block> {
     let blocks: Vec<Block> = service
@@ -479,7 +483,7 @@ pub fn make_msg_info(
     info.set_msg_type(String::from(msg_type));
     info.set_view(view);
     info.set_seq_num(seq_num);
-    info.set_signer_id(Vec::<u8>::from(signer_id));
+    info.set_signer_id(signer_id);
     info
 }
 
@@ -487,8 +491,8 @@ pub fn make_msg_info(
 /// the block - this keeps blocks lighter weight)
 pub fn pbft_block_from_block(block: Block) -> PbftBlock {
     let mut pbft_block = PbftBlock::new();
-    pbft_block.set_block_id(Vec::<u8>::from(block.block_id));
-    pbft_block.set_signer_id(Vec::<u8>::from(block.signer_id));
+    pbft_block.set_block_id(block.block_id);
+    pbft_block.set_signer_id(block.signer_id);
     pbft_block.set_block_num(block.block_num);
     pbft_block.set_summary(block.summary);
     pbft_block

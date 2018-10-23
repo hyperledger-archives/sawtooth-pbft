@@ -80,10 +80,11 @@ impl PbftNode {
     /// This method handles all messages from other nodes. Such messages may include `PrePrepare`,
     /// `Prepare`, `Commit`, `Checkpoint`, or `ViewChange`. If a node receives a type of message
     /// before it is ready to do so, the message is pushed into a backlog queue.
+    #[allow(ptr_arg)]
     pub fn on_peer_message(
         &mut self,
         msg: &PeerMessage,
-        sender_id: &PeerId
+        sender_id: &PeerId,
     ) -> Result<(), PbftError> {
         let msg_type = PbftMessageType::from(msg.message_type.as_str());
 
@@ -99,7 +100,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         pbft_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 if !ignore_hint_pre_prepare(&self.state, &pbft_message) {
@@ -130,7 +131,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         pbft_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 handlers::action_from_hint(
@@ -156,7 +157,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         pbft_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 handlers::action_from_hint(
@@ -182,7 +183,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         pbft_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 if self.check_if_stale_checkpoint(&pbft_message)? {
@@ -211,7 +212,7 @@ impl PbftNode {
                         "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
                         vc_message, sender_id
                     );
-                    return Ok(())
+                    return Ok(());
                 }
 
                 debug!(
@@ -264,13 +265,13 @@ impl PbftNode {
             self.state.switch_phase(PbftPhase::Checking);
             debug!("{}: Checking blocks", self.state);
             self.service
-                .check_blocks(vec![BlockId::from(
-                    pbft_message.get_block().clone().block_id,
-                )]).map_err(|_| PbftError::InternalError(String::from("Failed to check blocks")))?
+                .check_blocks(vec![pbft_message.get_block().clone().block_id])
+                .map_err(|_| PbftError::InternalError(String::from("Failed to check blocks")))?
         }
         Ok(())
     }
 
+    #[allow(ptr_arg)]
     fn commit_block_if_committing(
         &mut self,
         msg: &PeerMessage,
@@ -290,7 +291,7 @@ impl PbftNode {
             debug!(
                 "{}: Already committed block {:?}",
                 self.state,
-                BlockId::from(pbft_message.get_block().block_id.clone())
+                pbft_message.get_block().block_id
             );
             Ok(())
         }
@@ -315,13 +316,11 @@ impl PbftNode {
         }
     }
 
+    #[allow(ptr_arg)]
     fn check_if_checkpoint_started(&mut self, msg: &PeerMessage, sender_id: &PeerId) -> bool {
         // Not ready to receive checkpoint yet; only acceptable in NotStarted
         if self.state.phase != PbftPhase::NotStarted {
-            self.msg_log.push_backlog(
-                msg.clone(),
-                sender_id.clone()
-            );
+            self.msg_log.push_backlog(msg.clone(), sender_id.clone());
             debug!(
                 "{}: Not in NotStarted; not handling checkpoint yet",
                 self.state
@@ -434,7 +433,7 @@ impl PbftNode {
             debug!(
                 "{}: Not ready for block {}, pushing to backlog",
                 self.state,
-                &hex::encode(Vec::<u8>::from(block.block_id.clone()))[..6]
+                &hex::encode(block.block_id.clone())[..6]
             );
             self.msg_log.push_block_backlog(block.clone());
             return Ok(());
@@ -697,7 +696,7 @@ fn check_if_secondary(state: &PbftState) -> bool {
 
 fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &PbftMessage) -> bool {
     if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = state.working_block {
-        if block_id == &BlockId::from(pbft_message.get_block().get_block_id().to_vec())
+        if block_id == &pbft_message.get_block().get_block_id()
             && pbft_message.get_info().get_seq_num() == state.seq_num + 1
         {
             debug!("{}: Ignoring not ready and starting multicast", state);
@@ -706,7 +705,7 @@ fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &PbftMessage) -> boo
             debug!(
                 "{}: Not starting multicast; ({} != {} or {} != {} + 1)",
                 state,
-                &hex::encode(Vec::<u8>::from(block_id.clone()))[..6],
+                &hex::encode(block_id.clone())[..6],
                 &hex::encode(pbft_message.get_block().get_block_id())[..6],
                 pbft_message.get_info().get_seq_num(),
                 state.seq_num,
@@ -742,8 +741,9 @@ fn extract_multicast_hint(
     }
 }
 
+#[allow(ptr_arg)]
 fn verify_message_sender<'a, T: PbftGetInfo<'a>>(msg: &T, sender_id: &PeerId) -> bool {
-    let signer_id = PeerId::from(msg.get_msg_info().get_signer_id().to_vec());
+    let signer_id = msg.get_msg_info().get_signer_id().to_vec();
     &signer_id == sender_id
 }
 
@@ -763,8 +763,8 @@ fn make_msg_bytes(info: PbftMessageInfo, block: PbftBlock) -> Result<Vec<u8>, Pr
 // the block - this keeps blocks lighter weight)
 fn pbft_block_from_block(block: Block) -> PbftBlock {
     let mut pbft_block = PbftBlock::new();
-    pbft_block.set_block_id(Vec::<u8>::from(block.block_id));
-    pbft_block.set_signer_id(Vec::<u8>::from(block.signer_id));
+    pbft_block.set_block_id(block.block_id);
+    pbft_block.set_signer_id(block.signer_id);
     pbft_block.set_block_num(block.block_num);
     pbft_block.set_summary(block.summary);
     pbft_block
@@ -788,7 +788,7 @@ mod tests {
     use std::fs::{remove_file, File};
     use std::io::prelude::*;
 
-    const BLOCK_FILE: &str = "blocks.txt";
+    const BLOCK_FILE: &str = "target/blocks.txt";
 
     /// Mock service to roughly keep track of the blockchain
     pub struct MockService {
@@ -1026,7 +1026,10 @@ mod tests {
             message_type: String::from(&PbftMessageType::PrePrepare),
             content: b"this message will result in an error".to_vec(),
         };
-        assert!(node.on_peer_message(&garbage_msg, &mock_peer_id(0)).is_err());
+        assert!(
+            node.on_peer_message(&garbage_msg, &mock_peer_id(0))
+                .is_err()
+        );
 
         // Make sure BlockNew is in the log
         let mut node1 = mock_node(1);
@@ -1037,7 +1040,9 @@ mod tests {
 
         // Receive a PrePrepare
         let msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, block.clone(), 0);
-        node1.on_peer_message(&msg, &mock_peer_id(0)).unwrap_or_else(handle_pbft_err);
+        node1
+            .on_peer_message(&msg, &mock_peer_id(0))
+            .unwrap_or_else(handle_pbft_err);
 
         assert_eq!(node1.state.phase, PbftPhase::Preparing);
         assert_eq!(node1.state.seq_num, 1);
@@ -1051,7 +1056,9 @@ mod tests {
         for peer in 0..3 {
             assert_eq!(node1.state.phase, PbftPhase::Preparing);
             let msg = mock_msg(&PbftMessageType::Prepare, 0, 1, block.clone(), peer);
-            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
+            node1
+                .on_peer_message(&msg, &mock_peer_id(peer))
+                .unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(node1.state.phase, PbftPhase::Checking);
 
@@ -1062,7 +1069,9 @@ mod tests {
         for peer in 0..3 {
             assert_eq!(node1.state.phase, PbftPhase::Committing);
             let msg = mock_msg(&PbftMessageType::Commit, 0, 1, block.clone(), peer);
-            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
+            node1
+                .on_peer_message(&msg, &mock_peer_id(peer))
+                .unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(node1.state.phase, PbftPhase::Finished);
 
@@ -1101,7 +1110,9 @@ mod tests {
         // Receive 3 `Checkpoint` messages
         for peer in 0..3 {
             let msg = mock_msg(&PbftMessageType::Checkpoint, 0, 10, block.clone(), peer);
-            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
+            node1
+                .on_peer_message(&msg, &mock_peer_id(peer))
+                .unwrap_or_else(handle_pbft_err);
         }
 
         assert_eq!(node1.state.mode, PbftMode::Normal);
@@ -1135,7 +1146,9 @@ mod tests {
                 message_type: String::from(&PbftMessageType::ViewChange),
                 content: msg_bytes,
             };
-            node1.on_peer_message(&msg, &mock_peer_id(peer)).unwrap_or_else(handle_pbft_err);
+            node1
+                .on_peer_message(&msg, &mock_peer_id(peer))
+                .unwrap_or_else(handle_pbft_err);
         }
 
         assert!(node1.state.is_primary());
