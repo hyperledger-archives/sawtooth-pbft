@@ -13,7 +13,9 @@
 # limitations under the License.
 # ------------------------------------------------------------------------------
 
-FROM ubuntu:xenial
+# Install dependencies without building. This can be useful for local development,
+# as you can mount a caching volume for dependencies and build at runtime.
+FROM ubuntu:xenial as pbft-deps
 
 RUN apt-get update \
  && apt-get install -y -q --allow-downgrades \
@@ -43,7 +45,24 @@ RUN curl https://sh.rustup.rs -sSf > /usr/bin/rustup-init \
  && rustup component add clippy-preview \
  && cargo install cargo-deb
 
-
 WORKDIR /project/sawtooth-pbft
 
 CMD cargo build
+
+# Build the codebase and produce a deb package
+FROM pbft-deps as pbft-build
+
+COPY . /project/sawtooth-pbft/
+
+RUN cargo deb
+
+# Clean image with only runtime dependencies and the packged deb installed
+FROM ubuntu:xenial as pbft-install
+
+COPY --from=pbft-build /project/sawtooth-pbft/target/debian/sawtooth*.deb /tmp
+
+RUN apt-get update \
+ && dpkg -i /tmp/sawtooth*.deb || true \
+ && apt-get -f -y install
+
+CMD sawtooth-pbft
