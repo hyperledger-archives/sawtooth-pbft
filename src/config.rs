@@ -17,17 +17,15 @@
 
 //! Initial configuration for a PBFT node
 
-use hex;
-use serde_json;
-
 use std::collections::HashMap;
-
 use std::time::Duration;
 
+use hex;
 use sawtooth_sdk::consensus::{
     engine::{BlockId, PeerId},
     service::Service,
 };
+use serde_json;
 
 /// Contains the initial configuration loaded from on-chain settings, if present, or defaults in
 /// their absence.

@@ -20,11 +20,13 @@
 //! Useful when a Storage impl is required, but you don't actually need to
 //! persist the wrapped object.
 
-use super::{Storage, StorageReadGuard, StorageWriteGuard};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
+
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use super::{Storage, StorageReadGuard, StorageWriteGuard};
 
 /// Memory-backed read guard
 #[derive(Debug)]

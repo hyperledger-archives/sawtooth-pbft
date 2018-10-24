@@ -21,14 +21,12 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
 use sawtooth_sdk::consensus::{engine::*, service::Service};
 
-use node::PbftNode;
-
 use config;
-use timing;
-
 use error::PbftError;
+use node::PbftNode;
 use state::PbftState;
 use storage::get_storage;
+use timing;
 
 #[derive(Default)]
 pub struct PbftEngine {}

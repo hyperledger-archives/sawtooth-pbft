@@ -17,15 +17,17 @@
 
 //! Disk-backed persistence wrapper
 
-use super::{Storage, StorageReadGuard, StorageWriteGuard};
-use atomicwrites::{AllowOverwrite, AtomicFile};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use serde_json::{from_str, to_string};
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::ops::{Deref, DerefMut};
+
+use atomicwrites::{AllowOverwrite, AtomicFile};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use serde_json::{from_str, to_string};
+
+use super::{Storage, StorageReadGuard, StorageWriteGuard};
 
 /// A disk-based read guard
 pub struct DiskStorageReadGuard<'a, T: Serialize + DeserializeOwned + 'a> {

@@ -17,19 +17,17 @@
 
 //! Handlers for individual message types
 
-use hex;
-
 use std::convert::From;
 use std::error::Error;
 
+use hex;
 use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId};
 use sawtooth_sdk::consensus::service::Service;
-
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 use error::PbftError;
 use message_log::PbftLog;
 use message_type::{PbftHint, PbftMessageType};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 use state::{PbftPhase, PbftState, WorkingBlockOption};
 
 /// Handle a `PrePrepare` message
