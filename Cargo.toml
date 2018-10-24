@@ -18,6 +18,9 @@ name = "sawtooth-pbft"
 version = "0.1.0"
 authors = ["Bitwise IO, Inc"]
 description = "PBFT consensus algorithm for Hyperledger Sawtooth"
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/hyperledger/sawtooth-pbft"
 
 [package.metadata.deb]
 maintainer = "sawtooth"
@@ -28,6 +31,9 @@ assets = [
     ["target/release/sawtooth-pbft", "/usr/bin/sawtooth-pbft", "755"]
 ]
 maintainer-scripts = "packaging/ubuntu"
+extended-description = """\
+An implementation of the Practical Byzantine Fault Tolerant (PBFT) consensus \
+algorithm for Hyperledger Sawtooth."""
 
 [features]
 default = ["with-serde"]
