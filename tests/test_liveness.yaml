@@ -174,6 +174,7 @@ services:
     build:
       context: .
       dockerfile: ../Dockerfile
+      target: pbft-deps
     volumes:
       - ..:/project/sawtooth-pbft
       - cargo-registry:/root/.cargo/registry
@@ -188,6 +189,7 @@ services:
     build:
       context: .
       dockerfile: ../Dockerfile
+      target: pbft-deps
     volumes:
       - ..:/project/sawtooth-pbft
       - cargo-registry:/root/.cargo/registry
@@ -202,6 +204,7 @@ services:
     build:
       context: .
       dockerfile: ../Dockerfile
+      target: pbft-deps
     volumes:
       - ..:/project/sawtooth-pbft
       - cargo-registry:/root/.cargo/registry
@@ -216,6 +219,7 @@ services:
     build:
       context: .
       dockerfile: ../Dockerfile
+      target: pbft-deps
     volumes:
       - ..:/project/sawtooth-pbft
       - cargo-registry:/root/.cargo/registry
