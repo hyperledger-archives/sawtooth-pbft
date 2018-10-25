@@ -73,6 +73,8 @@ impl Engine for PbftEngine {
 
         debug!("Starting state: {:#?}", **pbft_state.read());
 
+        node.start_idle_timeout(&mut pbft_state.write());
+
         // Event loop. Keep going until we receive a shutdown message.
         loop {
             let incoming_message = updates.recv_timeout(config.message_timeout);
@@ -90,9 +92,15 @@ impl Engine for PbftEngine {
                     error!("{}", e);
                 }
 
-                // Every so often, check to see if timeout has expired; initiate ViewChange if necessary
-                if node.check_timeout_expired(state) {
-                    handle_pbft_result(node.start_view_change(state));
+                // Every so often, check to see if commit timeout has expired; initiate ViewChange
+                // if necessary
+                if node.check_commit_timeout_expired(state) {
+                    handle_pbft_result(node.propose_view_change(state));
+                }
+                // Every so often, check to see if idle timeout has expired; initiate ViewChange if
+                // necessary
+                if node.check_idle_timeout_expired(state) {
+                    handle_pbft_result(node.propose_view_change(state));
                 }
             });
 
@@ -123,7 +131,7 @@ fn handle_update(
         Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id, state)?,
         Ok(Update::BlockInvalid(_)) => {
             warn!("{}: BlockInvalid received, starting view change", state);
-            node.start_view_change(state)?
+            node.propose_view_change(state)?
         }
         Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state)?,
         Ok(Update::PeerMessage(message, sender_id)) => {

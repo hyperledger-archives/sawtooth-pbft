@@ -44,7 +44,14 @@ pub struct PbftConfig {
 
     /// How long to wait to initiate a ViewChange if we suspect the primary's faulty
     /// Should be longer than block_duration
-    pub view_change_timeout: Duration,
+    pub commit_timeout: Duration,
+
+    /// How long to wait to initiate a ViewChange between a block being committed and a new block
+    /// being proposed.
+    pub idle_timeout: Duration,
+
+    /// How many blocks to commit before forcing a view change
+    pub forced_view_change_period: u64,
 
     /// How many requests in between each checkpoint
     pub checkpoint_period: u64,
@@ -62,7 +69,9 @@ impl PbftConfig {
             peers: Vec::new(),
             block_duration: Duration::from_millis(200),
             message_timeout: Duration::from_millis(10),
-            view_change_timeout: Duration::from_millis(4000),
+            commit_timeout: Duration::from_millis(4000),
+            idle_timeout: Duration::from_millis(30_000),
+            forced_view_change_period: 30,
             checkpoint_period: 100,
             max_log_size: 1000,
             storage: "memory".into(),
@@ -76,7 +85,9 @@ impl PbftConfig {
 /// + `sawtooth.consensus.pbft.peers` (required)
 /// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
 /// + `sawtooth.consensus.pbft.checkpoint_period` (optional, default 10 ms)
-/// + `sawtooth.consensus.pbft.view_change_timeout` (optional, default 4000 ms)
+/// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 4s)
+/// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30s)
+/// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
 /// + `sawtooth.consensus.pbft.message_timeout` (optional, default 100 blocks)
 /// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
 /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
@@ -95,7 +106,9 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
                 String::from("sawtooth.consensus.pbft.peers"),
                 String::from("sawtooth.consensus.pbft.block_duration"),
                 String::from("sawtooth.consensus.pbft.checkpoint_period"),
-                String::from("sawtooth.consensus.pbft.view_change_timeout"),
+                String::from("sawtooth.consensus.pbft.commit_timeout"),
+                String::from("sawtooth.consensus.pbft.idle_timeout"),
+                String::from("sawtooth.consensus.pbft.forced_view_change_period"),
                 String::from("sawtooth.consensus.pbft.message_timeout"),
                 String::from("sawtooth.consensus.pbft.max_log_size"),
             ],
@@ -130,16 +143,26 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
     );
     merge_millis_setting_if_set(
         &settings,
-        &mut config.view_change_timeout,
-        "sawtooth.consensus.pbft.view_change_timeout",
+        &mut config.commit_timeout,
+        "sawtooth.consensus.pbft.commit_timeout",
+    );
+    merge_millis_setting_if_set(
+        &settings,
+        &mut config.idle_timeout,
+        "sawtooth.consensus.pbft.idle_timeout",
     );
 
-    // Check to make sure block_duration < view_change_timeout
-    if config.block_duration >= config.view_change_timeout {
+    // Check to make sure block_duration < commit_timeout
+    if config.block_duration >= config.commit_timeout {
         panic!("Block duration must be less than the view change timeout");
     }
 
     // Get various integer constants
+    merge_setting_if_set(
+        &settings,
+        &mut config.checkpoint_period,
+        "sawtooth.consensus.pbft.forced_view_change_period",
+    );
     merge_setting_if_set(
         &settings,
         &mut config.checkpoint_period,

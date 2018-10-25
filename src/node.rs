@@ -218,7 +218,7 @@ impl PbftNode {
 
                 self.msg_log.add_view_change(vc_message.clone());
 
-                if self.start_view_change_if_enough_messages(&vc_message, state)? {
+                if self.propose_view_change_if_enough_messages(&vc_message, state)? {
                     return Ok(());
                 }
 
@@ -368,7 +368,7 @@ impl PbftNode {
         Ok(())
     }
 
-    fn start_view_change_if_enough_messages(
+    fn propose_view_change_if_enough_messages(
         &mut self,
         vc_message: &PbftViewChange,
         state: &mut PbftState,
@@ -383,7 +383,7 @@ impl PbftNode {
                 && vc_message.get_info().get_view() > state.view
             {
                 warn!("{}: Starting ViewChange from a ViewChange message", state);
-                self.start_view_change(state)?;
+                self.propose_view_change(state)?;
                 Ok(false)
             } else {
                 Ok(true)
@@ -441,7 +441,8 @@ impl PbftNode {
 
         self.msg_log.add_message(msg);
         state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id);
-        state.timeout.start();
+        state.idle_timeout.stop();
+        state.commit_timeout.start();
 
         if state.is_primary() {
             let s = state.seq_num;
@@ -476,6 +477,11 @@ impl PbftNode {
 
             state.switch_phase(PbftPhase::NotStarted);
 
+            // Start a view change if we need to force one for fairness
+            if state.at_forced_view_change() {
+                self.force_view_change(state);
+            }
+
             // Start a checkpoint in NotStarted, if we're at one
             if self.msg_log.at_checkpoint() {
                 self.start_checkpoint(state)?;
@@ -485,7 +491,8 @@ impl PbftNode {
         }
 
         // The primary processessed this block in a timely manner, so stop the timeout.
-        state.timeout.stop();
+        state.commit_timeout.stop();
+        state.idle_timeout.start();
 
         Ok(())
     }
@@ -536,7 +543,7 @@ impl PbftNode {
         if state.is_primary() && state.phase == PbftPhase::NotStarted {
             debug!("{}: Summarizing block", state);
             if let Err(e) = self.service.summarize_block() {
-                info!(
+                debug!(
                     "{}: Couldn't summarize, so not finalizing: {}",
                     state,
                     e.description().to_string()
@@ -558,8 +565,17 @@ impl PbftNode {
     }
 
     /// Check to see if the view change timeout has expired
-    pub fn check_timeout_expired(&mut self, state: &mut PbftState) -> bool {
-        state.timeout.check_expired()
+    pub fn check_commit_timeout_expired(&mut self, state: &mut PbftState) -> bool {
+        state.commit_timeout.check_expired()
+    }
+
+    /// Check to see if the idle timeout has expired
+    pub fn check_idle_timeout_expired(&mut self, state: &mut PbftState) -> bool {
+        state.idle_timeout.check_expired()
+    }
+
+    pub fn start_idle_timeout(&self, state: &mut PbftState) {
+        state.idle_timeout.start();
     }
 
     /// Start the checkpoint process
@@ -598,10 +614,15 @@ impl PbftNode {
         peer_res
     }
 
+    pub fn force_view_change(&mut self, state: &mut PbftState) {
+        info!("{}: Forcing view change", state);
+        handlers::force_view_change(state, &mut *self.service)
+    }
+
     /// Initiate a view change (this node suspects that the primary is faulty)
     /// Nodes drop everything when they're doing a view change - will not process any peer messages
     /// other than `ViewChanges` until the view change is complete.
-    pub fn start_view_change(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
+    pub fn propose_view_change(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
         if state.mode == PbftMode::ViewChanging {
             return Ok(());
         }
@@ -1149,7 +1170,7 @@ mod tests {
         // Receive 3 `ViewChange` messages
         for peer in 0..3 {
             // It takes f + 1 `ViewChange` messages to trigger a view change, if it wasn't started
-            // by `start_view_change()`
+            // by `propose_view_change()`
             if peer < 2 {
                 assert_eq!(state1.mode, PbftMode::Normal);
             } else {
@@ -1176,14 +1197,14 @@ mod tests {
 
     /// Make sure that view changes start correctly
     #[test]
-    fn start_view_change() {
+    fn propose_view_change() {
         let mut node1 = mock_node(1);
         let cfg = mock_config(4);
         let mut state1 = PbftState::new(1, &cfg);
         assert_eq!(state1.mode, PbftMode::Normal);
 
         node1
-            .start_view_change(&mut state1)
+            .propose_view_change(&mut state1)
             .unwrap_or_else(handle_pbft_err);
 
         assert_eq!(state1.mode, PbftMode::ViewChanging);
