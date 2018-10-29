@@ -262,6 +262,19 @@ impl PbftState {
     pub fn at_forced_view_change(&self) -> bool {
         self.seq_num % self.forced_view_change_period == 0
     }
+
+    /// Discard the current working block, and reset phase/mode
+    ///
+    /// Used after a view change has occured
+    pub fn discard_current_block(&mut self) {
+        warn!("PbftState::reset: {}", self);
+
+        self.working_block = WorkingBlockOption::NoWorkingBlock;
+        self.phase = PbftPhase::NotStarted;
+        self.mode = PbftMode::Normal;
+        self.commit_timeout.stop();
+        self.idle_timeout.start();
+    }
 }
 
 #[cfg(test)]

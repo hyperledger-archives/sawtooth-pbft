@@ -30,7 +30,7 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChan
 use error::PbftError;
 use message_log::PbftLog;
 use message_type::{PbftHint, PbftMessageType};
-use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
+use state::{PbftPhase, PbftState, WorkingBlockOption};
 
 /// Take action based on a `PbftHint`
 /// Either push to backlog or add message to log, depending on which type of hint
@@ -391,7 +391,7 @@ pub fn view_change(
         become_secondary(state)
     }
 
-    set_normal_mode(state);
+    state.discard_current_block();
 
     Ok(())
 }
@@ -407,7 +407,7 @@ pub fn force_view_change(state: &mut PbftState, service: &mut Service) {
         become_secondary(state)
     }
 
-    set_normal_mode(state);
+    state.discard_current_block();
 }
 
 fn check_received_enough_view_changes(
@@ -461,18 +461,6 @@ fn become_primary(state: &mut PbftState, service: &mut Service) {
 fn become_secondary(state: &mut PbftState) {
     warn!("{}: I'm now a secondary", state);
     state.downgrade_role();
-}
-
-fn set_normal_mode(state: &mut PbftState) {
-    state.working_block = WorkingBlockOption::NoWorkingBlock;
-    state.phase = PbftPhase::NotStarted;
-    state.mode = PbftMode::Normal;
-    state.commit_timeout.stop();
-    state.idle_timeout.start();
-    warn!(
-        "{}: Entered normal mode in new view {} and stopped timeout",
-        state, state.view
-    );
 }
 
 #[allow(ptr_arg)]
