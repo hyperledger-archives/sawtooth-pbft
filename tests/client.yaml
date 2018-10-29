@@ -145,7 +145,7 @@ services:
     volumes:
       - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-0:5050 -v
+    command: ./target/debug/pbft-engine --connect tcp://validator-0:5050 -v
     stop_signal: SIGKILL
 
   pbft-1:
@@ -156,7 +156,7 @@ services:
     volumes:
       - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-1:5050 -v
+    command: ./target/debug/pbft-engine --connect tcp://validator-1:5050 -v
     stop_signal: SIGKILL
 
   pbft-2:
@@ -167,7 +167,7 @@ services:
     volumes:
       - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-2:5050 -v
+    command: ./target/debug/pbft-engine --connect tcp://validator-2:5050 -v
     stop_signal: SIGKILL
 
   pbft-3:
@@ -178,7 +178,7 @@ services:
     volumes:
       - ..:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/sawtooth-pbft --connect tcp://validator-3:5050 -v
+    command: ./target/debug/pbft-engine --connect tcp://validator-3:5050 -v
     stop_signal: SIGKILL
 
 

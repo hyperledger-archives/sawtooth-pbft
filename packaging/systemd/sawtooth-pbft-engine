@@ -13,4 +13,4 @@
 # limitations under the License.
 # ------------------------------------------------------------------------------
 
-#SAWTOOTH_PBFT_ARGS=--v --connect tcp://localhost:5050
+#SAWTOOTH_PBFT_ENGINE_ARGS=--v --connect tcp://localhost:5050

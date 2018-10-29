@@ -19,7 +19,7 @@
 #
 # Build:
 #   $ cd sawtooth-pbft/ci
-#   $ docker build . -f sawtooth-pbft -t sawtooth-pbft-engine
+#   $ docker build . -f sawtooth-pbft-engine -t sawtooth-pbft-engine
 #
 # Run:
 #   $ cd sawtooth-pbft
@@ -34,9 +34,9 @@ RUN echo "deb [arch=amd64] http://repo.sawtooth.me/ubuntu/bumper/stable xenial u
  || apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 8AA7AF1F1091A5FD) \
  && apt-get update \
  && apt-get install -y -q \
-    sawtooth-pbft \
+    sawtooth-pbft-engine \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
 
-CMD ["sawtooth-pbft", "-C", "tcp://validator:5050"]
+CMD ["pbft-engine", "-C", "tcp://validator:5050"]
