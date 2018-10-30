@@ -32,29 +32,6 @@ use message_log::PbftLog;
 use message_type::{PbftHint, PbftMessageType};
 use state::{PbftPhase, PbftState, WorkingBlockOption};
 
-/// Take action based on a `PbftHint`
-/// Either push to backlog or add message to log, depending on which type of hint
-#[allow(ptr_arg)]
-pub fn action_from_hint(
-    msg_log: &mut PbftLog,
-    hint: &PbftHint,
-    pbft_message: &PbftMessage,
-    msg: Vec<u8>,
-    sender_id: &PeerId,
-) -> Result<(), PbftError> {
-    match hint {
-        PbftHint::FutureMessage => {
-            msg_log.push_backlog(msg, sender_id.clone());
-            Err(PbftError::NotReadyForMessage)
-        }
-        PbftHint::PastMessage => {
-            msg_log.add_message(pbft_message.clone());
-            Err(PbftError::NotReadyForMessage)
-        }
-        PbftHint::PresentMessage => Ok(()),
-    }
-}
-
 /// Handle a `PrePrepare` message
 /// A `PrePrepare` message with this view and sequence number must not already exist in the log. If
 /// this node is a primary, make sure there's a corresponding BlockNew message. If this node is a

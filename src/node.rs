@@ -109,10 +109,9 @@ impl PbftNode {
                 }
 
                 if !ignore_hint_pre_prepare(state, &pbft_message) {
-                    handlers::action_from_hint(
-                        &mut self.msg_log,
-                        &multicast_hint,
+                    self.msg_log.add_message_with_hint(
                         &pbft_message,
+                        &multicast_hint,
                         msg.to_vec(),
                         sender_id,
                     )?;
@@ -139,10 +138,9 @@ impl PbftNode {
                     return Ok(());
                 }
 
-                handlers::action_from_hint(
-                    &mut self.msg_log,
-                    &multicast_hint,
+                self.msg_log.add_message_with_hint(
                     &pbft_message,
+                    &multicast_hint,
                     msg.to_vec(),
                     sender_id,
                 )?;
@@ -165,10 +163,9 @@ impl PbftNode {
                     return Ok(());
                 }
 
-                handlers::action_from_hint(
-                    &mut self.msg_log,
-                    &multicast_hint,
+                self.msg_log.add_message_with_hint(
                     &pbft_message,
+                    &multicast_hint,
                     msg.to_vec(),
                     sender_id,
                 )?;
