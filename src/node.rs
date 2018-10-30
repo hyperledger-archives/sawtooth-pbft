@@ -175,7 +175,7 @@ impl PbftNode {
 
                 self.msg_log.add_message(pbft_message.clone());
 
-                self.msg_log.committed(&pbft_message, state.f)?;
+                self.msg_log.check_committable(&pbft_message, state.f)?;
 
                 self.commit_block_if_committing(msg, &pbft_message, &sender_id, state)?;
             }
