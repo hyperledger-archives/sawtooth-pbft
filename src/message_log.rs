@@ -232,9 +232,9 @@ impl PbftLog {
     }
 
     /// Check an incoming message against its counterparts in the message log
-    pub fn check_msg_against_log<'a, T: PbftGetInfo<'a>>(
+    pub fn check_msg_against_log<T: PbftGetInfo>(
         &self,
-        message: &'a T,
+        message: &T,
         check_match: bool,
         num_cutoff: u64,
     ) -> Result<(), PbftError> {

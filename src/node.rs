@@ -778,7 +778,7 @@ fn extract_multicast_hint(
 }
 
 #[allow(ptr_arg)]
-fn verify_message_sender<'a, T: PbftGetInfo<'a>>(msg: &T, sender_id: &PeerId) -> bool {
+fn verify_message_sender<T: PbftGetInfo>(msg: &T, sender_id: &PeerId) -> bool {
     let signer_id = msg.get_msg_info().get_signer_id().to_vec();
     &signer_id == sender_id
 }
