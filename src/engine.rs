@@ -135,7 +135,7 @@ fn handle_update(
         }
         Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state)?,
         Ok(Update::PeerMessage(message, sender_id)) => {
-            node.on_peer_message(&message, &sender_id, state)?
+            node.on_peer_message(&message.content, &sender_id, state)?
         }
         Ok(Update::Shutdown) => return Ok(false),
         Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
