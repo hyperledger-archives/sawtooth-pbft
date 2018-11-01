@@ -133,13 +133,13 @@ impl PbftLog {
         }
     }
 
-    /// `prepared` predicate
-    /// `prepared` is true for this node if the following messages are present in its log:
+    /// `check_prepared` predicate
+    /// `check_prepared` is true for this node if the following messages are present in its log:
     ///  + The original `BlockNew` message
     ///  + A `PrePrepare` message matching the original message (in the current view)
     ///  + `2f + 1` matching `Prepare` messages from different nodes that match
     ///    `PrePrepare` message above (including its own)
-    pub fn prepared(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
+    pub fn check_prepared(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
         if check_msg_has_type(pbft_message, &PbftMessageType::Prepare) {
             return Err(PbftError::NotReadyForMessage);
         }
@@ -217,17 +217,18 @@ impl PbftLog {
         Ok(())
     }
 
-    /// "committed" predicate
-    /// `committed` is true if for this node:
-    ///   + `prepared` is true
+    /// Checks if the node is ready to enter the `Committing` phase based on the `PbftMessage` received
+    ///
+    /// `check_committable` is true if for this node:
+    ///   + `check_prepared` is true
     ///   + This node has accepted `2f + 1` `Commit` messages, including its own
-    pub fn committed(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
+    pub fn check_committable(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
         if check_msg_has_type(pbft_message, &PbftMessageType::Commit) {
             return Err(PbftError::NotReadyForMessage);
         }
         self.check_msg_against_log(&pbft_message, true, 2 * f + 1)?;
 
-        self.prepared(&commit_msg_into_prepare_msg(&pbft_message), f)?;
+        self.check_prepared(&commit_msg_into_prepare_msg(&pbft_message), f)?;
         Ok(())
     }
 
@@ -554,7 +555,7 @@ mod tests {
         assert_eq!(&msg, gotten_msgs[0]);
     }
 
-    /// Test that `prepared` and `committed` predicates work properly
+    /// Test that `check_prepared` and `check_committable` predicates work properly
     #[test]
     fn prepared_committed() {
         let cfg = config::mock_config(4);
@@ -564,24 +565,24 @@ mod tests {
         log.add_message(msg.clone());
 
         assert_eq!(log.cycles, 1);
-        assert!(log.prepared(&msg, 1 as u64).is_err());
-        assert!(log.committed(&msg, 1 as u64).is_err());
+        assert!(log.check_prepared(&msg, 1 as u64).is_err());
+        assert!(log.check_committable(&msg, 1 as u64).is_err());
 
         let msg = make_msg(&PbftMessageType::PrePrepare, 0, 1, get_peer_id(&cfg, 0));
         log.add_message(msg.clone());
-        assert!(log.prepared(&msg, 1 as u64).is_err());
-        assert!(log.committed(&msg, 1 as u64).is_err());
+        assert!(log.check_prepared(&msg, 1 as u64).is_err());
+        assert!(log.check_committable(&msg, 1 as u64).is_err());
 
         for peer in 0..4 {
             let msg = make_msg(&PbftMessageType::Prepare, 0, 1, get_peer_id(&cfg, peer));
 
             log.add_message(msg.clone());
             if peer < 2 {
-                assert!(log.prepared(&msg, 1 as u64).is_err());
-                assert!(log.committed(&msg, 1 as u64).is_err());
+                assert!(log.check_prepared(&msg, 1 as u64).is_err());
+                assert!(log.check_committable(&msg, 1 as u64).is_err());
             } else {
-                assert!(log.prepared(&msg, 1 as u64).is_ok());
-                assert!(log.committed(&msg, 1 as u64).is_err());
+                assert!(log.check_prepared(&msg, 1 as u64).is_ok());
+                assert!(log.check_committable(&msg, 1 as u64).is_err());
             }
         }
 
@@ -590,9 +591,9 @@ mod tests {
 
             log.add_message(msg.clone());
             if peer < 2 {
-                assert!(log.committed(&msg, 1 as u64).is_err());
+                assert!(log.check_committable(&msg, 1 as u64).is_err());
             } else {
-                assert!(log.committed(&msg, 1 as u64).is_ok());
+                assert!(log.check_committable(&msg, 1 as u64).is_ok());
             }
         }
     }
