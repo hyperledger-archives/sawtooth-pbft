@@ -46,7 +46,7 @@ hex = "0.3"
 log = "0.4"
 log4rs = "0.8"
 log4rs-syslog = "3.0"
-protobuf = { version = "=2.1.2", features = ["with-serde"] }
+protobuf = { version = "2", features = ["with-serde"] }
 sawtooth_sdk = { git = "https://github.com/hyperledger/sawtooth-core.git", branch = "master" }
 serde = "1.0"
 serde_derive = "1.0"
