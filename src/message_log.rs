@@ -31,7 +31,7 @@ use sawtooth_sdk::consensus::engine::{Block, PeerId};
 use config::PbftConfig;
 use error::PbftError;
 use message_extensions::PbftGetInfo;
-use message_type::PbftMessageType;
+use message_type::{PbftHint, PbftMessageType};
 
 /// The log keeps track of the last stable checkpoint
 #[derive(Clone)]
@@ -286,6 +286,33 @@ impl PbftLog {
                 self.low_water_mark,
                 self.high_water_mark,
             );
+        }
+    }
+
+    /// Adds a message the (back)log, based on the given `PbftHint`
+    ///
+    /// Past messages are added to the general message log
+    /// Future messages are added to the backlog of messages to handle at a later time
+    /// Present messages are ignored, as they're generally added immediately after
+    /// this method is called by the calling code, except for `PrePrepare` messages
+    #[allow(ptr_arg)]
+    pub fn add_message_with_hint(
+        &mut self,
+        pbft_message: &PbftMessage,
+        hint: &PbftHint,
+        msg: Vec<u8>,
+        sender_id: &PeerId,
+    ) -> Result<(), PbftError> {
+        match hint {
+            PbftHint::FutureMessage => {
+                self.push_backlog(msg, sender_id.clone());
+                Err(PbftError::NotReadyForMessage)
+            }
+            PbftHint::PastMessage => {
+                self.add_message(pbft_message.clone());
+                Err(PbftError::NotReadyForMessage)
+            }
+            PbftHint::PresentMessage => Ok(()),
         }
     }
 
