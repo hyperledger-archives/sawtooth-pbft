@@ -20,19 +20,20 @@ version: "3.6"
 networks:
   validators:
     external:
-      name: pbft_validators
+      name: pbft_validators_${ISOLATION_ID}
   rest_apis:
     external:
-      name: pbft_rest_apis
+      name: pbft_rest_apis_${ISOLATION_ID}
 
 volumes:
   pbft_shared_data:
     external: true
+    name: pbft_shared_data_${ISOLATION_ID}
 
 services:
 
   validator:
-    image: sawtooth-validator
+    image: sawtooth-validator:${ISOLATION_ID}
     labels:
       - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
     command: "bash -c \"\
@@ -93,7 +94,7 @@ services:
     stop_signal: SIGKILL
 
   pbft:
-    image: sawtooth-pbft-engine-local
+    image: sawtooth-pbft-engine-local:${ISOLATION_ID}
     labels:
       - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
     build:
@@ -105,7 +106,7 @@ services:
     command: ./target/debug/sawtooth-pbft --connect tcp://validator:5050 -v
 
   rest-api:
-    image: sawtooth-rest-api
+    image: sawtooth-rest-api:${ISOLATION_ID}
     labels:
       - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
     command: "bash -c \"
@@ -124,14 +125,14 @@ services:
     stop_signal: SIGKILL
 
   intkey-tp-python:
-    image: sawtooth-intkey-tp-python
+    image: sawtooth-intkey-tp-python:${ISOLATION_ID}
     labels:
       - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
     command: intkey-tp-python -vv -C tcp://validator:4004
     stop_signal: SIGKILL
 
   settings-tp:
-    image: sawtooth-settings-tp
+    image: sawtooth-settings-tp:${ISOLATION_ID}
     labels:
       - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
     command: settings-tp -C tcp://validator:4004 -v

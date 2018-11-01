@@ -17,13 +17,13 @@ version: "3.6"
 
 volumes:
   pbft_shared_data:
-    name: pbft_shared_data
+    name: pbft_shared_data_${ISOLATION_ID}
 
 networks:
   validators:
-    name: pbft_validators
+    name: pbft_validators_${ISOLATION_ID}
   rest_apis:
-    name: pbft_rest_apis
+    name: pbft_rest_apis_${ISOLATION_ID}
 
 services:
   admin:
