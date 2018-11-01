@@ -1040,7 +1040,7 @@ mod tests {
         state0.phase = PbftPhase::Checking;
         node.on_block_valid(mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
-        assert!(state0.phase == PbftPhase::Committing);
+        assert_eq!(state0.phase, PbftPhase::Committing);
     }
 
     /// Make sure that receiving a `BlockCommit` update works as expected
@@ -1052,7 +1052,7 @@ mod tests {
         state0.phase = PbftPhase::Finished;
         node.on_block_commit(mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
-        assert!(state0.phase == PbftPhase::NotStarted);
+        assert_eq!(state0.phase, PbftPhase::NotStarted);
     }
 
     /// Test the multicast protocol (`PrePrepare` => `Prepare` => `Commit`)
