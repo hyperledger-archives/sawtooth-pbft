@@ -22,7 +22,7 @@ use hex;
 use std::convert::From;
 use std::error::Error;
 
-use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId, PeerMessage};
+use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId};
 use sawtooth_sdk::consensus::service::Service;
 
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
@@ -39,13 +39,9 @@ pub fn action_from_hint(
     msg_log: &mut PbftLog,
     hint: &PbftHint,
     pbft_message: &PbftMessage,
-    msg_content: Vec<u8>,
+    msg: Vec<u8>,
     sender_id: &PeerId,
 ) -> Result<(), PbftError> {
-    let msg = PeerMessage {
-        message_type: String::from(pbft_message.get_info().get_msg_type()),
-        content: msg_content,
-    };
     match hint {
         PbftHint::FutureMessage => {
             msg_log.push_backlog(msg, sender_id.clone());
@@ -281,11 +277,7 @@ fn check_if_commiting_with_current_chain_head(
             state,
             pbft_message.get_block().block_id.clone()
         );
-        let msg = PeerMessage {
-            message_type: String::from(pbft_message.get_info().get_msg_type()),
-            content: msg_content,
-        };
-        msg_log.push_backlog(msg, sender_id.clone());
+        msg_log.push_backlog(msg_content, sender_id.clone());
         Err(PbftError::BlockMismatch(
             pbft_message.get_block().clone(),
             working_block.clone(),

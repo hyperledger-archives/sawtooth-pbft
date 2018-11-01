@@ -26,7 +26,7 @@ use protobuf::{Message, ProtobufError};
 use std::convert::From;
 use std::error::Error;
 
-use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId, PeerMessage};
+use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId};
 use sawtooth_sdk::consensus::service::Service;
 
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
@@ -75,11 +75,23 @@ impl PbftNode {
     #[allow(ptr_arg)]
     pub fn on_peer_message(
         &mut self,
-        msg: &PeerMessage,
+        msg: &[u8],
         sender_id: &PeerId,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        let msg_type = PbftMessageType::from(msg.message_type.as_str());
+        // Attempt to first parse the message as a `PbftMessage`, and if that fails, try
+        // to parse as a `PbftViewChange` message.
+        let msg_type = match protobuf::parse_from_bytes::<PbftMessage>(msg) {
+            Ok(m) => PbftMessageType::from(m.get_info().msg_type.as_str()),
+            Err(_) => match protobuf::parse_from_bytes::<PbftViewChange>(msg) {
+                Ok(m) => PbftMessageType::from(m.get_info().msg_type.as_str()),
+                Err(_) => {
+                    return Err(PbftError::InternalError(
+                        "Couldn't determine message type!".into(),
+                    ))
+                }
+            },
+        };
 
         // Handle a multicast protocol message
         let multicast_hint = extract_multicast_hint(state, &msg_type, msg)?;
@@ -101,7 +113,7 @@ impl PbftNode {
                         &mut self.msg_log,
                         &multicast_hint,
                         &pbft_message,
-                        msg.content.clone(),
+                        msg.to_vec(),
                         sender_id,
                     )?;
                 }
@@ -131,7 +143,7 @@ impl PbftNode {
                     &mut self.msg_log,
                     &multicast_hint,
                     &pbft_message,
-                    msg.content.clone(),
+                    msg.to_vec(),
                     sender_id,
                 )?;
 
@@ -157,7 +169,7 @@ impl PbftNode {
                     &mut self.msg_log,
                     &multicast_hint,
                     &pbft_message,
-                    msg.content.clone(),
+                    msg.to_vec(),
                     sender_id,
                 )?;
 
@@ -267,7 +279,7 @@ impl PbftNode {
     #[allow(ptr_arg)]
     fn commit_block_if_committing(
         &mut self,
-        msg: &PeerMessage,
+        msg: &[u8],
         pbft_message: &PbftMessage,
         sender_id: &PeerId,
         state: &mut PbftState,
@@ -278,7 +290,7 @@ impl PbftNode {
                 &mut self.msg_log,
                 &mut *self.service,
                 &pbft_message,
-                msg.content.clone(),
+                msg.to_vec(),
                 sender_id,
             )
         } else {
@@ -316,13 +328,13 @@ impl PbftNode {
     #[allow(ptr_arg)]
     fn check_if_checkpoint_started(
         &mut self,
-        msg: &PeerMessage,
+        msg: &[u8],
         sender_id: &PeerId,
         state: &mut PbftState,
     ) -> bool {
         // Not ready to receive checkpoint yet; only acceptable in NotStarted
         if state.phase != PbftPhase::NotStarted {
-            self.msg_log.push_backlog(msg.clone(), sender_id.clone());
+            self.msg_log.push_backlog(msg.to_vec(), sender_id.clone());
             debug!("{}: Not in NotStarted; not handling checkpoint yet", state);
             false
         } else {
@@ -600,8 +612,8 @@ impl PbftNode {
         let mut peer_res = Ok(());
         if let Some((msg, sender_id)) = self.msg_log.pop_backlog() {
             debug!(
-                "{}: Popping from backlog {} from {:?}",
-                state, msg.message_type, sender_id
+                "{}: Popping message from {:?} from backlog",
+                state, sender_id
             );
             peer_res = self.on_peer_message(&msg, &sender_id, state);
         }
@@ -698,12 +710,8 @@ impl PbftNode {
             .unwrap_or_else(|err| error!("Couldn't broadcast: {}", err));
 
         // Send to self
-        let peer_msg = PeerMessage {
-            message_type: String::from(msg_type),
-            content: msg_bytes.to_vec(),
-        };
         let own_peer_id = state.get_own_peer_id();
-        self.on_peer_message(&peer_msg, &own_peer_id, state)
+        self.on_peer_message(&msg_bytes, &own_peer_id, state)
     }
 
     /// NOTE: Disabling self-sending for testing purposes
@@ -748,10 +756,10 @@ fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &PbftMessage) -> boo
 fn extract_multicast_hint(
     state: &PbftState,
     msg_type: &PbftMessageType,
-    msg: &PeerMessage,
+    msg: &[u8],
 ) -> Result<PbftHint, PbftError> {
     if msg_type.is_multicast() {
-        let pbft_message: PbftMessage = extract_message(&msg)?;
+        let pbft_message: PbftMessage = extract_message(msg)?;
 
         debug!(
             "{}: <<<<<< {} [Node {:02}] (v {}, seq {}, b {})",
@@ -775,8 +783,8 @@ fn verify_message_sender<'a, T: PbftGetInfo<'a>>(msg: &T, sender_id: &PeerId) ->
     &signer_id == sender_id
 }
 
-fn extract_message<T: Message>(msg: &PeerMessage) -> Result<T, PbftError> {
-    protobuf::parse_from_bytes::<T>(&msg.content).map_err(PbftError::SerializationError)
+fn extract_message<T: Message>(msg: &[u8]) -> Result<T, PbftError> {
+    protobuf::parse_from_bytes::<T>(msg).map_err(PbftError::SerializationError)
 }
 
 /// Create a Protobuf binary representation of a PbftMessage from its info and corresponding Block
@@ -955,25 +963,21 @@ mod tests {
         }
     }
 
-    /// Create a mock PeerMessage
+    /// Create a mock serialized PbftMessage
     fn mock_msg(
         msg_type: &PbftMessageType,
         view: u64,
         seq_num: u64,
         block: Block,
         from: u64,
-    ) -> PeerMessage {
+    ) -> Vec<u8> {
         let info = make_msg_info(&msg_type, view, seq_num, mock_peer_id(from));
 
         let mut pbft_msg = PbftMessage::new();
         pbft_msg.set_info(info);
         pbft_msg.set_block(pbft_block_from_block(block.clone()));
 
-        let content = pbft_msg.write_to_bytes().expect("SerializationError");
-        PeerMessage {
-            message_type: String::from(msg_type),
-            content,
-        }
+        pbft_msg.write_to_bytes().expect("SerializationError")
     }
 
     fn handle_pbft_err(e: PbftError) {
@@ -1057,13 +1061,12 @@ mod tests {
         let mut node = mock_node(0);
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(0, &cfg);
-        let garbage_msg = PeerMessage {
-            message_type: String::from(&PbftMessageType::PrePrepare),
-            content: b"this message will result in an error".to_vec(),
-        };
         assert!(
-            node.on_peer_message(&garbage_msg, &mock_peer_id(0), &mut state0)
-                .is_err()
+            node.on_peer_message(
+                b"this message will result in an error",
+                &mock_peer_id(0),
+                &mut state0
+            ).is_err()
         );
 
         // Make sure BlockNew is in the log
@@ -1182,12 +1185,8 @@ mod tests {
             vc_msg.set_checkpoint_messages(RepeatedField::default());
 
             let msg_bytes = vc_msg.write_to_bytes().unwrap();
-            let msg = PeerMessage {
-                message_type: String::from(&PbftMessageType::ViewChange),
-                content: msg_bytes,
-            };
             node1
-                .on_peer_message(&msg, &mock_peer_id(peer), &mut state1)
+                .on_peer_message(&msg_bytes, &mock_peer_id(peer), &mut state1)
                 .unwrap_or_else(handle_pbft_err);
         }
 
