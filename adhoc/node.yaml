@@ -101,7 +101,7 @@ services:
       context: .
       dockerfile: ../Dockerfile
     volumes:
-      - ${SAWOOTH_PBFT:-..}:/project/sawtooth-pbft
+      - ${SAWTOOTH_PBFT:-..}:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
     command: ./target/debug/sawtooth-pbft --connect tcp://validator:5050 -v
 
