@@ -72,7 +72,7 @@ pipeline {
                 sh 'docker-compose run --rm sawtooth-pbft cargo fmt --version'
                 sh 'docker-compose run --rm sawtooth-pbft cargo fmt -- --check'
                 sh 'docker-compose run --rm sawtooth-pbft cargo clippy --version'
-                sh 'docker-compose run --rm sawtooth-pbft cargo clippy -- -D clippy'
+                sh 'docker-compose run --rm sawtooth-pbft cargo clippy -- -D clippy::all'
             }
         }
 
