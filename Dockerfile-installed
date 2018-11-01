@@ -14,7 +14,7 @@
 # ------------------------------------------------------------------------------
 
 # -------------=== pbft build ===-------------
-FROM ubuntu:xenial as pbft-builder
+FROM ubuntu:bionic as pbft-builder
 
 RUN apt-get update \
  && apt-get install -y -q --allow-downgrades \
@@ -46,7 +46,7 @@ WORKDIR /project/sawtooth-pbft
 RUN /root/.cargo/bin/cargo deb
 
 # -------------=== pbft docker build ===-------------
-FROM ubuntu:xenial
+FROM ubuntu:bionic
 
 COPY --from=pbft-builder /project/sawtooth-pbft/target/debian/sawtooth*.deb /tmp
 
