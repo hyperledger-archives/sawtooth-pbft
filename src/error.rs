@@ -17,15 +17,14 @@
 
 //! PBFT-specific error messages
 
-use hex;
 use std::error::Error;
 use std::fmt;
 
+use hex;
 use protobuf::error::ProtobufError;
 
-use protos::pbft_message::PbftBlock;
-
 use message_type::PbftMessageType;
+use protos::pbft_message::PbftBlock;
 
 /// Errors that might occur in a PbftNode
 #[derive(Debug)]

@@ -16,8 +16,10 @@
  */
 
 //! Timing-related structures
-use serde_millis;
+
 use std::time::{Duration, Instant};
+
+use serde_millis;
 
 /// Encapsulates calling a function every so often
 pub struct Ticker {

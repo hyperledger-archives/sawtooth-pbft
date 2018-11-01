@@ -24,11 +24,13 @@
 pub mod disk;
 pub mod memory;
 
-pub use self::disk::DiskStorage;
-pub use self::memory::MemStorage;
+use std::ops::{Deref, DerefMut};
+
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::ops::{Deref, DerefMut};
+
+pub use self::disk::DiskStorage;
+pub use self::memory::MemStorage;
 
 /// RAII structure used to allow read access to state object
 ///

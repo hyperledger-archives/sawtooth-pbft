@@ -17,19 +17,13 @@
 
 //! The core PBFT algorithm
 
-use hex;
-
-use protobuf;
-use protobuf::RepeatedField;
-use protobuf::{Message, ProtobufError};
-
 use std::convert::From;
 use std::error::Error;
 
+use hex;
+use protobuf::{Message, ProtobufError, RepeatedField};
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId};
 use sawtooth_sdk::consensus::service::Service;
-
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 use config::PbftConfig;
 use error::PbftError;
@@ -37,6 +31,7 @@ use handlers;
 use message_extensions::PbftGetInfo;
 use message_log::{PbftLog, PbftStableCheckpoint};
 use message_type::{PbftHint, PbftMessageType};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 
 /// Contains all of the components for operating a PBFT node.

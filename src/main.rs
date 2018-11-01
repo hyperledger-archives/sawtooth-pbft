@@ -44,7 +44,6 @@ use std::process;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config, Root};
 use log4rs::encode::pattern::PatternEncoder;
-
 use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
 
 pub mod config;

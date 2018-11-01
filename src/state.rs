@@ -20,14 +20,12 @@
 use std::fmt;
 
 use hex;
-
 use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
-
-use protos::pbft_message::PbftBlock;
 
 use config::PbftConfig;
 use error::PbftError;
 use message_type::PbftMessageType;
+use protos::pbft_message::PbftBlock;
 use timing::Timeout;
 
 // Possible roles for a node
