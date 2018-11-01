@@ -900,7 +900,7 @@ mod tests {
             Ok(res)
         }
         fn get_chain_head(&mut self) -> Result<Block, Error> {
-            let prev_num = ::std::panic::catch_unwind(|| self.chain.len() - 2).unwrap_or(0);
+            let prev_num = self.chain.len().checked_sub(2).unwrap_or(0);
             Ok(Block {
                 block_id: self.chain.last().unwrap().clone(),
                 previous_id: self.chain.get(prev_num).unwrap().clone(),
