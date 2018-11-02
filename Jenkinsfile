@@ -86,7 +86,11 @@ pipeline {
             steps {
                 sh 'docker-compose -f tests/test_liveness.yaml run pbft-0 cargo build'
                 sh 'docker-compose -f tests/test_liveness.yaml up --abort-on-container-exit --exit-code-from test-pbft-engine'
-                sh 'docker-compose -f tests/test_liveness.yaml down'
+            }
+            post {
+                always {
+                    sh 'docker-compose -f tests/test_liveness.yaml down'
+                }
             }
         }
 
@@ -98,6 +102,9 @@ pipeline {
     }
 
     post {
+        always {
+            sh 'docker-compose down'
+        }
         success {
             archiveArtifacts '*.deb'
         }
