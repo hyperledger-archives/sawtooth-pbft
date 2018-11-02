@@ -225,13 +225,7 @@ pub fn get_peers_from_settings<S: std::hash::BuildHasher>(
 /// hash.
 #[cfg(test)]
 pub fn mock_config(num_nodes: usize) -> PbftConfig {
-    use hash::hash_sha256;
-
-    let ids = (0..num_nodes)
-        .map(|i| PeerId::from(hash_sha256(format!("I'm a node with ID {}", i).as_bytes())))
-        .collect::<Vec<_>>();
-
     let mut config = PbftConfig::default();
-    config.peers = ids;
+    config.peers = (0..num_nodes).map(|id| vec![id as u8]).collect();
     config
 }
