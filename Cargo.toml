@@ -14,7 +14,7 @@
 # -----------------------------------------------------------------------------
 
 [package]
-name = "sawtooth-pbft"
+name = "sawtooth-pbft-engine"
 version = "0.1.0"
 authors = ["Bitwise IO, Inc"]
 description = "PBFT consensus algorithm for Hyperledger Sawtooth"
@@ -26,9 +26,9 @@ repository = "https://github.com/hyperledger/sawtooth-pbft"
 maintainer = "sawtooth"
 depends = "$auto"
 assets = [
-    ["packaging/systemd/sawtooth-pbft.service", "/lib/systemd/system/sawtooth-pbft.service", "644"],
-    ["packaging/systemd/sawtooth-pbft", "/etc/default/sawtooth-pbft", "644"],
-    ["target/release/sawtooth-pbft", "/usr/bin/sawtooth-pbft", "755"]
+    ["packaging/systemd/sawtooth-pbft-engine.service", "/lib/systemd/system/sawtooth-pbft-engine.service", "644"],
+    ["packaging/systemd/sawtooth-pbft-engine", "/etc/default/sawtooth-pbft-engine", "644"],
+    ["target/release/pbft-engine", "/usr/bin/pbft-engine", "755"]
 ]
 maintainer-scripts = "packaging/ubuntu"
 extended-description = """\
@@ -62,3 +62,7 @@ rust-crypto = "0.2"
 
 [build-dependencies]
 protoc-rust = "2"
+
+[[bin]]
+name = "pbft-engine"
+path = "src/main.rs"

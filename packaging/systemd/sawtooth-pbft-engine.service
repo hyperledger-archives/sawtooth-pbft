@@ -21,8 +21,8 @@ After=network.target
 [Service]
 User=sawtooth
 Group=sawtooth
-EnvironmentFile=-/etc/default/sawtooth-pbft
-ExecStart=/usr/bin/sawtooth-pbft $SAWTOOTH_PBFT_ARGS
+EnvironmentFile=-/etc/default/sawtooth-pbft-engine
+ExecStart=/usr/bin/pbft-engine $SAWTOOTH_PBFT_ENGINE_ARGS
 Restart=on-failure
 
 [Install]
