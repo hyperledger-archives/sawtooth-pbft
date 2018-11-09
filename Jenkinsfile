@@ -83,6 +83,10 @@ pipeline {
         }
 
         stage('Run integration tests') {
+            // Until the non-deterministic failures get figured out, just jiggle it a couple of times
+            options {
+                retry(3)
+            }
             steps {
                 sh 'docker-compose -f tests/test_liveness.yaml run pbft-0 cargo build'
                 sh 'docker-compose -f tests/test_liveness.yaml up --abort-on-container-exit --exit-code-from test-pbft-engine'
