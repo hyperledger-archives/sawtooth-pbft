@@ -187,6 +187,10 @@ impl PbftState {
         }
     }
 
+    pub fn peers(&self) -> &Vec<PeerId> {
+        &self.peer_ids
+    }
+
     /// Check to see what type of message this node is expecting or sending, based on the current
     /// phase
     pub fn check_msg_type(&self) -> PbftMessageType {

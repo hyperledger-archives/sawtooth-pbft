@@ -17,6 +17,7 @@
 
 //! The core PBFT algorithm
 
+use std::collections::HashSet;
 use std::convert::From;
 use std::error::Error;
 
@@ -24,10 +25,13 @@ use hex;
 use protobuf::{Message, ProtobufError, RepeatedField};
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError};
 use sawtooth_sdk::consensus::service::Service;
+use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
+use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
 
 use config::PbftConfig;
 use error::PbftError;
 use handlers;
+use hash::verify_sha512;
 use message_log::{PbftLog, PbftStableCheckpoint};
 use message_type::{ParsedMessage, PbftHint, PbftMessageType};
 use protos::pbft_message::{
@@ -315,6 +319,132 @@ impl PbftNode {
         }
     }
 
+    /// Verifies an individual consensus vote
+    ///
+    /// Returns the signer ID of the wrapped PbftMessage, for use in further verification
+    fn verify_consensus_vote(
+        vote: &PbftSignedCommitVote,
+        seal: &PbftSeal,
+    ) -> Result<Vec<u8>, PbftError> {
+        let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
+            .map_err(PbftError::SerializationError)?;
+
+        if message.get_block().block_id != seal.previous_id {
+            return Err(PbftError::InternalError(format!(
+                "PbftMessage block ID ({:?}) doesn't match seal's previous id ({:?})!",
+                message.get_block().get_block_id(),
+                seal.previous_id
+            )));
+        }
+
+        let header: ConsensusPeerMessageHeader =
+            protobuf::parse_from_bytes(&vote.get_header_bytes())
+                .map_err(PbftError::SerializationError)?;
+
+        let key = Secp256k1PublicKey::from_hex(&hex::encode(&header.signer_id)).unwrap();
+
+        let context = create_context("secp256k1")
+            .map_err(|err| PbftError::InternalError(format!("Couldn't create context: {}", err)))?;
+
+        match context.verify(
+            &hex::encode(vote.get_header_signature()),
+            vote.get_header_bytes(),
+            &key,
+        ) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(PbftError::InternalError(
+                    "Header failed verification!".into(),
+                ))
+            }
+            Err(err) => {
+                return Err(PbftError::InternalError(format!(
+                    "Error while verifying header: {:?}",
+                    err
+                )))
+            }
+        }
+
+        verify_sha512(vote.get_message_bytes(), header.get_content_sha512())?;
+
+        Ok(message.get_info().get_signer_id().to_vec())
+    }
+
+    /// Verifies the consensus seal from the current block, for the previous block
+    fn verify_consensus_seal(
+        &mut self,
+        block: &Block,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        // We don't publish a consensus seal until block 1, so we don't verify it
+        // until block 2
+        if block.block_num < 2 {
+            return Ok(());
+        }
+
+        if block.payload.is_empty() {
+            return Err(PbftError::InternalError(
+                "Got empty payload for non-genesis block!".into(),
+            ));
+        }
+
+        let seal: PbftSeal =
+            protobuf::parse_from_bytes(&block.payload).map_err(PbftError::SerializationError)?;
+
+        let id_matches = seal.previous_id == &block.previous_id[..];
+        let summary_matches = seal.summary == &block.summary[..];
+
+        if !(id_matches && summary_matches) {
+            return Err(PbftError::InternalError(format!(
+                "Consensus seal failed verification. ID matched? {} Summary matched? {}",
+                id_matches, summary_matches
+            )));
+        }
+
+        // Verify each individual vote, and extract the signer ID from each PbftMessage that
+        // it contains, so that we can do some sanity checks on those IDs.
+        let voter_ids =
+            seal.get_previous_commit_votes()
+                .iter()
+                .try_fold(HashSet::new(), |mut ids, v| {
+                    Self::verify_consensus_vote(v, &seal).and_then(|vid| Ok(ids.insert(vid)))?;
+                    Ok(ids)
+                })?;
+
+        // All of the votes must come from known peers, and the primary can't explicitly
+        // vote itself, since publishing a block is an implicit vote. Check that the votes
+        // we've received are a subset of "peers - primary".
+        let peer_ids: HashSet<_> = state
+            .peers()
+            .iter()
+            .cloned()
+            .filter_map(|pid| {
+                if pid == block.signer_id {
+                    None
+                } else {
+                    Some(pid)
+                }
+            }).collect();
+
+        if !voter_ids.is_subset(&peer_ids) {
+            return Err(PbftError::InternalError(format!(
+                "Got unexpected vote IDs: {:?}",
+                voter_ids.difference(&peer_ids).collect::<Vec<_>>()
+            )));
+        }
+
+        // Check that we've received 2f votes, since the primary vote is implicit
+        if voter_ids.len() < 2 * state.f as usize {
+            return Err(PbftError::InternalError(format!(
+                "Need {} votes, only found {}!",
+                2 * state.f,
+                voter_ids.len()
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Creates a new working block on the working block queue and kicks off the consensus algorithm
     /// by broadcasting a `PrePrepare` message to peers. Starts a view change timer, just in case
     /// the primary decides not to commit this block. If a `BlockCommit` update doesn't happen in a
@@ -343,6 +473,18 @@ impl PbftNode {
         }
 
         msg.set_block(pbft_block.clone());
+
+        match self.verify_consensus_seal(&block, state) {
+            Ok(()) => {}
+            Err(err) => {
+                warn!(
+                    "Proposing view change due to failed consensus seal verification! Error was {}",
+                    err
+                );
+                self.propose_view_change(state)?;
+                return Err(err);
+            }
+        }
 
         let head = self
             .service
@@ -775,8 +917,9 @@ mod tests {
     use super::*;
     use config::mock_config;
     use handlers::make_msg_info;
-    use hash::hash_sha256;
+    use hash::{hash_sha256, hash_sha512};
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
+    use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
     use serde_json;
     use std::collections::HashMap;
     use std::default::Default;
@@ -978,16 +1121,62 @@ mod tests {
             WorkingBlockOption::TentativeWorkingBlock(mock_block_id(1))
         );
         assert_eq!(state1.seq_num, 0);
+    }
 
-        // Try a block way in the future (push to backlog)
-        let mut node1 = mock_node(1);
-        let mut state1 = PbftState::new(1, &cfg);
-        node1
-            .on_block_new(mock_block(7), &mut state1)
-            .unwrap_or_else(handle_pbft_err);
-        assert_eq!(state1.phase, PbftPhase::NotStarted);
-        assert_eq!(state1.working_block, WorkingBlockOption::NoWorkingBlock);
-        assert_eq!(state1.seq_num, 0);
+    /// Make sure that `BlockNew` properly checks the consensus seal.
+    #[test]
+    fn block_new_consensus() {
+        let mut cfg = mock_config(4);
+        cfg.peers = (0..4).map(|i| vec![i]).collect();
+        let mut node = mock_node(1);
+        let mut state = PbftState::new(1, &cfg);
+        state.seq_num = 6;
+        let head = mock_block(6);
+        let mut block = mock_block(7);
+        block.summary = vec![1, 2, 3];
+        let context = create_context("secp256k1").unwrap();
+
+        for i in 0..3 {
+            let mut info = PbftMessageInfo::new();
+            info.set_msg_type("Commit".into());
+            info.set_view(0);
+            info.set_seq_num(6);
+            info.set_signer_id(vec![i]);
+
+            let mut block = PbftBlock::new();
+            block.set_block_id(head.block_id.clone());
+
+            let mut msg = PbftMessage::new();
+            msg.set_info(info);
+            msg.set_block(block);
+
+            let mut message = ParsedMessage::from_pbft_message(msg);
+
+            let key = context.new_random_private_key().unwrap();
+            let pub_key = context.get_public_key(&*key).unwrap();
+            let mut header = ConsensusPeerMessageHeader::new();
+
+            header.set_signer_id(pub_key.as_slice().to_vec());
+            header.set_content_sha512(hash_sha512(&message.message_bytes));
+
+            let header_bytes = header.write_to_bytes().unwrap();
+            let header_signature =
+                hex::decode(context.sign(&header_bytes, &*key).unwrap()).unwrap();
+
+            message.from_self = false;
+            message.header_bytes = header_bytes;
+            message.header_signature = header_signature;
+
+            node.msg_log.add_message(message);
+        }
+
+        let seal = node.build_seal(&mut state, vec![1, 2, 3], head).unwrap();
+        block.payload = seal;
+
+        node.on_block_new(block, &mut state).unwrap();
+
+        assert_eq!(state.phase, PbftPhase::NotStarted);
+        assert_eq!(state.working_block, WorkingBlockOption::NoWorkingBlock);
     }
 
     /// Make sure that receiving a `BlockValid` update works as expected
