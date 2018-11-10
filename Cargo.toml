@@ -46,6 +46,7 @@ hex = "0.3"
 log = "0.4"
 log4rs = "0.8"
 log4rs-syslog = "3.0"
+openssl = "0.10"
 protobuf = { version = "2", features = ["with-serde"] }
 sawtooth-sdk = "^0.1"
 serde = "1.0"
@@ -58,7 +59,6 @@ log4rs = { git = "https://github.com/ltseeley/log4rs", branch = "config-loading"
 
 [dev-dependencies]
 rand = "0.5"
-rust-crypto = "0.2"
 
 [build-dependencies]
 protoc-rust = "2"

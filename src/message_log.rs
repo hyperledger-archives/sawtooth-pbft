@@ -501,6 +501,7 @@ fn infos_match(m1: &PbftMessageInfo, m2: &PbftMessageInfo) -> bool {
 mod tests {
     use super::*;
     use config;
+    use hash::hash_sha256;
     use sawtooth_sdk::consensus::engine::PeerId;
 
     /// Create a PbftMessage, given its type, view, sequence number, and who it's from
@@ -510,9 +511,6 @@ mod tests {
         seq_num: u64,
         signer_id: PeerId,
     ) -> PbftMessage {
-        use crypto::digest::Digest;
-        use crypto::sha2::Sha256;
-
         let mut info = PbftMessageInfo::new();
         info.set_msg_type(String::from(msg_type));
         info.set_view(view);
@@ -520,9 +518,9 @@ mod tests {
         info.set_signer_id(Vec::<u8>::from(signer_id.clone()));
 
         let mut pbft_block = PbftBlock::new();
-        let mut sha = Sha256::new();
-        sha.input_str(format!("I'm a block with block num {}", seq_num).as_str());
-        pbft_block.set_block_id(sha.result_str().as_bytes().to_vec());
+        pbft_block.set_block_id(hash_sha256(
+            format!("I'm a block with block num {}", seq_num).as_bytes(),
+        ));
         pbft_block.set_signer_id(Vec::<u8>::from(signer_id));
         pbft_block.set_block_num(seq_num);
 

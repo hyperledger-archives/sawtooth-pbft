@@ -806,9 +806,8 @@ fn pbft_block_from_block(block: Block) -> PbftBlock {
 mod tests {
     use super::*;
     use config::mock_config;
-    use crypto::digest::Digest;
-    use crypto::sha2::Sha256;
     use handlers::make_msg_info;
+    use hash::hash_sha256;
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
     use serde_json;
     use std::collections::HashMap;
@@ -930,16 +929,16 @@ mod tests {
 
     /// Create a deterministic BlockId hash based on a block number
     fn mock_block_id(num: u64) -> BlockId {
-        let mut sha = Sha256::new();
-        sha.input_str(format!("I'm a block with block num {}", num).as_str());
-        BlockId::from(sha.result_str().as_bytes().to_vec())
+        BlockId::from(hash_sha256(
+            format!("I'm a block with block num {}", num).as_bytes(),
+        ))
     }
 
     /// Create a deterministic PeerId hash based on a peer number
     fn mock_peer_id(num: u64) -> PeerId {
-        let mut sha = Sha256::new();
-        sha.input_str(format!("I'm a peer (number {})", num).as_str());
-        PeerId::from(sha.result_str().as_bytes().to_vec())
+        PeerId::from(hash_sha256(
+            format!("I'm a peer (number {})", num).as_bytes(),
+        ))
     }
 
     /// Create a mock Block, including only the BlockId, the BlockId of the previous block, and the

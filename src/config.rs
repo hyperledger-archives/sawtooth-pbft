@@ -216,15 +216,11 @@ fn merge_millis_setting_if_set(
 /// hash.
 #[cfg(test)]
 pub fn mock_config(num_nodes: usize) -> PbftConfig {
-    use crypto::digest::Digest;
-    use crypto::sha2::Sha256;
+    use hash::hash_sha256;
 
-    let mut ids = Vec::new();
-    for i in 0..num_nodes {
-        let mut sha = Sha256::new();
-        sha.input_str(format!("I'm a node with ID {}", i).as_str());
-        ids.push(PeerId::from(sha.result_str().as_bytes().to_vec()));
-    }
+    let ids = (0..num_nodes)
+        .map(|i| PeerId::from(hash_sha256(format!("I'm a node with ID {}", i).as_bytes())))
+        .collect::<Vec<_>>();
 
     let mut config = PbftConfig::default();
     config.peers = ids;
