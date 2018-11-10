@@ -30,7 +30,9 @@ use error::PbftError;
 use handlers;
 use message_log::{PbftLog, PbftStableCheckpoint};
 use message_type::{ParsedMessage, PbftHint, PbftMessageType};
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
+use protos::pbft_message::{
+    PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
+};
 use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 
 /// Contains all of the components for operating a PBFT node.
@@ -455,34 +457,120 @@ impl PbftNode {
 
     // ---------- Methods for periodically checking on and updating the state, called by the engine ----------
 
+    fn build_seal(
+        &mut self,
+        state: &mut PbftState,
+        summary: Vec<u8>,
+        head: Block,
+    ) -> Result<Vec<u8>, PbftError> {
+        let mut messages = self
+            .msg_log
+            .get_messages_of_type(&PbftMessageType::Commit, state.seq_num, state.view)
+            .into_iter()
+            .filter(|&m| !m.from_self)
+            .collect::<Vec<_>>();
+
+        // A forced view change will simply increment the view number, without sending
+        // new messages. If we don't have enough messages for the current view, try
+        // the previous view.
+        if messages.is_empty() && state.view > 0 {
+            info!(
+                "Found 0 messages for seq num {} view {}, trying view {}",
+                state.seq_num,
+                state.view,
+                state.view - 1
+            );
+            messages = self
+                .msg_log
+                .get_messages_of_type(&PbftMessageType::Commit, state.seq_num, state.view - 1)
+                .into_iter()
+                .filter(|&m| !m.from_self)
+                .collect::<Vec<_>>();;
+        }
+
+        let min_votes = 2 * state.f as usize;
+        if messages.len() < min_votes {
+            return Err(PbftError::InternalError(format!(
+                "Need {} commit messages to publish block, only have {}!",
+                min_votes,
+                messages.len()
+            )));
+        }
+
+        let mut seal = PbftSeal::new();
+
+        seal.set_summary(summary);
+        seal.set_previous_id(head.block_id);
+        seal.set_previous_commit_votes(RepeatedField::from(
+            messages
+                .iter()
+                .map(|m| {
+                    let mut vote = PbftSignedCommitVote::new();
+
+                    vote.set_header_bytes(m.header_bytes.clone());
+                    vote.set_header_signature(m.header_signature.clone());
+                    vote.set_message_bytes(m.message_bytes.clone());
+
+                    vote
+                }).collect::<Vec<_>>(),
+        ));
+
+        seal.write_to_bytes().map_err(PbftError::SerializationError)
+    }
+
     /// The primary tries to finalize a block every so often
     /// # Panics
     /// Panics if `finalize_block` fails. This is necessary because it means the validator wasn't
     /// able to publish the new block.
     pub fn try_publish(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
-        // Try to finalize a block
-        if state.is_primary() && state.phase == PbftPhase::NotStarted {
-            debug!("{}: Summarizing block", state);
-            if let Err(e) = self.service.summarize_block() {
+        // Only the primary takes care of this, and we try publishing a block
+        // on every engine loop, even if it's not yet ready. This isn't an error,
+        // so just return Ok(()).
+        if !state.is_primary() || state.phase != PbftPhase::NotStarted {
+            return Ok(());
+        }
+
+        info!("{}: Summarizing block", state);
+
+        let summary = match self.service.summarize_block() {
+            Ok(bytes) => bytes,
+            Err(e) => {
                 debug!(
                     "{}: Couldn't summarize, so not finalizing: {}",
                     state,
                     e.description().to_string()
                 );
-            } else {
-                debug!("{}: Trying to finalize block", state);
-                match self.service.finalize_block(vec![]) {
-                    Ok(block_id) => {
-                        info!("{}: Publishing block {:?}", state, block_id);
-                    }
-                    Err(EngineError::BlockNotReady) => {
-                        debug!("{}: Block not ready", state);
-                    }
-                    Err(err) => panic!("Failed to finalize block: {:?}", err),
-                }
+                return Ok(());
+            }
+        };
+
+        let head = self
+            .service
+            .get_chain_head()
+            .map_err(|err| PbftError::InternalError(format!("Couldn't get chain head: {}", err)))?;
+
+        // We don't publish a consensus seal until block 1, since we never receive any
+        // votes on the genesis block. Leave payload blank for the first block.
+        let data = if head.block_num < 1 {
+            vec![]
+        } else {
+            self.build_seal(state, summary, head)?
+        };
+
+        match self.service.finalize_block(data) {
+            Ok(block_id) => {
+                info!("{}: Publishing block {:?}", state, block_id);
+                Ok(())
+            }
+            Err(EngineError::BlockNotReady) => {
+                debug!("{}: Block not ready", state);
+                Ok(())
+            }
+            Err(err) => {
+                error!("Couldn't finalize block: {}", err);
+                Err(PbftError::InternalError("Couldn't finalize block!".into()))
             }
         }
-        Ok(())
     }
 
     /// Check to see if the view change timeout has expired
@@ -1068,5 +1156,34 @@ mod tests {
             .unwrap_or_else(handle_pbft_err);
 
         assert_eq!(state1.mode, PbftMode::ViewChanging);
+    }
+
+    /// Test that try_publish adds in the consensus seal
+    #[test]
+    fn try_publish() {
+        let mut node0 = mock_node(0);
+        let cfg = mock_config(4);
+        let mut state0 = PbftState::new(0, &cfg);
+        let block0 = mock_block(1);
+        let pbft_block0 = pbft_block_from_block(block0);
+
+        for i in 0..3 {
+            let mut info = PbftMessageInfo::new();
+            info.set_msg_type("Commit".into());
+            info.set_view(0);
+            info.set_seq_num(0);
+            info.set_signer_id(vec![i]);
+
+            let mut msg = PbftMessage::new();
+            msg.set_info(info);
+            node0
+                .msg_log
+                .add_message(ParsedMessage::from_pbft_message(msg));
+        }
+
+        state0.phase = PbftPhase::NotStarted;
+        state0.working_block = WorkingBlockOption::WorkingBlock(pbft_block0.clone());
+
+        node0.try_publish(&mut state0).unwrap();
     }
 }
