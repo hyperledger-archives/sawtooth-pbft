@@ -22,15 +22,14 @@ use std::error::Error;
 
 use hex;
 use protobuf::{Message, ProtobufError, RepeatedField};
-use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId};
+use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError};
 use sawtooth_sdk::consensus::service::Service;
 
 use config::PbftConfig;
 use error::PbftError;
 use handlers;
-use message_extensions::PbftGetInfo;
 use message_log::{PbftLog, PbftStableCheckpoint};
-use message_type::{PbftHint, PbftMessageType};
+use message_type::{ParsedMessage, PbftHint, PbftMessageType};
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 
@@ -67,166 +66,97 @@ impl PbftNode {
     /// This method handles all messages from other nodes. Such messages may include `PrePrepare`,
     /// `Prepare`, `Commit`, `Checkpoint`, or `ViewChange`. If a node receives a type of message
     /// before it is ready to do so, the message is pushed into a backlog queue.
-    #[allow(ptr_arg)]
+    #[allow(needless_pass_by_value)]
     pub fn on_peer_message(
         &mut self,
-        msg: &[u8],
-        sender_id: &PeerId,
+        msg: ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        // Attempt to first parse the message as a `PbftMessage`, and if that fails, try
-        // to parse as a `PbftViewChange` message.
-        let msg_type = match protobuf::parse_from_bytes::<PbftMessage>(msg) {
-            Ok(m) => PbftMessageType::from(m.get_info().msg_type.as_str()),
-            Err(_) => match protobuf::parse_from_bytes::<PbftViewChange>(msg) {
-                Ok(m) => PbftMessageType::from(m.get_info().msg_type.as_str()),
-                Err(_) => {
-                    return Err(PbftError::InternalError(
-                        "Couldn't determine message type!".into(),
-                    ))
-                }
-            },
-        };
+        let msg_type = PbftMessageType::from(msg.info().msg_type.as_str());
 
         // Handle a multicast protocol message
-        let multicast_hint = extract_multicast_hint(state, &msg_type, msg)?;
+        let multicast_hint = if msg_type.is_multicast() {
+            handlers::multicast_hint(state, &msg)
+        } else {
+            PbftHint::PresentMessage
+        };
 
         match msg_type {
             PbftMessageType::PrePrepare => {
-                let pbft_message: PbftMessage = extract_message(&msg)?;
-
-                if !verify_message_sender(&&pbft_message, sender_id) {
-                    warn!(
-                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
-                        pbft_message, sender_id
-                    );
-                    return Ok(());
+                if !ignore_hint_pre_prepare(state, &msg) {
+                    self.msg_log
+                        .add_message_with_hint(msg.clone(), &multicast_hint)?;
                 }
 
-                if !ignore_hint_pre_prepare(state, &pbft_message) {
-                    self.msg_log.add_message_with_hint(
-                        &pbft_message,
-                        &multicast_hint,
-                        msg.to_vec(),
-                        sender_id,
-                    )?;
-                }
-
-                handlers::pre_prepare(state, &mut self.msg_log, &pbft_message)?;
+                handlers::pre_prepare(state, &mut self.msg_log, &msg)?;
 
                 // NOTE: Putting log add here is necessary because on_peer_message gets
                 // called again inside of _broadcast_pbft_message
-                self.msg_log.add_message(pbft_message.clone());
+                self.msg_log.add_message(msg.clone());
                 state.switch_phase(PbftPhase::Preparing);
 
-                self.broadcast_pre_prepare(&pbft_message, state)?;
+                self.broadcast_pre_prepare(&msg, state)?;
             }
 
             PbftMessageType::Prepare => {
-                let pbft_message: PbftMessage = extract_message(&msg)?;
+                self.msg_log
+                    .add_message_with_hint(msg.clone(), &multicast_hint)?;
 
-                if !verify_message_sender(&&pbft_message, sender_id) {
-                    warn!(
-                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
-                        pbft_message, sender_id
-                    );
-                    return Ok(());
-                }
+                self.msg_log.add_message(msg.clone());
 
-                self.msg_log.add_message_with_hint(
-                    &pbft_message,
-                    &multicast_hint,
-                    msg.to_vec(),
-                    sender_id,
-                )?;
+                self.msg_log.check_prepared(&msg, state.f)?;
 
-                self.msg_log.add_message(pbft_message.clone());
-
-                self.msg_log.check_prepared(&pbft_message, state.f)?;
-
-                self.check_blocks_if_not_checking(&pbft_message, state)?;
+                self.check_blocks_if_not_checking(&msg, state)?;
             }
 
             PbftMessageType::Commit => {
-                let pbft_message: PbftMessage = extract_message(&msg)?;
+                self.msg_log
+                    .add_message_with_hint(msg.clone(), &multicast_hint)?;
 
-                if !verify_message_sender(&&pbft_message, sender_id) {
-                    warn!(
-                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
-                        pbft_message, sender_id
-                    );
-                    return Ok(());
-                }
+                self.msg_log.add_message(msg.clone());
 
-                self.msg_log.add_message_with_hint(
-                    &pbft_message,
-                    &multicast_hint,
-                    msg.to_vec(),
-                    sender_id,
-                )?;
+                self.msg_log.check_committable(&msg, state.f)?;
 
-                self.msg_log.add_message(pbft_message.clone());
-
-                self.msg_log.check_committable(&pbft_message, state.f)?;
-
-                self.commit_block_if_committing(msg, &pbft_message, &sender_id, state)?;
+                self.commit_block_if_committing(&msg, state)?;
             }
 
             PbftMessageType::Checkpoint => {
-                let pbft_message: PbftMessage = extract_message(&msg)?;
-
-                if !verify_message_sender(&&pbft_message, sender_id) {
-                    warn!(
-                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
-                        pbft_message, sender_id
-                    );
+                if self.check_if_stale_checkpoint(&msg, state)? {
                     return Ok(());
                 }
 
-                if self.check_if_stale_checkpoint(&pbft_message, state)? {
-                    return Ok(());
-                }
-
-                if !self.check_if_checkpoint_started(msg, sender_id, state) {
+                if !self.check_if_checkpoint_started(&msg, state) {
                     return Ok(());
                 }
 
                 // Add message to the log
-                self.msg_log.add_message(pbft_message.clone());
+                self.msg_log.add_message(msg.clone());
 
                 if check_if_secondary(state) {
-                    self.start_checkpointing_and_forward(&pbft_message, state)?;
+                    self.start_checkpointing_and_forward(&msg, state)?;
                 }
 
-                self.garbage_collect_if_stable_checkpoint(&pbft_message, state)?;
+                self.garbage_collect_if_stable_checkpoint(&msg, state)?;
             }
 
             PbftMessageType::ViewChange => {
-                let vc_message: PbftViewChange = extract_message(&msg)?;
-
-                if !verify_message_sender(&&vc_message, sender_id) {
-                    warn!(
-                        "Ignoring message {:?}. Signer ID does not match sender ID {:?}",
-                        vc_message, sender_id
-                    );
-                    return Ok(());
-                }
-
+                let vc_message = msg.get_view_change_message();
+                let info = msg.info();
                 debug!(
                     "{}: Received ViewChange message from Node {:02} (v {}, seq {})",
                     state,
-                    state.get_node_id_from_bytes(vc_message.get_info().get_signer_id())?,
-                    vc_message.get_info().get_view(),
-                    vc_message.get_info().get_seq_num(),
+                    state.get_node_id_from_bytes(info.get_signer_id())?,
+                    info.get_view(),
+                    info.get_seq_num(),
                 );
 
                 self.msg_log.add_view_change(vc_message.clone());
 
-                if self.propose_view_change_if_enough_messages(&vc_message, state)? {
+                if self.propose_view_change_if_enough_messages(&msg, state)? {
                     return Ok(());
                 }
 
-                handlers::view_change(state, &mut self.msg_log, &mut *self.service, &vc_message)?;
+                handlers::view_change(state, &mut self.msg_log, &mut *self.service, &msg)?;
             }
 
             _ => warn!("Message type not implemented"),
@@ -236,17 +166,17 @@ impl PbftNode {
 
     fn broadcast_pre_prepare(
         &mut self,
-        pbft_message: &PbftMessage,
+        pbft_message: &ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         info!(
             "{}: PrePrepare, sequence number {}",
             state,
-            pbft_message.get_info().get_seq_num()
+            pbft_message.info().get_seq_num()
         );
 
         self._broadcast_pbft_message(
-            pbft_message.get_info().get_seq_num(),
+            pbft_message.info().get_seq_num(),
             &PbftMessageType::Prepare,
             (*pbft_message.get_block()).clone(),
             state,
@@ -255,7 +185,7 @@ impl PbftNode {
 
     fn check_blocks_if_not_checking(
         &mut self,
-        pbft_message: &PbftMessage,
+        pbft_message: &ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         if state.phase != PbftPhase::Checking {
@@ -271,25 +201,16 @@ impl PbftNode {
     #[allow(ptr_arg)]
     fn commit_block_if_committing(
         &mut self,
-        msg: &[u8],
-        pbft_message: &PbftMessage,
-        sender_id: &PeerId,
+        msg: &ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         if state.phase == PbftPhase::Committing {
-            handlers::commit(
-                state,
-                &mut self.msg_log,
-                &mut *self.service,
-                &pbft_message,
-                msg.to_vec(),
-                sender_id,
-            )
+            handlers::commit(state, &mut self.msg_log, &mut *self.service, msg)
         } else {
             debug!(
                 "{}: Already committed block {:?}",
                 state,
-                pbft_message.get_block().block_id
+                msg.get_block().block_id
             );
             Ok(())
         }
@@ -297,16 +218,16 @@ impl PbftNode {
 
     fn check_if_stale_checkpoint(
         &mut self,
-        pbft_message: &PbftMessage,
+        pbft_message: &ParsedMessage,
         state: &mut PbftState,
     ) -> Result<bool, PbftError> {
         debug!(
             "{}: Received Checkpoint message from {:02}",
             state,
-            state.get_node_id_from_bytes(pbft_message.get_info().get_signer_id())?
+            state.get_node_id_from_bytes(pbft_message.info().get_signer_id())?
         );
 
-        if self.msg_log.get_latest_checkpoint() >= pbft_message.get_info().get_seq_num() {
+        if self.msg_log.get_latest_checkpoint() >= pbft_message.info().get_seq_num() {
             debug!(
                 "{}: Already at a stable checkpoint with this sequence number or past it!",
                 state
@@ -318,15 +239,10 @@ impl PbftNode {
     }
 
     #[allow(ptr_arg)]
-    fn check_if_checkpoint_started(
-        &mut self,
-        msg: &[u8],
-        sender_id: &PeerId,
-        state: &mut PbftState,
-    ) -> bool {
+    fn check_if_checkpoint_started(&mut self, msg: &ParsedMessage, state: &mut PbftState) -> bool {
         // Not ready to receive checkpoint yet; only acceptable in NotStarted
         if state.phase != PbftPhase::NotStarted {
-            self.msg_log.push_backlog(msg.to_vec(), sender_id.clone());
+            self.msg_log.push_backlog(msg.clone());
             debug!("{}: Not in NotStarted; not handling checkpoint yet", state);
             false
         } else {
@@ -336,13 +252,13 @@ impl PbftNode {
 
     fn start_checkpointing_and_forward(
         &mut self,
-        pbft_message: &PbftMessage,
+        pbft_message: &ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         state.pre_checkpoint_mode = state.mode;
         state.mode = PbftMode::Checkpointing;
         self._broadcast_pbft_message(
-            pbft_message.get_info().get_seq_num(),
+            pbft_message.info().get_seq_num(),
             &PbftMessageType::Checkpoint,
             PbftBlock::new(),
             state,
@@ -351,20 +267,20 @@ impl PbftNode {
 
     fn garbage_collect_if_stable_checkpoint(
         &mut self,
-        pbft_message: &PbftMessage,
+        pbft_message: &ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         if state.mode == PbftMode::Checkpointing {
             self.msg_log
-                .check_msg_against_log(&pbft_message, true, 2 * state.f + 1)?;
+                .check_msg_against_log(pbft_message, true, 2 * state.f + 1)?;
             warn!(
                 "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
                 state,
-                pbft_message.get_info().get_seq_num()
+                pbft_message.info().get_seq_num()
             );
             self.msg_log.garbage_collect(
-                pbft_message.get_info().get_seq_num(),
-                pbft_message.get_info().get_view(),
+                pbft_message.info().get_seq_num(),
+                pbft_message.info().get_view(),
             );
 
             state.mode = state.pre_checkpoint_mode;
@@ -374,7 +290,7 @@ impl PbftNode {
 
     fn propose_view_change_if_enough_messages(
         &mut self,
-        vc_message: &PbftViewChange,
+        message: &ParsedMessage,
         state: &mut PbftState,
     ) -> Result<bool, PbftError> {
         if state.mode != PbftMode::ViewChanging {
@@ -382,9 +298,9 @@ impl PbftNode {
             // f + 1 VC messages to prevent being late to the new view party
             if self
                 .msg_log
-                .check_msg_against_log(&vc_message, true, state.f + 1)
+                .check_msg_against_log(message, true, state.f + 1)
                 .is_ok()
-                && vc_message.get_info().get_view() > state.view
+                && message.info().get_view() > state.view
             {
                 warn!("{}: Starting ViewChange from a ViewChange message", state);
                 self.propose_view_change(state)?;
@@ -443,7 +359,8 @@ impl PbftNode {
             return Ok(());
         }
 
-        self.msg_log.add_message(msg);
+        self.msg_log
+            .add_message(ParsedMessage::from_pbft_message(msg));
         state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id);
         state.idle_timeout.stop();
         state.commit_timeout.start();
@@ -602,12 +519,9 @@ impl PbftNode {
     /// Retry messages from the backlog queue
     pub fn retry_backlog(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
         let mut peer_res = Ok(());
-        if let Some((msg, sender_id)) = self.msg_log.pop_backlog() {
-            debug!(
-                "{}: Popping message from {:?} from backlog",
-                state, sender_id
-            );
-            peer_res = self.on_peer_message(&msg, &sender_id, state);
+        if let Some(msg) = self.msg_log.pop_backlog() {
+            debug!("{}: Popping message from backlog", state);
+            peer_res = self.on_peer_message(msg, state);
         }
         if state.mode == PbftMode::Normal && state.phase == PbftPhase::NotStarted {
             if let Some(msg) = self.msg_log.pop_block_backlog() {
@@ -656,12 +570,11 @@ impl PbftNode {
         let mut vc_msg = PbftViewChange::new();
         vc_msg.set_info(info);
         vc_msg.set_checkpoint_messages(RepeatedField::from_vec(checkpoint_messages.to_vec()));
-
         let msg_bytes = vc_msg
             .write_to_bytes()
             .map_err(PbftError::SerializationError)?;
 
-        self._broadcast_message(&PbftMessageType::ViewChange, &msg_bytes, state)
+        self._broadcast_message(&PbftMessageType::ViewChange, msg_bytes, state)
     }
 
     // ---------- Methods for communication between nodes ----------
@@ -685,25 +598,26 @@ impl PbftNode {
             block,
         ).unwrap_or_default();
 
-        self._broadcast_message(&msg_type, &msg_bytes, state)
+        self._broadcast_message(&msg_type, msg_bytes, state)
     }
 
     #[cfg(not(test))]
     fn _broadcast_message(
         &mut self,
         msg_type: &PbftMessageType,
-        msg_bytes: &[u8],
+        msg: Vec<u8>,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         // Broadcast to peers
         debug!("{}: Broadcasting {:?}", state, msg_type);
         self.service
-            .broadcast(String::from(msg_type).as_str(), msg_bytes.to_vec())
+            .broadcast(String::from(msg_type).as_str(), msg.clone())
             .unwrap_or_else(|err| error!("Couldn't broadcast: {}", err));
 
         // Send to self
-        let own_peer_id = state.get_own_peer_id();
-        self.on_peer_message(&msg_bytes, &own_peer_id, state)
+        let parsed_message = ParsedMessage::from_bytes(msg)?;
+
+        self.on_peer_message(parsed_message, state)
     }
 
     /// NOTE: Disabling self-sending for testing purposes
@@ -711,7 +625,7 @@ impl PbftNode {
     fn _broadcast_message(
         &mut self,
         _msg_type: &PbftMessageType,
-        _msg_bytes: &[u8],
+        _msg: Vec<u8>,
         _state: &mut PbftState,
     ) -> Result<(), PbftError> {
         return Ok(());
@@ -722,10 +636,10 @@ fn check_if_secondary(state: &PbftState) -> bool {
     !state.is_primary() && state.mode != PbftMode::Checkpointing
 }
 
-fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &PbftMessage) -> bool {
+fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &ParsedMessage) -> bool {
     if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = state.working_block {
         if block_id == &pbft_message.get_block().get_block_id()
-            && pbft_message.get_info().get_seq_num() == state.seq_num + 1
+            && pbft_message.info().get_seq_num() == state.seq_num + 1
         {
             debug!("{}: Ignoring not ready and starting multicast", state);
             true
@@ -735,7 +649,7 @@ fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &PbftMessage) -> boo
                 state,
                 &hex::encode(block_id.clone())[..6],
                 &hex::encode(pbft_message.get_block().get_block_id())[..6],
-                pbft_message.get_info().get_seq_num(),
+                pbft_message.info().get_seq_num(),
                 state.seq_num,
             );
             false
@@ -743,40 +657,6 @@ fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &PbftMessage) -> boo
     } else {
         false
     }
-}
-
-fn extract_multicast_hint(
-    state: &PbftState,
-    msg_type: &PbftMessageType,
-    msg: &[u8],
-) -> Result<PbftHint, PbftError> {
-    if msg_type.is_multicast() {
-        let pbft_message: PbftMessage = extract_message(msg)?;
-
-        debug!(
-            "{}: <<<<<< {} [Node {:02}] (v {}, seq {}, b {})",
-            state,
-            msg_type,
-            state.get_node_id_from_bytes(pbft_message.get_info().get_signer_id())?,
-            pbft_message.get_info().get_view(),
-            pbft_message.get_info().get_seq_num(),
-            &hex::encode(pbft_message.get_block().get_block_id())[..6],
-        );
-
-        Ok(handlers::multicast_hint(state, &pbft_message))
-    } else {
-        Ok(PbftHint::PresentMessage)
-    }
-}
-
-#[allow(ptr_arg)]
-fn verify_message_sender<T: PbftGetInfo>(msg: &T, sender_id: &PeerId) -> bool {
-    let signer_id = msg.get_msg_info().get_signer_id().to_vec();
-    &signer_id == sender_id
-}
-
-fn extract_message<T: Message>(msg: &[u8]) -> Result<T, PbftError> {
-    protobuf::parse_from_bytes::<T>(msg).map_err(PbftError::SerializationError)
 }
 
 /// Create a Protobuf binary representation of a PbftMessage from its info and corresponding Block
@@ -961,14 +841,14 @@ mod tests {
         seq_num: u64,
         block: Block,
         from: u64,
-    ) -> Vec<u8> {
+    ) -> ParsedMessage {
         let info = make_msg_info(&msg_type, view, seq_num, mock_peer_id(from));
 
         let mut pbft_msg = PbftMessage::new();
         pbft_msg.set_info(info);
         pbft_msg.set_block(pbft_block_from_block(block.clone()));
 
-        pbft_msg.write_to_bytes().expect("SerializationError")
+        ParsedMessage::from_pbft_message(pbft_msg)
     }
 
     fn handle_pbft_err(e: PbftError) {
@@ -1049,16 +929,7 @@ mod tests {
     /// Test the multicast protocol (`PrePrepare` => `Prepare` => `Commit`)
     #[test]
     fn multicast_protocol() {
-        let mut node = mock_node(0);
         let cfg = mock_config(4);
-        let mut state0 = PbftState::new(0, &cfg);
-        assert!(
-            node.on_peer_message(
-                b"this message will result in an error",
-                &mock_peer_id(0),
-                &mut state0
-            ).is_err()
-        );
 
         // Make sure BlockNew is in the log
         let mut node1 = mock_node(1);
@@ -1071,7 +942,7 @@ mod tests {
         // Receive a PrePrepare
         let msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, block.clone(), 0);
         node1
-            .on_peer_message(&msg, &mock_peer_id(0), &mut state1)
+            .on_peer_message(msg, &mut state1)
             .unwrap_or_else(handle_pbft_err);
 
         assert_eq!(state1.phase, PbftPhase::Preparing);
@@ -1087,7 +958,7 @@ mod tests {
             assert_eq!(state1.phase, PbftPhase::Preparing);
             let msg = mock_msg(&PbftMessageType::Prepare, 0, 1, block.clone(), peer);
             node1
-                .on_peer_message(&msg, &mock_peer_id(peer), &mut state1)
+                .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(state1.phase, PbftPhase::Checking);
@@ -1100,7 +971,7 @@ mod tests {
             assert_eq!(state1.phase, PbftPhase::Committing);
             let msg = mock_msg(&PbftMessageType::Commit, 0, 1, block.clone(), peer);
             node1
-                .on_peer_message(&msg, &mock_peer_id(peer), &mut state1)
+                .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
         }
         assert_eq!(state1.phase, PbftPhase::Finished);
@@ -1143,7 +1014,7 @@ mod tests {
         for peer in 0..3 {
             let msg = mock_msg(&PbftMessageType::Checkpoint, 0, 10, block.clone(), peer);
             node1
-                .on_peer_message(&msg, &mock_peer_id(peer), &mut state1)
+                .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
         }
 
@@ -1175,9 +1046,8 @@ mod tests {
             vc_msg.set_info(info);
             vc_msg.set_checkpoint_messages(RepeatedField::default());
 
-            let msg_bytes = vc_msg.write_to_bytes().unwrap();
             node1
-                .on_peer_message(&msg_bytes, &mock_peer_id(peer), &mut state1)
+                .on_peer_message(ParsedMessage::from_view_change_message(vc_msg), &mut state1)
                 .unwrap_or_else(handle_pbft_err);
         }
 
@@ -1198,18 +1068,5 @@ mod tests {
             .unwrap_or_else(handle_pbft_err);
 
         assert_eq!(state1.mode, PbftMode::ViewChanging);
-    }
-
-    /// Test that the legitimacy of message senders is verified correctly
-    #[test]
-    fn message_sender_verification() {
-        let peer_msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, mock_block(1), 0);
-        let msg: PbftMessage = extract_message(&peer_msg).unwrap();
-
-        // Make sure a legitimate message is accepted
-        assert!(verify_message_sender(&&msg, &mock_peer_id(0)));
-
-        // Make sure an illegitimate message is rejected
-        assert!(!verify_message_sender(&&msg, &mock_peer_id(1)));
     }
 }
