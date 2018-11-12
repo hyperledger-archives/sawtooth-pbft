@@ -20,16 +20,17 @@ version: "3.6"
 networks:
   rest_apis:
     external:
-      name: pbft_rest_apis
+      name: pbft_rest_apis_${ISOLATION_ID}
 
 volumes:
   pbft_shared_data:
     external: true
+    name: pbft_shared_data_${ISOLATION_ID}
 
 services:
 
   workload:
-    image: sawtooth-intkey-workload
+    image: sawtooth-intkey-workload:${ISOLATION_ID}
     labels:
       - "com.sawtooth.isolation_id=${ISOLATION_ID:-}"
     command: "bash -c \"\
