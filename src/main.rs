@@ -24,13 +24,12 @@
 extern crate atomicwrites;
 #[macro_use]
 extern crate clap;
-#[cfg(test)]
-extern crate crypto;
 #[macro_use]
 extern crate log;
 extern crate hex;
 extern crate log4rs;
 extern crate log4rs_syslog;
+extern crate openssl;
 extern crate protobuf;
 extern crate sawtooth_sdk;
 extern crate serde;
@@ -50,6 +49,7 @@ pub mod config;
 pub mod engine;
 pub mod error;
 pub mod handlers;
+pub mod hash;
 pub mod message_extensions;
 pub mod message_log;
 pub mod message_type;

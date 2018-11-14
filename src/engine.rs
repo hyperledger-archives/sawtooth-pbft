@@ -23,6 +23,7 @@ use sawtooth_sdk::consensus::{engine::*, service::Service};
 
 use config;
 use error::PbftError;
+use message_type::ParsedMessage;
 use node::PbftNode;
 use state::PbftState;
 use storage::get_storage;
@@ -133,7 +134,17 @@ fn handle_update(
         }
         Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state)?,
         Ok(Update::PeerMessage(message, sender_id)) => {
-            node.on_peer_message(&message.content, &sender_id, state)?
+            let parsed_message = ParsedMessage::from_peer_message(message, false)?;
+            let signer_id = parsed_message.info().get_signer_id().to_vec();
+
+            if signer_id != sender_id {
+                return Err(PbftError::InternalError(format!(
+                    "Mismatch between sender ID ({:?}) and signer ID ({:?})!",
+                    sender_id, signer_id
+                )));
+            }
+
+            node.on_peer_message(parsed_message, state)?
         }
         Ok(Update::Shutdown) => return Ok(false),
         Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {

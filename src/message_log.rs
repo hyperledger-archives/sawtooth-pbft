@@ -23,12 +23,11 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt;
 
 use hex;
-use sawtooth_sdk::consensus::engine::{Block, PeerId};
+use sawtooth_sdk::consensus::engine::Block;
 
 use config::PbftConfig;
 use error::PbftError;
-use message_extensions::PbftGetInfo;
-use message_type::{PbftHint, PbftMessageType};
+use message_type::{ParsedMessage, PbftHint, PbftMessageType, PbftMessageWrapper};
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 /// The log keeps track of the last stable checkpoint
@@ -41,7 +40,7 @@ pub struct PbftStableCheckpoint {
 /// Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
     /// Generic messages (BlockNew, PrePrepare, Prepare, Commit, Checkpoint)
-    messages: HashSet<PbftMessage>,
+    messages: HashSet<ParsedMessage>,
 
     /// View change messages
     view_changes: HashSet<PbftViewChange>,
@@ -61,7 +60,7 @@ pub struct PbftLog {
     checkpoint_period: u64,
 
     /// Backlog of messages (from peers) with sender's ID
-    backlog: VecDeque<(Vec<u8>, PeerId)>,
+    backlog: VecDeque<ParsedMessage>,
 
     /// Backlog of blocks (from BlockNews messages)
     block_backlog: VecDeque<Block>,
@@ -75,7 +74,7 @@ impl fmt::Display for PbftLog {
         let msg_infos: Vec<PbftMessageInfo> = self
             .messages
             .iter()
-            .map(|ref msg| msg.get_info().clone())
+            .map(|ref msg| msg.info().clone())
             .chain(
                 self.view_changes
                     .iter()
@@ -103,16 +102,22 @@ impl fmt::Display for PbftLog {
     }
 }
 
-fn check_msg_has_type(pbft_message: &PbftMessage, check_type: &PbftMessageType) -> bool {
-    pbft_message.get_info().get_msg_type() != String::from(check_type)
+fn check_msg_has_type(pbft_message: &ParsedMessage, check_type: &PbftMessageType) -> bool {
+    pbft_message.info().get_msg_type() != String::from(check_type)
 }
 
-fn commit_msg_into_prepare_msg(pbft_message: &PbftMessage) -> PbftMessage {
-    let mut prepare_message = pbft_message.clone();
+fn commit_msg_into_prepare_msg(message: &ParsedMessage) -> ParsedMessage {
+    let mut prepare_message = message.get_pbft_message().clone();
     let mut info = prepare_message.get_info().clone();
     info.set_msg_type(String::from(&PbftMessageType::Prepare));
     prepare_message.set_info(info);
-    prepare_message
+    ParsedMessage {
+        from_self: false,
+        header_bytes: message.header_bytes.clone(),
+        header_signature: message.header_signature.clone(),
+        message: PbftMessageWrapper::Message(prepare_message),
+        message_bytes: message.message_bytes.clone(),
+    }
 }
 
 impl PbftLog {
@@ -137,11 +142,11 @@ impl PbftLog {
     ///  + A `PrePrepare` message matching the original message (in the current view)
     ///  + `2f + 1` matching `Prepare` messages from different nodes that match
     ///    `PrePrepare` message above (including its own)
-    pub fn check_prepared(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
+    pub fn check_prepared(&self, pbft_message: &ParsedMessage, f: u64) -> Result<(), PbftError> {
         if check_msg_has_type(pbft_message, &PbftMessageType::Prepare) {
             return Err(PbftError::NotReadyForMessage);
         }
-        let info = pbft_message.get_info();
+        let info = pbft_message.info();
         let block_new_msgs = self.check_log_has_one_block_new_msg(info)?;
         let pre_prep_msgs = self.check_log_has_one_pre_prepared_msg(info)?;
         self.check_log_prepare_msgs_match(&block_new_msgs, &pre_prep_msgs, info)?;
@@ -154,7 +159,7 @@ impl PbftLog {
     fn check_log_has_one_block_new_msg(
         &self,
         info: &PbftMessageInfo,
-    ) -> Result<Vec<&PbftMessage>, PbftError> {
+    ) -> Result<Vec<&ParsedMessage>, PbftError> {
         let block_new_msgs = self.get_messages_of_type(
             &PbftMessageType::BlockNew,
             info.get_seq_num(),
@@ -174,7 +179,7 @@ impl PbftLog {
     fn check_log_has_one_pre_prepared_msg(
         &self,
         info: &PbftMessageInfo,
-    ) -> Result<Vec<&PbftMessage>, PbftError> {
+    ) -> Result<Vec<&ParsedMessage>, PbftError> {
         let pre_prep_msgs = self.get_messages_of_type(
             &PbftMessageType::PrePrepare,
             info.get_seq_num(),
@@ -193,8 +198,8 @@ impl PbftLog {
 
     fn check_log_prepare_msgs_match(
         &self,
-        block_new_msgs: &[&PbftMessage],
-        pre_prep_msgs: &[&PbftMessage],
+        block_new_msgs: &[&ParsedMessage],
+        pre_prep_msgs: &[&ParsedMessage],
         info: &PbftMessageInfo,
     ) -> Result<(), PbftError> {
         let prep_msgs = self.get_messages_of_type(
@@ -202,11 +207,11 @@ impl PbftLog {
             info.get_seq_num(),
             info.get_view(),
         );
-        for prep_msg in &prep_msgs {
+        for prep_msg in prep_msgs {
             // Make sure the contents match
-            if (!infos_match(prep_msg.get_info(), &pre_prep_msgs[0].get_info())
+            if (!infos_match(prep_msg.info(), &pre_prep_msgs[0].info())
                 && prep_msg.get_block() != pre_prep_msgs[0].get_block())
-                || (!infos_match(prep_msg.get_info(), block_new_msgs[0].get_info())
+                || (!infos_match(prep_msg.info(), block_new_msgs[0].info())
                     && prep_msg.get_block() != block_new_msgs[0].get_block())
             {
                 return Err(PbftError::MessageMismatch(PbftMessageType::Prepare));
@@ -220,30 +225,28 @@ impl PbftLog {
     /// `check_committable` is true if for this node:
     ///   + `check_prepared` is true
     ///   + This node has accepted `2f + 1` `Commit` messages, including its own
-    pub fn check_committable(&self, pbft_message: &PbftMessage, f: u64) -> Result<(), PbftError> {
+    pub fn check_committable(&self, pbft_message: &ParsedMessage, f: u64) -> Result<(), PbftError> {
         if check_msg_has_type(pbft_message, &PbftMessageType::Commit) {
             return Err(PbftError::NotReadyForMessage);
         }
         self.check_msg_against_log(&pbft_message, true, 2 * f + 1)?;
 
-        self.check_prepared(&commit_msg_into_prepare_msg(&pbft_message), f)?;
+        self.check_prepared(&commit_msg_into_prepare_msg(pbft_message), f)?;
         Ok(())
     }
 
     /// Check an incoming message against its counterparts in the message log
-    pub fn check_msg_against_log<T: PbftGetInfo>(
+    pub fn check_msg_against_log(
         &self,
-        message: &T,
+        message: &ParsedMessage,
         check_match: bool,
         num_cutoff: u64,
     ) -> Result<(), PbftError> {
-        let msg_type = PbftMessageType::from(message.get_msg_info().get_msg_type());
+        let info = message.info();
+        let msg_type = PbftMessageType::from(info.get_msg_type());
 
-        let msg_infos: Vec<&PbftMessageInfo> = self.get_message_infos(
-            &msg_type,
-            message.get_msg_info().get_seq_num(),
-            message.get_msg_info().get_view(),
-        );
+        let msg_infos: Vec<&PbftMessageInfo> =
+            self.get_message_infos(&msg_type, info.get_seq_num(), info.get_view());
 
         let num_cp_msgs = num_unique_signers(&msg_infos);
         if num_cp_msgs < num_cutoff {
@@ -257,7 +260,7 @@ impl PbftLog {
         if check_match {
             let non_matches: usize = msg_infos
                 .iter()
-                .filter(|&m| !infos_match(message.get_msg_info(), m))
+                .filter(|&m| !infos_match(message.info(), m))
                 .count();
             if non_matches > 0 {
                 return Err(PbftError::MessageMismatch(msg_type));
@@ -267,12 +270,12 @@ impl PbftLog {
     }
 
     /// Add a generic PBFT message to the log
-    pub fn add_message(&mut self, msg: PbftMessage) {
-        if msg.get_info().get_seq_num() < self.high_water_mark
-            || msg.get_info().get_seq_num() >= self.low_water_mark
+    pub fn add_message(&mut self, msg: ParsedMessage) {
+        if msg.info().get_seq_num() < self.high_water_mark
+            || msg.info().get_seq_num() >= self.low_water_mark
         {
             // If the message wasn't already in the log, increment cycles
-            let msg_type = PbftMessageType::from(msg.get_info().get_msg_type());
+            let msg_type = PbftMessageType::from(msg.info().get_msg_type());
             let inserted = self.messages.insert(msg);
             if msg_type == PbftMessageType::BlockNew && inserted {
                 self.cycles += 1;
@@ -281,7 +284,7 @@ impl PbftLog {
         } else {
             warn!(
                 "Not adding message with sequence number {}; outside of log bounds ({}, {})",
-                msg.get_info().get_seq_num(),
+                msg.info().get_seq_num(),
                 self.low_water_mark,
                 self.high_water_mark,
             );
@@ -297,18 +300,16 @@ impl PbftLog {
     #[allow(ptr_arg)]
     pub fn add_message_with_hint(
         &mut self,
-        pbft_message: &PbftMessage,
+        msg: ParsedMessage,
         hint: &PbftHint,
-        msg: Vec<u8>,
-        sender_id: &PeerId,
     ) -> Result<(), PbftError> {
         match hint {
             PbftHint::FutureMessage => {
-                self.push_backlog(msg, sender_id.clone());
+                self.push_backlog(msg);
                 Err(PbftError::NotReadyForMessage)
             }
             PbftHint::PastMessage => {
-                self.add_message(pbft_message.clone());
+                self.add_message(msg);
                 Err(PbftError::NotReadyForMessage)
             }
             PbftHint::PresentMessage => Ok(()),
@@ -321,11 +322,11 @@ impl PbftLog {
         msg_type: &PbftMessageType,
         sequence_number: u64,
         view: u64,
-    ) -> Vec<&PbftMessage> {
+    ) -> Vec<&ParsedMessage> {
         self.messages
             .iter()
             .filter(|&msg| {
-                let info = (*msg).get_info();
+                let info = (*msg).info();
                 info.get_msg_type() == String::from(msg_type)
                     && info.get_seq_num() == sequence_number
                     && info.get_view() == view
@@ -342,7 +343,7 @@ impl PbftLog {
     ) -> Vec<&PbftMessageInfo> {
         let mut infos = vec![];
         for msg in &self.messages {
-            let info = msg.get_info();
+            let info = msg.info();
             if info.get_msg_type() == String::from(msg_type)
                 && info.get_seq_num() == sequence_number
                 && info.get_view() == view
@@ -373,7 +374,7 @@ impl PbftLog {
         block: &PbftBlock,
     ) -> usize {
         #[allow(map_clone)]
-        let zero_seq_msgs: Vec<PbftMessage> = self
+        let zero_seq_msgs: Vec<ParsedMessage> = self
             .get_messages_of_type(msg_type, 0, view)
             .iter()
             .map(|&msg| msg.clone())
@@ -383,16 +384,16 @@ impl PbftLog {
             self.messages.remove(m);
         }
 
-        let mut fixed_msgs = Vec::<PbftMessage>::new();
+        let mut fixed_msgs = Vec::<ParsedMessage>::new();
         for mut m in zero_seq_msgs {
-            if m.get_info().get_msg_type() == String::from(msg_type)
-                && m.get_info().get_seq_num() == 0
+            if m.info().get_msg_type() == String::from(msg_type)
+                && m.info().get_seq_num() == 0
                 && m.get_block().get_block_id() == block.get_block_id()
             {
-                let mut info: PbftMessageInfo = m.get_info().clone();
+                let mut info: PbftMessageInfo = m.info().clone();
                 let mut new_msg = m.clone();
                 info.set_seq_num(new_sequence_number);
-                new_msg.set_info(info);
+                *new_msg.info_mut() = info;
                 fixed_msgs.push(new_msg.clone());
             }
         }
@@ -434,7 +435,7 @@ impl PbftLog {
         let cp_msgs: Vec<PbftMessage> = self
             .get_messages_of_type(&PbftMessageType::Checkpoint, stable_checkpoint, view)
             .iter()
-            .map(|&cp| cp.clone())
+            .map(|&cp| cp.get_pbft_message().clone())
             .collect();
         let cp = PbftStableCheckpoint {
             seq_num: stable_checkpoint,
@@ -448,7 +449,7 @@ impl PbftLog {
             .messages
             .iter()
             .filter(|ref msg| {
-                let seq_num = msg.get_info().get_seq_num();
+                let seq_num = msg.info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
             }).cloned()
             .collect();
@@ -462,11 +463,11 @@ impl PbftLog {
             .collect();
     }
 
-    pub fn push_backlog(&mut self, msg: Vec<u8>, sender_id: PeerId) {
-        self.backlog.push_back((msg, sender_id));
+    pub fn push_backlog(&mut self, msg: ParsedMessage) {
+        self.backlog.push_back(msg);
     }
 
-    pub fn pop_backlog(&mut self) -> Option<(Vec<u8>, PeerId)> {
+    pub fn pop_backlog(&mut self) -> Option<ParsedMessage> {
         self.backlog.pop_front()
     }
 
@@ -501,6 +502,7 @@ fn infos_match(m1: &PbftMessageInfo, m2: &PbftMessageInfo) -> bool {
 mod tests {
     use super::*;
     use config;
+    use hash::hash_sha256;
     use sawtooth_sdk::consensus::engine::PeerId;
 
     /// Create a PbftMessage, given its type, view, sequence number, and who it's from
@@ -509,10 +511,7 @@ mod tests {
         view: u64,
         seq_num: u64,
         signer_id: PeerId,
-    ) -> PbftMessage {
-        use crypto::digest::Digest;
-        use crypto::sha2::Sha256;
-
+    ) -> ParsedMessage {
         let mut info = PbftMessageInfo::new();
         info.set_msg_type(String::from(msg_type));
         info.set_view(view);
@@ -520,16 +519,17 @@ mod tests {
         info.set_signer_id(Vec::<u8>::from(signer_id.clone()));
 
         let mut pbft_block = PbftBlock::new();
-        let mut sha = Sha256::new();
-        sha.input_str(format!("I'm a block with block num {}", seq_num).as_str());
-        pbft_block.set_block_id(sha.result_str().as_bytes().to_vec());
+        pbft_block.set_block_id(hash_sha256(
+            format!("I'm a block with block num {}", seq_num).as_bytes(),
+        ));
         pbft_block.set_signer_id(Vec::<u8>::from(signer_id));
         pbft_block.set_block_num(seq_num);
 
         let mut msg = PbftMessage::new();
         msg.set_info(info);
         msg.set_block(pbft_block);
-        msg
+
+        ParsedMessage::from_pbft_message(msg)
     }
 
     /// Obtain the PeerId for node `which`

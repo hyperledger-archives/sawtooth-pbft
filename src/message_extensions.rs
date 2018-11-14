@@ -25,23 +25,6 @@ use std::hash::{Hash, Hasher};
 
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
-// All message types that have "info" inside of them
-pub trait PbftGetInfo {
-    fn get_msg_info(&self) -> &PbftMessageInfo;
-}
-
-impl<'a> PbftGetInfo for &'a PbftMessage {
-    fn get_msg_info(&self) -> &PbftMessageInfo {
-        self.get_info()
-    }
-}
-
-impl<'a> PbftGetInfo for &'a PbftViewChange {
-    fn get_msg_info(&self) -> &PbftMessageInfo {
-        self.get_info()
-    }
-}
-
 impl Eq for PbftMessage {}
 impl Eq for PbftViewChange {}
 

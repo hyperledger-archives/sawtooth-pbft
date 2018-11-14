@@ -26,8 +26,9 @@ use sawtooth_sdk::consensus::service::Service;
 
 use error::PbftError;
 use message_log::PbftLog;
+use message_type::ParsedMessage;
 use message_type::{PbftHint, PbftMessageType};
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
 use state::{PbftPhase, PbftState, WorkingBlockOption};
 
 /// Handle a `PrePrepare` message
@@ -37,9 +38,10 @@ use state::{PbftPhase, PbftState, WorkingBlockOption};
 pub fn pre_prepare(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
-    pbft_message: &PbftMessage,
+    message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    let info = pbft_message.get_info();
+    let pbft_message = message.get_pbft_message();
+    let info = message.info();
 
     check_view_mismatch(state, info)?;
 
@@ -164,33 +166,23 @@ pub fn commit(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
     service: &mut Service,
-    pbft_message: &PbftMessage,
-    msg_content: Vec<u8>,
-    sender_id: &PeerId,
+    message: &ParsedMessage,
 ) -> Result<(), PbftError> {
     let working_block = clone_working_block(state)?;
 
     state.switch_phase(PbftPhase::Finished);
 
-    check_if_block_already_seen(state, &working_block, pbft_message)?;
+    check_if_block_already_seen(state, &working_block, message)?;
 
-    check_if_commiting_with_current_chain_head(
-        state,
-        msg_log,
-        service,
-        pbft_message,
-        msg_content,
-        &working_block,
-        sender_id,
-    )?;
+    check_if_commiting_with_current_chain_head(state, msg_log, service, message, &working_block)?;
 
     info!(
         "{}: Committing block {:?}",
         state,
-        pbft_message.get_block().block_id.clone()
+        message.get_block().block_id.clone()
     );
 
-    commit_block_from_message(service, pbft_message)?;
+    commit_block_from_message(service, message)?;
 
     reset_working_block(state);
 
@@ -208,20 +200,18 @@ fn clone_working_block(state: &PbftState) -> Result<PbftBlock, PbftError> {
 fn check_if_block_already_seen(
     state: &PbftState,
     working_block: &PbftBlock,
-    pbft_message: &PbftMessage,
+    message: &ParsedMessage,
 ) -> Result<(), PbftError> {
+    let block = message.get_block();
+    let block_id = &block.block_id;
     // Don't commit if we've seen this block already, but go ahead if we somehow
     // skipped a block.
-    if pbft_message.get_block().get_block_id() != working_block.get_block_id()
-        && pbft_message.get_block().get_block_num() >= working_block.get_block_num()
+    if block_id != &working_block.get_block_id()
+        && block.get_block_num() >= working_block.get_block_num()
     {
-        warn!(
-            "{}: Not committing block {:?}",
-            state,
-            pbft_message.get_block().block_id
-        );
+        warn!("{}: Not committing block {:?}", state, block_id);
         Err(PbftError::BlockMismatch(
-            pbft_message.get_block().clone(),
+            block.clone(),
             working_block.clone(),
         ))
     } else {
@@ -234,27 +224,28 @@ fn check_if_commiting_with_current_chain_head(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
     service: &mut Service,
-    pbft_message: &PbftMessage,
-    msg_content: Vec<u8>,
+    message: &ParsedMessage,
     working_block: &PbftBlock,
-    sender_id: &PeerId,
 ) -> Result<(), PbftError> {
+    let block = message.get_block();
+    let block_id = block.get_block_id().to_vec();
+
     let head = service
         .get_chain_head()
         .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
-    let cur_block = get_block_by_id(
-        &mut *service,
-        &pbft_message.get_block().get_block_id().to_vec(),
-    ).ok_or_else(|| PbftError::WrongNumBlocks)?;
+
+    let cur_block = get_block_by_id(&mut *service, &block_id.to_vec())
+        .ok_or_else(|| PbftError::WrongNumBlocks)?;
+
     if cur_block.previous_id != head.block_id {
         warn!(
             "{}: Not committing block {:?} but pushing to backlog",
             state,
-            pbft_message.get_block().block_id.clone()
+            block_id.clone()
         );
-        msg_log.push_backlog(msg_content, sender_id.clone());
+        msg_log.push_backlog(message.clone());
         Err(PbftError::BlockMismatch(
-            pbft_message.get_block().clone(),
+            block.clone(),
             working_block.clone(),
         ))
     } else {
@@ -264,10 +255,10 @@ fn check_if_commiting_with_current_chain_head(
 
 fn commit_block_from_message(
     service: &mut Service,
-    pbft_message: &PbftMessage,
+    message: &ParsedMessage,
 ) -> Result<(), PbftError> {
     service
-        .commit_block(pbft_message.get_block().block_id.clone())
+        .commit_block(message.get_block().block_id.clone())
         .map_err(|_| PbftError::InternalError(String::from("Failed to commit block")))
 }
 
@@ -280,15 +271,15 @@ fn reset_working_block(state: &mut PbftState) {
 /// which in turn call `action_from_hint()`, and either push to backlog for future messages, or add
 /// to message log for past messages. This usually only makes sense for regular multicast messages
 /// (`PrePrepare`, `Prepare`, and `Commit`)
-pub fn multicast_hint(state: &PbftState, pbft_message: &PbftMessage) -> PbftHint {
-    let msg_info = pbft_message.get_info();
+pub fn multicast_hint(state: &PbftState, message: &ParsedMessage) -> PbftHint {
+    let msg_info = message.info();
     let msg_type = PbftMessageType::from(msg_info.get_msg_type());
 
     if msg_info.get_seq_num() > state.seq_num {
         debug!(
             "{}: seq {} > {}, accept all.",
             state,
-            pbft_message.get_info().get_seq_num(),
+            msg_info.get_seq_num(),
             state.seq_num
         );
         return PbftHint::FutureMessage;
@@ -345,7 +336,7 @@ pub fn view_change(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
     service: &mut Service,
-    vc_message: &PbftViewChange,
+    vc_message: &ParsedMessage,
 ) -> Result<(), PbftError> {
     check_received_enough_view_changes(state, msg_log, vc_message)?;
 
@@ -380,13 +371,13 @@ pub fn force_view_change(state: &mut PbftState, service: &mut Service) {
 fn check_received_enough_view_changes(
     state: &PbftState,
     msg_log: &PbftLog,
-    vc_message: &PbftViewChange,
+    vc_message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    msg_log.check_msg_against_log(&vc_message, true, 2 * state.f + 1)
+    msg_log.check_msg_against_log(vc_message, true, 2 * state.f + 1)
 }
 
-fn set_current_view_from_msg(state: &mut PbftState, vc_message: &PbftViewChange) {
-    set_current_view(state, vc_message.get_info().get_view())
+fn set_current_view_from_msg(state: &mut PbftState, vc_message: &ParsedMessage) {
+    set_current_view(state, vc_message.info().get_view())
 }
 
 fn set_current_view(state: &mut PbftState, view: u64) {
@@ -476,19 +467,18 @@ pub fn pbft_block_from_block(block: Block) -> PbftBlock {
 mod tests {
     use super::*;
     use config;
-    use crypto::digest::Digest;
-    use crypto::sha2::Sha256;
+    use hash::hash_sha256;
 
     fn mock_peer_id(num: u64) -> PeerId {
-        let mut sha = Sha256::new();
-        sha.input_str(format!("I'm a peer (number {})", num).as_str());
-        PeerId::from(sha.result_str().as_bytes().to_vec())
+        PeerId::from(hash_sha256(
+            format!("I'm a peer (number {})", num).as_bytes(),
+        ))
     }
 
     fn mock_block_id(num: u64) -> BlockId {
-        let mut sha = Sha256::new();
-        sha.input_str(format!("I'm a block with block num {}", num).as_str());
-        BlockId::from(sha.result_str().as_bytes().to_vec())
+        BlockId::from(hash_sha256(
+            format!("I'm a block with block num {}", num).as_bytes(),
+        ))
     }
 
     fn mock_block(num: u64) -> Block {
@@ -508,12 +498,12 @@ mod tests {
         seq_num: u64,
         block: Block,
         from: u64,
-    ) -> PbftMessage {
+    ) -> ParsedMessage {
         let info = make_msg_info(&msg_type, view, seq_num, mock_peer_id(from));
         let mut pbft_msg = PbftMessage::new();
         pbft_msg.set_info(info);
         pbft_msg.set_block(pbft_block_from_block(block.clone()));
-        pbft_msg
+        ParsedMessage::from_pbft_message(pbft_msg)
     }
 
     #[test]
