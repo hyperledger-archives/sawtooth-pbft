@@ -141,7 +141,7 @@ fn handle_update(
         }
         Ok(Update::Shutdown) => return Ok(false),
         Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
-            error!("PBFT currently only supports static networks");
+            debug!("Received PeerConnected/PeerDisconnected message");
         }
         Err(RecvTimeoutError::Timeout) => return Err(PbftError::Timeout),
         Err(RecvTimeoutError::Disconnected) => {
