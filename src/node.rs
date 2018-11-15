@@ -28,7 +28,7 @@ use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
 
-use config::PbftConfig;
+use config::{get_peers_from_settings, PbftConfig};
 use error::PbftError;
 use handlers;
 use hash::verify_sha512;
@@ -413,9 +413,17 @@ impl PbftNode {
 
         // All of the votes must come from known peers, and the primary can't explicitly
         // vote itself, since publishing a block is an implicit vote. Check that the votes
-        // we've received are a subset of "peers - primary".
-        let peer_ids: HashSet<_> = state
-            .peers()
+        // we've received are a subset of "peers - primary". We need to use the list of
+        // peers from the block we're verifying the seal for, since it may have changed.
+        let settings = self
+            .service
+            .get_settings(
+                block.previous_id.clone(),
+                vec![String::from("sawtooth.consensus.pbft.peers")],
+            ).expect("Failed to get settings");
+        let peers = get_peers_from_settings(&settings);
+
+        let peer_ids: HashSet<_> = peers
             .iter()
             .cloned()
             .filter_map(|pid| {
@@ -620,14 +628,14 @@ impl PbftNode {
                     state, block_id
                 );
                 self.service
-                    .initialize_block(Some(block_id))
+                    .initialize_block(Some(block_id.clone()))
                     .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
             }
 
             state.switch_phase(PbftPhase::NotStarted);
 
-            // Start a view change if we need to force one for fairness
-            if state.at_forced_view_change() {
+            // Start a view change if we need to force one for fairness or if membership changed
+            if state.at_forced_view_change() || self.update_membership(block_id, state) {
                 self.force_view_change(state);
             }
 
@@ -891,6 +899,34 @@ impl PbftNode {
         self._broadcast_message(&PbftMessageType::ViewChange, msg_bytes, state)
     }
 
+    /// Check the on-chain list of peers; if it has changed, update peers list and return true.
+    fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) -> bool {
+        // Get list of peers from settings
+        let settings = self
+            .service
+            .get_settings(
+                block_id,
+                vec![String::from("sawtooth.consensus.pbft.peers")],
+            ).expect("Failed to get settings");
+        let peers = get_peers_from_settings(&settings);
+        let new_peers_set: HashSet<PeerId> = peers.iter().cloned().collect();
+
+        // Check if membership has changed
+        let old_peers_set: HashSet<PeerId> = state.peer_ids.iter().cloned().collect();
+
+        if new_peers_set != old_peers_set {
+            state.peer_ids = peers;
+            let f = ((state.peer_ids.len() - 1) / 3) as u64;
+            if f == 0 {
+                panic!("This network no longer contains enough nodes to be fault tolerant");
+            }
+            state.f = f;
+            return true;
+        }
+
+        false
+    }
+
     // ---------- Methods for communication between nodes ----------
 
     // Broadcast a message to this node's peers, and itself
@@ -1101,7 +1137,12 @@ mod tests {
             _block_id: BlockId,
             _settings: Vec<String>,
         ) -> Result<HashMap<String, String>, Error> {
-            Ok(Default::default())
+            let mut settings: HashMap<String, String> = Default::default();
+            settings.insert(
+                "sawtooth.consensus.pbft.peers".to_string(),
+                "[\"00\", \"01\", \"02\", \"03\"]".to_string(),
+            );
+            Ok(settings)
         }
         fn get_state(
             &mut self,
