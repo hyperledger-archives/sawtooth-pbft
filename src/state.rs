@@ -24,6 +24,7 @@ use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
 
 use config::PbftConfig;
 use error::PbftError;
+use message_log::PbftLog;
 use message_type::PbftMessageType;
 use protos::pbft_message::PbftBlock;
 use timing::Timeout;
@@ -152,6 +153,9 @@ pub struct PbftState {
 
     /// The current block this node is working on
     pub working_block: WorkingBlockOption,
+
+    /// Messages this node has received
+    pub msg_log: PbftLog,
 }
 
 impl PbftState {
@@ -184,6 +188,7 @@ impl PbftState {
             idle_timeout: Timeout::new(config.idle_timeout),
             forced_view_change_period: config.forced_view_change_period,
             working_block: WorkingBlockOption::NoWorkingBlock,
+            msg_log: PbftLog::new(config),
         }
     }
 

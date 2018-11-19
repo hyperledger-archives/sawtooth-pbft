@@ -35,22 +35,18 @@ use state::{PbftPhase, PbftState, WorkingBlockOption};
 /// A `PrePrepare` message with this view and sequence number must not already exist in the log. If
 /// this node is a primary, make sure there's a corresponding BlockNew message. If this node is a
 /// secondary, then it takes the sequence number from this message as its own.
-pub fn pre_prepare(
-    state: &mut PbftState,
-    msg_log: &mut PbftLog,
-    message: &ParsedMessage,
-) -> Result<(), PbftError> {
+pub fn pre_prepare(state: &mut PbftState, message: &ParsedMessage) -> Result<(), PbftError> {
     let pbft_message = message.get_pbft_message();
     let info = message.info();
 
     check_view_mismatch(state, info)?;
 
-    check_pre_prepare_does_not_exist(msg_log, info)?;
+    check_pre_prepare_does_not_exist(&state.msg_log, info)?;
 
     if state.is_primary() {
-        check_pre_prepare_matches_original_block_new(msg_log, pbft_message, info)?;
+        check_pre_prepare_matches_original_block_new(&state.msg_log, pbft_message, info)?;
     } else {
-        set_seq_num_and_fix_block_new_seq_num(state, msg_log, &pbft_message, info)?;
+        set_seq_num_and_fix_block_new_seq_num(state, &pbft_message, info)?;
     }
 
     set_current_working_block(state, pbft_message);
@@ -118,7 +114,6 @@ fn check_pre_prepare_matches_original_block_new(
 
 fn set_seq_num_and_fix_block_new_seq_num(
     state: &mut PbftState,
-    msg_log: &mut PbftLog,
     pbft_message: &PbftMessage,
     info: &PbftMessageInfo,
 ) -> Result<(), PbftError> {
@@ -128,7 +123,7 @@ fn set_seq_num_and_fix_block_new_seq_num(
 
     // ...then update the BlockNew message we received with the correct
     // sequence number
-    let num_updated = msg_log.fix_seq_nums(
+    let num_updated = state.msg_log.fix_seq_nums(
         &PbftMessageType::BlockNew,
         info.get_seq_num(),
         info.get_view(),
@@ -164,7 +159,6 @@ fn set_current_working_block(state: &mut PbftState, pbft_message: &PbftMessage) 
 #[allow(ptr_arg)]
 pub fn commit(
     state: &mut PbftState,
-    msg_log: &mut PbftLog,
     service: &mut Service,
     message: &ParsedMessage,
 ) -> Result<(), PbftError> {
@@ -174,7 +168,7 @@ pub fn commit(
 
     check_if_block_already_seen(state, &working_block, message)?;
 
-    check_if_commiting_with_current_chain_head(state, msg_log, service, message, &working_block)?;
+    check_if_commiting_with_current_chain_head(state, service, message, &working_block)?;
 
     info!(
         "{}: Committing block {:?}",
@@ -222,7 +216,6 @@ fn check_if_block_already_seen(
 #[allow(ptr_arg)]
 fn check_if_commiting_with_current_chain_head(
     state: &mut PbftState,
-    msg_log: &mut PbftLog,
     service: &mut Service,
     message: &ParsedMessage,
     working_block: &PbftBlock,
@@ -243,7 +236,7 @@ fn check_if_commiting_with_current_chain_head(
             state,
             block_id.clone()
         );
-        msg_log.push_backlog(message.clone());
+        state.msg_log.push_backlog(message.clone());
         Err(PbftError::BlockMismatch(
             block.clone(),
             working_block.clone(),
@@ -334,11 +327,10 @@ pub fn multicast_hint(state: &PbftState, message: &ParsedMessage) -> PbftHint {
 /// node is now the primary).
 pub fn view_change(
     state: &mut PbftState,
-    msg_log: &mut PbftLog,
     service: &mut Service,
     vc_message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    check_received_enough_view_changes(state, msg_log, vc_message)?;
+    check_received_enough_view_changes(state, vc_message)?;
 
     set_current_view_from_msg(state, vc_message);
 
@@ -370,10 +362,11 @@ pub fn force_view_change(state: &mut PbftState, service: &mut Service) {
 
 fn check_received_enough_view_changes(
     state: &PbftState,
-    msg_log: &PbftLog,
     vc_message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    msg_log.check_msg_against_log(vc_message, true, 2 * state.f + 1)
+    state
+        .msg_log
+        .check_msg_against_log(vc_message, true, 2 * state.f + 1)
 }
 
 fn set_current_view_from_msg(state: &mut PbftState, vc_message: &ParsedMessage) {
@@ -511,24 +504,22 @@ mod tests {
         let cfg = config::mock_config(4);
         let mut state0 = PbftState::new(0, &cfg);
         let mut state1 = PbftState::new(1, &cfg);
-        let mut log0 = PbftLog::new(&cfg);
-        let mut log1 = PbftLog::new(&cfg);
 
         let pre_prep_msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, mock_block(1), 0);
 
-        assert!(pre_prepare(&mut state0, &mut log0, &pre_prep_msg).is_err());
-        assert!(pre_prepare(&mut state1, &mut log1, &pre_prep_msg).is_err());
+        assert!(pre_prepare(&mut state0, &pre_prep_msg).is_err());
+        assert!(pre_prepare(&mut state1, &pre_prep_msg).is_err());
 
         // Put the block new in the log
         let block_new0 = mock_msg(&PbftMessageType::BlockNew, 0, 1, mock_block(1), 0);
-        log0.add_message(block_new0);
+        state0.msg_log.add_message(block_new0);
         state0.seq_num = 1;
 
         let block_new1 = mock_msg(&PbftMessageType::BlockNew, 0, 0, mock_block(1), 0);
-        log1.add_message(block_new1);
+        state1.msg_log.add_message(block_new1);
 
-        assert!(pre_prepare(&mut state0, &mut log0, &pre_prep_msg).is_ok());
-        assert!(pre_prepare(&mut state1, &mut log1, &pre_prep_msg).is_ok());
+        assert!(pre_prepare(&mut state0, &pre_prep_msg).is_ok());
+        assert!(pre_prepare(&mut state1, &pre_prep_msg).is_ok());
 
         assert_eq!(state0.seq_num, 1);
         assert_eq!(state1.seq_num, 1);

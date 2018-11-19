@@ -43,19 +43,13 @@ use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 pub struct PbftNode {
     /// Used for interactions with the validator
     pub service: Box<Service>,
-
-    /// Messages this node has received
-    pub msg_log: PbftLog,
 }
 
 impl PbftNode {
     /// Construct a new PBFT node.
     /// After the node is created, if the node is primary, it initializes a new block on the chain.
     pub fn new(config: &PbftConfig, service: Box<Service>, is_primary: bool) -> Self {
-        let mut n = PbftNode {
-            service,
-            msg_log: PbftLog::new(config),
-        };
+        let mut n = PbftNode { service };
 
         // Primary initializes a block
         if is_primary {
@@ -90,38 +84,41 @@ impl PbftNode {
         match msg_type {
             PbftMessageType::PrePrepare => {
                 if !ignore_hint_pre_prepare(state, &msg) {
-                    self.msg_log
+                    state
+                        .msg_log
                         .add_message_with_hint(msg.clone(), &multicast_hint)?;
                 }
 
-                handlers::pre_prepare(state, &mut self.msg_log, &msg)?;
+                handlers::pre_prepare(state, &msg)?;
 
                 // NOTE: Putting log add here is necessary because on_peer_message gets
                 // called again inside of _broadcast_pbft_message
-                self.msg_log.add_message(msg.clone());
+                state.msg_log.add_message(msg.clone());
                 state.switch_phase(PbftPhase::Preparing);
 
                 self.broadcast_pre_prepare(&msg, state)?;
             }
 
             PbftMessageType::Prepare => {
-                self.msg_log
+                state
+                    .msg_log
                     .add_message_with_hint(msg.clone(), &multicast_hint)?;
 
-                self.msg_log.add_message(msg.clone());
+                state.msg_log.add_message(msg.clone());
 
-                self.msg_log.check_prepared(&msg, state.f)?;
+                state.msg_log.check_prepared(&msg, state.f)?;
 
                 self.check_blocks_if_not_checking(&msg, state)?;
             }
 
             PbftMessageType::Commit => {
-                self.msg_log
+                state
+                    .msg_log
                     .add_message_with_hint(msg.clone(), &multicast_hint)?;
 
-                self.msg_log.add_message(msg.clone());
+                state.msg_log.add_message(msg.clone());
 
-                self.msg_log.check_committable(&msg, state.f)?;
+                state.msg_log.check_committable(&msg, state.f)?;
 
                 self.commit_block_if_committing(&msg, state)?;
             }
@@ -136,7 +133,7 @@ impl PbftNode {
                 }
 
                 // Add message to the log
-                self.msg_log.add_message(msg.clone());
+                state.msg_log.add_message(msg.clone());
 
                 if check_if_secondary(state) {
                     self.start_checkpointing_and_forward(&msg, state)?;
@@ -156,13 +153,13 @@ impl PbftNode {
                     info.get_seq_num(),
                 );
 
-                self.msg_log.add_view_change(vc_message.clone());
+                state.msg_log.add_view_change(vc_message.clone());
 
                 if self.propose_view_change_if_enough_messages(&msg, state)? {
                     return Ok(());
                 }
 
-                handlers::view_change(state, &mut self.msg_log, &mut *self.service, &msg)?;
+                handlers::view_change(state, &mut *self.service, &msg)?;
             }
 
             _ => warn!("Message type not implemented"),
@@ -211,7 +208,7 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         if state.phase == PbftPhase::Committing {
-            handlers::commit(state, &mut self.msg_log, &mut *self.service, msg)
+            handlers::commit(state, &mut *self.service, msg)
         } else {
             debug!(
                 "{}: Already committed block {:?}",
@@ -233,7 +230,7 @@ impl PbftNode {
             state.get_node_id_from_bytes(pbft_message.info().get_signer_id())?
         );
 
-        if self.msg_log.get_latest_checkpoint() >= pbft_message.info().get_seq_num() {
+        if state.msg_log.get_latest_checkpoint() >= pbft_message.info().get_seq_num() {
             debug!(
                 "{}: Already at a stable checkpoint with this sequence number or past it!",
                 state
@@ -248,7 +245,7 @@ impl PbftNode {
     fn check_if_checkpoint_started(&mut self, msg: &ParsedMessage, state: &mut PbftState) -> bool {
         // Not ready to receive checkpoint yet; only acceptable in NotStarted
         if state.phase != PbftPhase::NotStarted {
-            self.msg_log.push_backlog(msg.clone());
+            state.msg_log.push_backlog(msg.clone());
             debug!("{}: Not in NotStarted; not handling checkpoint yet", state);
             false
         } else {
@@ -277,14 +274,15 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         if state.mode == PbftMode::Checkpointing {
-            self.msg_log
+            state
+                .msg_log
                 .check_msg_against_log(pbft_message, true, 2 * state.f + 1)?;
             warn!(
                 "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
                 state,
                 pbft_message.info().get_seq_num()
             );
-            self.msg_log.garbage_collect(
+            state.msg_log.garbage_collect(
                 pbft_message.info().get_seq_num(),
                 pbft_message.info().get_view(),
             );
@@ -302,7 +300,7 @@ impl PbftNode {
         if state.mode != PbftMode::ViewChanging {
             // Even if our own timer hasn't expired, still do a ViewChange if we've received
             // f + 1 VC messages to prevent being late to the new view party
-            if self
+            if state
                 .msg_log
                 .check_msg_against_log(message, true, state.f + 1)
                 .is_ok()
@@ -499,11 +497,12 @@ impl PbftNode {
                 state,
                 &hex::encode(block.block_id.clone())[..6]
             );
-            self.msg_log.push_block_backlog(block.clone());
+            state.msg_log.push_block_backlog(block.clone());
             return Ok(());
         }
 
-        self.msg_log
+        state
+            .msg_log
             .add_message(ParsedMessage::from_pbft_message(msg));
         state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id);
         state.idle_timeout.stop();
@@ -548,7 +547,7 @@ impl PbftNode {
             }
 
             // Start a checkpoint in NotStarted, if we're at one
-            if self.msg_log.at_checkpoint() {
+            if state.msg_log.at_checkpoint() {
                 self.start_checkpoint(state)?;
             }
         } else {
@@ -605,7 +604,7 @@ impl PbftNode {
         summary: Vec<u8>,
         head: Block,
     ) -> Result<Vec<u8>, PbftError> {
-        let mut messages = self
+        let mut messages = state
             .msg_log
             .get_messages_of_type(&PbftMessageType::Commit, state.seq_num, state.view)
             .into_iter()
@@ -622,7 +621,7 @@ impl PbftNode {
                 state.view,
                 state.view - 1
             );
-            messages = self
+            messages = state
                 .msg_log
                 .get_messages_of_type(&PbftMessageType::Commit, state.seq_num, state.view - 1)
                 .into_iter()
@@ -749,12 +748,12 @@ impl PbftNode {
     /// Retry messages from the backlog queue
     pub fn retry_backlog(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
         let mut peer_res = Ok(());
-        if let Some(msg) = self.msg_log.pop_backlog() {
+        if let Some(msg) = state.msg_log.pop_backlog() {
             debug!("{}: Popping message from backlog", state);
             peer_res = self.on_peer_message(msg, state);
         }
         if state.mode == PbftMode::Normal && state.phase == PbftPhase::NotStarted {
-            if let Some(msg) = self.msg_log.pop_block_backlog() {
+            if let Some(msg) = state.msg_log.pop_block_backlog() {
                 debug!("{}: Popping BlockNew from backlog", state);
                 self.on_block_new(msg, state)?;
             }
@@ -780,7 +779,7 @@ impl PbftNode {
         let PbftStableCheckpoint {
             seq_num: stable_seq_num,
             checkpoint_messages,
-        } = if let Some(ref cp) = self.msg_log.latest_stable_checkpoint {
+        } = if let Some(ref cp) = state.msg_log.latest_stable_checkpoint {
             debug!("{}: No stable checkpoint", state);
             cp.clone()
         } else {
@@ -1167,7 +1166,7 @@ mod tests {
             message.header_bytes = header_bytes;
             message.header_signature = header_signature;
 
-            node.msg_log.add_message(message);
+            state.msg_log.add_message(message);
         }
 
         let seal = node.build_seal(&mut state, vec![1, 2, 3], head).unwrap();
@@ -1285,7 +1284,7 @@ mod tests {
         state1.seq_num = 10;
         let block = mock_block(10);
         assert_eq!(state1.mode, PbftMode::Normal);
-        assert!(node1.msg_log.latest_stable_checkpoint.is_none());
+        assert!(state1.msg_log.latest_stable_checkpoint.is_none());
 
         // Receive 3 `Checkpoint` messages
         for peer in 0..3 {
@@ -1296,7 +1295,7 @@ mod tests {
         }
 
         assert_eq!(state1.mode, PbftMode::Normal);
-        assert!(node1.msg_log.latest_stable_checkpoint.is_some());
+        assert!(state1.msg_log.latest_stable_checkpoint.is_some());
     }
 
     /// Test that view changes work as expected, and that nodes take the proper roles after a view
@@ -1365,7 +1364,7 @@ mod tests {
 
             let mut msg = PbftMessage::new();
             msg.set_info(info);
-            node0
+            state0
                 .msg_log
                 .add_message(ParsedMessage::from_pbft_message(msg));
         }
