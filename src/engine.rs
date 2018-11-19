@@ -68,7 +68,7 @@ impl Engine for PbftEngine {
         let mut working_ticker = timing::Ticker::new(config.block_duration);
         let mut backlog_ticker = timing::Ticker::new(config.message_timeout);
 
-        let mut node = PbftNode::new(&config, service, pbft_state.read().is_primary());
+        let mut node = PbftNode::new(service, pbft_state.read().is_primary());
 
         debug!("Starting state: {:#?}", **pbft_state.read());
 

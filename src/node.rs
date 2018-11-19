@@ -28,11 +28,10 @@ use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
 
-use config::PbftConfig;
 use error::PbftError;
 use handlers;
 use hash::verify_sha512;
-use message_log::{PbftLog, PbftStableCheckpoint};
+use message_log::PbftStableCheckpoint;
 use message_type::{ParsedMessage, PbftHint, PbftMessageType};
 use protos::pbft_message::{
     PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
@@ -48,7 +47,7 @@ pub struct PbftNode {
 impl PbftNode {
     /// Construct a new PBFT node.
     /// After the node is created, if the node is primary, it initializes a new block on the chain.
-    pub fn new(config: &PbftConfig, service: Box<Service>, is_primary: bool) -> Self {
+    pub fn new(service: Box<Service>, is_primary: bool) -> Self {
         let mut n = PbftNode { service };
 
         // Primary initializes a block
@@ -1033,8 +1032,7 @@ mod tests {
             // Create genesis block (but with actual ID)
             chain: vec![mock_block_id(0)],
         });
-        let cfg = mock_config(4);
-        PbftNode::new(&cfg, service, node_id == 0)
+        PbftNode::new(service, node_id == 0)
     }
 
     /// Create a deterministic BlockId hash based on a block number
