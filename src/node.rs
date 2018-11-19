@@ -445,6 +445,86 @@ impl PbftNode {
         Ok(())
     }
 
+    /// Attempts to catch this node up with its peers, if necessary
+    ///
+    /// Returns true if catching up was required, and false otherwise
+    fn try_catchup(
+        &mut self,
+        state: &mut PbftState,
+        block: &Block,
+        msg: PbftMessage,
+    ) -> Result<bool, PbftError> {
+        // Don't catch up if we're the primary, since we're the ones who publish.
+        // Also don't catch up from block 0 -> 1, since there's no consensus seal.
+        if state.is_primary() || block.block_num < 2 {
+            return Ok(false);
+        }
+
+        // If we've got a (Tentative)WorkingBlock, and the new block is immediately
+        // subsequent to it, then we're able to catch up. Otherwise, return false
+        // to signify that no catching up occurred.
+        match state.working_block.clone() {
+            WorkingBlockOption::WorkingBlock(wb) => {
+                let block_num_matches = block.block_num == wb.get_block_num() + 1;
+                let block_id_matches = block.previous_id == wb.get_block_id();
+
+                if !block_num_matches || !block_id_matches {
+                    return Ok(false);
+                }
+            }
+            WorkingBlockOption::TentativeWorkingBlock(bid) => {
+                if block.previous_id == bid {
+                    // If we've got a tentative working block, replace it with a regular working block
+                    state.working_block = WorkingBlockOption::WorkingBlock(msg.get_block().clone());
+                } else {
+                    return Ok(false);
+                }
+            }
+            WorkingBlockOption::NoWorkingBlock => {
+                return Ok(false);
+            }
+        };
+
+        info!("Catching up to block #{}", block.block_num);
+
+        // Parse messages from seal, and add them to the backlog
+        let seal: PbftSeal =
+            protobuf::parse_from_bytes(&block.payload).map_err(PbftError::SerializationError)?;
+
+        let messages =
+            seal.get_previous_commit_votes()
+                .iter()
+                .try_fold(Vec::new(), |mut msgs, v| {
+                    msgs.push(ParsedMessage::from_pbft_message(
+                        protobuf::parse_from_bytes(&v.get_message_bytes())
+                            .map_err(PbftError::SerializationError)?,
+                    ));
+                    Ok(msgs)
+                })?;
+
+        for message in &messages {
+            self.msg_log.add_message(message.clone());
+        }
+
+        // Commit the new block, using one of the parsed commit messages to simulate
+        // having received a regular commit message.
+        handlers::commit(state, &mut self.msg_log, &mut *self.service, &messages[0])?;
+
+        // Start a view change if we need to force one for fairness
+        if state.at_forced_view_change() {
+            state.seq_num += 1;
+            self.force_view_change(state);
+        }
+
+        self.msg_log
+            .add_message(ParsedMessage::from_pbft_message(msg));
+        state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id.clone());
+        state.idle_timeout.stop();
+        state.commit_timeout.start();
+
+        Ok(true)
+    }
+
     /// Creates a new working block on the working block queue and kicks off the consensus algorithm
     /// by broadcasting a `PrePrepare` message to peers. Starts a view change timer, just in case
     /// the primary decides not to commit this block. If a `BlockCommit` update doesn't happen in a
@@ -490,6 +570,10 @@ impl PbftNode {
             .service
             .get_chain_head()
             .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
+
+        if self.try_catchup(state, &block, msg.clone())? {
+            return Ok(());
+        }
 
         if block.block_num > head.block_num + 1
             || state.switch_phase(PbftPhase::PrePreparing).is_none()

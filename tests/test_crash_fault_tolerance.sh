@@ -74,7 +74,7 @@ docker exec $ADMIN bash -c '\
 echo "All nodes have reached block 10!"
 
 echo "Shutting down alpha node"
-docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml stop pbft
+docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml stop
 
 echo "Waiting for remaining nodes to reach block 20"
 docker exec $ADMIN bash -c '\
@@ -97,7 +97,7 @@ docker exec $ADMIN bash -c '\
 echo "All nodes have reached block 20!"
 
 echo "Restarting alpha node"
-docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml start pbft
+docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml start
 
 echo "Waiting for all nodes to reach block 30"
 docker exec $ADMIN bash -c '\
