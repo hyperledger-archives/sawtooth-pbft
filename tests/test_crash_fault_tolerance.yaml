@@ -13,7 +13,7 @@
 # limitations under the License.
 # ------------------------------------------------------------------------------
 
-version: "2.1"
+version: "3.6"
 
 services:
 
@@ -30,33 +30,3 @@ services:
     environment:
       SAWTOOTH_PBFT: $SAWTOOTH_PBFT
       ISOLATION_ID: $ISOLATION_ID
-
-  validator:
-    image: sawtooth-validator:${ISOLATION_ID}
-    build:
-      context: .
-      dockerfile: sawtooth-pbft-test.dockerfile
-
-  rest-api:
-    image: sawtooth-rest-api:${ISOLATION_ID}
-    build:
-      context: .
-      dockerfile: sawtooth-pbft-test.dockerfile
-
-  intkey-tp-python:
-    image: sawtooth-intkey-tp-python:${ISOLATION_ID}
-    build:
-      context: .
-      dockerfile: sawtooth-pbft-test.dockerfile
-
-  settings-tp:
-    image: sawtooth-settings-tp:${ISOLATION_ID}
-    build:
-      context: .
-      dockerfile: sawtooth-pbft-test.dockerfile
-
-  workload:
-    image: sawtooth-intkey-workload:${ISOLATION_ID}
-    build:
-      context: .
-      dockerfile: sawtooth-pbft-test.dockerfile

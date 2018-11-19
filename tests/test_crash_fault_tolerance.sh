@@ -22,6 +22,9 @@
 
 if [ -z "$ISOLATION_ID " ]; then export ISOLATION_ID=latest; fi
 
+echo "Ensuring sawtooth services are built"
+docker-compose -p ${ISOLATION_ID} -f /project/sawtooth-pbft/tests/sawtooth-services.yaml build
+
 echo "Starting initial network"
 docker-compose -p ${ISOLATION_ID} -f /project/sawtooth-pbft/adhoc/admin.yaml up -d
 docker-compose -p ${ISOLATION_ID}-alpha -f /project/sawtooth-pbft/adhoc/node.yaml up -d
