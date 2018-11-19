@@ -31,13 +31,14 @@ use message_type::{ParsedMessage, PbftHint, PbftMessageType, PbftMessageWrapper}
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 /// The log keeps track of the last stable checkpoint
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PbftStableCheckpoint {
     pub seq_num: u64,
     pub checkpoint_messages: Vec<PbftMessage>,
 }
 
 /// Struct for storing messages that a PbftNode receives
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PbftLog {
     /// Generic messages (BlockNew, PrePrepare, Prepare, Commit, Checkpoint)
     messages: HashSet<ParsedMessage>,

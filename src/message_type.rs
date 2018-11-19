@@ -30,7 +30,7 @@ use error::PbftError;
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 /// Wrapper enum for all of the possible PBFT-related messages
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PbftMessageWrapper {
     Message(PbftMessage),
     ViewChange(PbftViewChange),
@@ -40,7 +40,7 @@ pub enum PbftMessageWrapper {
 ///
 /// The bits of the `PeerMessage` struct that this carries around are used in
 /// constructing the consensus seal.
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct ParsedMessage {
     /// Serialized ConsensusPeerMessageHeader. Inserted into the consensus seal.
     pub header_bytes: Vec<u8>,
