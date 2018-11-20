@@ -135,7 +135,7 @@ pub struct PbftState {
     pub pre_checkpoint_mode: PbftMode,
 
     /// Map of peers in the network, including ourselves
-    peer_ids: Vec<PeerId>,
+    pub peer_ids: Vec<PeerId>,
 
     /// The maximum number of faulty nodes in the network
     pub f: u64,
