@@ -190,7 +190,7 @@ docker exec -e API=${INIT_APIS[0]} $ADMIN bash -c '\
   SETTING_PEERS=($(sawtooth settings list --url "http://$API:8008" \
     --filter "sawtooth.consensus.pbft.peers" --format csv | sed -n 2p | \
     sed "s/\"\",\"\"/\ /g")); \
-  until [[ "${#SETTING_PEERS[@]}" -eq 5 ]]; do \
+  until [[ "${#SETTING_PEERS[@]}" -eq 6 ]]; do \
     echo "Attempting to set sawtooth.consensus.pbft.peers..."; \
     # Try to update setting \
     sawset proposal create -k /shared_data/keys/settings.priv \
