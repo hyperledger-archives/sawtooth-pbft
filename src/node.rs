@@ -538,6 +538,11 @@ impl PbftNode {
     /// the primary decides not to commit this block. If a `BlockCommit` update doesn't happen in a
     /// timely fashion, then the primary can be considered faulty and a view change should happen.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
+        if block.block_num == 0 {
+            info!("Got genesis block as BlockNew; skipping");
+            return Ok(());
+        }
+
         info!("{}: Got BlockNew: {:?}", state, block.block_id);
 
         let pbft_block = pbft_block_from_block(block.clone());
