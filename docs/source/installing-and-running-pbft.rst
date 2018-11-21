@@ -1,62 +1,98 @@
 ***************************
-Installing and Running PBFT
+Installing and Testing PBFT
 ***************************
 
-Prerequisites: `Docker and Docker Compose <https://www.docker.com/>`__ must be installed.
+This procedure describes how to install PBFT, start a four-node network in
+Docker containers, and run a basic liveness test.
 
-Use the following steps to start a four-node network and run a liveness test:
+**Prerequisites:** `Docker and Docker Compose <https://www.docker.com/>`__ must
+be installed.
 
-1.  Clone the PBFT repo: ``git clone https://github.com/bitwiseio/sawtooth-pbft.git``
+1. Clone the PBFT repository.
 
-#.  Run the following commands to connect to the ``sawtooth-dev-pbft``
-    interactive shell:
+     .. code-block:: console
+
+        $ git clone https://github.com/hyperledger/sawtooth-pbft.git
+
+#. Run the following commands to install the dependencies for PBFT and connect
+   to the interactive shell container, ``sawtooth-dev-pbft``.
+
+     .. code-block:: console
+
+        $ cd sawtooth-pbft
+        $ docker build . -f Dockerfile -t sawtooth-dev-pbft
+        $ docker run -v $(pwd):/project/sawtooth-pbft -it sawtooth-dev-pbft bash
+
+   .. tip::
+
+      If you have already configured a ``cargo-registry`` Docker volume, use
+      the following ``docker run`` command to speed up the build time in the
+      next step.
+
+       .. code-block:: console
+
+          $ docker run -v $(pwd):/project/sawtooth-pbft \
+          -v cargo-registry:/root/.cargo/registry \
+          -it sawtooth-dev-pbft bash
+
+#.  Build the PBFT project.
+
+      .. code-block:: console
+
+         $ cargo build
+
+#. After the project has finished building, exit the ``sawtooth-dev-pbft``
+   shell container.
+
+#. Run the PBFT test script on your host system from the ``sawtooth-pbft``
+   directory.
+
+     .. code-block:: console
+
+        % tests/pbft.sh
+
+   This script builds several Docker images, starts up a network of four
+   Sawtooth nodes with PBFT consensus, then goes through a liveness test of
+   55 blocks (using the Docker Compose file ``test_liveness.yaml``). The default
+   log level is ``INFO``, so the test script displays a large amount of
+   information as it executes.
+
+**Optional Changes**
+
+* The ``sawtooth-pbft`` repository includes several Docker Compose files for
+  testing. To specify a different Compose file (such as ``grafana.yaml``,
+  ``client.yaml``, or ``pbft_unit_tests.yaml``), include the file name on the
+  command line, as in this example:
 
     .. code-block:: console
 
-       cd sawtooth-pbft
+       $ tests/pbft.sh pbft_unit_tests
 
-       docker build . -f Dockerfile -t sawtooth-dev-pbft
-
-       docker run -v $(pwd):/project/sawtooth-pbft -it sawtooth-dev-pbft bash
-
-       # You can optionally use this to speed up your build times, if you have a cargo-registry Docker volume set up:
-       docker run -v $(pwd):/project/sawtooth-pbft -v cargo-registry:/root/.cargo/registry -it sawtooth-dev-pbft bash
-
-#.  Once you have the ``sawtooth-dev-pbft`` interactive shell up, run:
+* To pass additional arguments to Docker Compose, put them after the Compose
+  file, as in this example:
 
     .. code-block:: console
 
-       cargo build
+       $ tests/pbft.sh client --abort-on-container-exit
 
-#.  Once the project finishes building, exit the interactive shell and run
+* To adjust the :ref:`PBFT on-chain settings <pbft-on-chain-settings-label>`,
+  edit ``test_liveness.yaml`` and change the ``sawset proposal create``
+  parameters for the four validator containers. For example:
 
-    .. code-block:: console
+    .. code-block:: yaml
 
-       tests/pbft.sh
+       validator-0
+          ...
+          sawset proposal create \
+            ...
+            sawtooth.consensus.pbft.peers=\\['\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"'\\] \
+            sawtooth.consensus.pbft.block_duration=100 \
+            sawtooth.consensus.pbft.checkpoint_period=10 \
+            sawtooth.consensus.pbft.view_change_timeout=4000 \
+            sawtooth.consensus.pbft.message_timeout=10 \
+            sawtooth.consensus.pbft.max_log_size=1000 \
+          ...
 
-This script first builds a few docker images, then starts up a network of four
-nodes and goes through a liveness test of 55 blocks (using the Docker Compose
-file ``test_liveness.yaml``). The default log level is ``INFO``, so it prints
-out quite a bit of information as the algorithm executes. All the parameters
-mentioned in `On-Chain Settings
-<technical-information.html#on-chain-settings>`__ can be adjusted inside of
-the file ``tests/test_liveness.yaml``, as well as the log level for each of
-the services in the network.
-
-If you'd like to specify a different Docker Compose file to use (such as
-``grafana.yaml``, ``client.yaml``, or ``pbft_unit_tests.yaml``), provide
-``pbft.sh`` with an additional argument:
-
-.. code-block:: console
-
-    tests/pbft.sh pbft_unit_tests
-
-If you'd like to pass additional arguments to Docker Compose, they go after
-the compose file you're using:
-
-.. code-block:: console
-
-    tests/pbft.sh client --abort-on-container-exit
 
 .. Licensed under Creative Commons Attribution 4.0 International License
 .. https://creativecommons.org/licenses/by/4.0/
