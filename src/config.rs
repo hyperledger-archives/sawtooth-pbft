@@ -114,17 +114,7 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
 
     // Get the peers associated with this node (including ourselves). Panic if it is not provided;
     // the network cannot function without this setting.
-    let peers_string = settings
-        .get("sawtooth.consensus.pbft.peers")
-        .expect("'sawtooth.consensus.pbft.peers' must be set");
-
-    let peers: Vec<String> = serde_json::from_str(peers_string)
-        .expect("Invalid value in 'sawtooth.consensus.pbft.peers'");
-
-    let peers: Vec<PeerId> = peers
-        .into_iter()
-        .map(|s| hex::decode(s).expect("PeerId is not valid hex"))
-        .collect();
+    let peers = get_peers_from_settings(&settings);
 
     config.peers = peers;
 
@@ -212,17 +202,30 @@ fn merge_millis_setting_if_set(
     )
 }
 
+/// Get the peers as a Vec<PeerId> from settings
+pub fn get_peers_from_settings<S: std::hash::BuildHasher>(
+    settings: &HashMap<String, String, S>,
+) -> Vec<PeerId> {
+    let peers_setting_value = settings
+        .get("sawtooth.consensus.pbft.peers")
+        .expect("'sawtooth.consensus.pbft.peers' must be set to use PBFT");
+
+    warn!("Peers setting: {:?}", peers_setting_value);
+
+    let peers: Vec<String> = serde_json::from_str(peers_setting_value)
+        .expect("Invalid value at 'sawtooth.consensus.pbft.peers'");
+
+    peers
+        .into_iter()
+        .map(|s| hex::decode(s).expect("PeerId is not valid hex"))
+        .collect()
+}
+
 /// Create a mock configuration, given a number of nodes. PeerIds are generated using a Sha256
 /// hash.
 #[cfg(test)]
 pub fn mock_config(num_nodes: usize) -> PbftConfig {
-    use hash::hash_sha256;
-
-    let ids = (0..num_nodes)
-        .map(|i| PeerId::from(hash_sha256(format!("I'm a node with ID {}", i).as_bytes())))
-        .collect::<Vec<_>>();
-
     let mut config = PbftConfig::default();
-    config.peers = ids;
+    config.peers = (0..num_nodes).map(|id| vec![id as u8]).collect();
     config
 }

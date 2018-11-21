@@ -23,12 +23,12 @@ use std::error::Error;
 
 use hex;
 use protobuf::{Message, ProtobufError, RepeatedField};
-use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError};
+use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId};
 use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
 
-use config::PbftConfig;
+use config::{get_peers_from_settings, PbftConfig};
 use error::PbftError;
 use handlers;
 use hash::verify_sha512;
@@ -149,9 +149,9 @@ impl PbftNode {
                 let vc_message = msg.get_view_change_message();
                 let info = msg.info();
                 debug!(
-                    "{}: Received ViewChange message from Node {:02} (v {}, seq {})",
+                    "{}: Received ViewChange message from Node {:?} (v {}, seq {})",
                     state,
-                    state.get_node_id_from_bytes(info.get_signer_id())?,
+                    PeerId::from(info.get_signer_id()),
                     info.get_view(),
                     info.get_seq_num(),
                 );
@@ -228,9 +228,9 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<bool, PbftError> {
         debug!(
-            "{}: Received Checkpoint message from {:02}",
+            "{}: Received Checkpoint message from {:?}",
             state,
-            state.get_node_id_from_bytes(pbft_message.info().get_signer_id())?
+            PeerId::from(pbft_message.info().get_signer_id())
         );
 
         if self.msg_log.get_latest_checkpoint() >= pbft_message.info().get_seq_num() {
@@ -413,9 +413,17 @@ impl PbftNode {
 
         // All of the votes must come from known peers, and the primary can't explicitly
         // vote itself, since publishing a block is an implicit vote. Check that the votes
-        // we've received are a subset of "peers - primary".
-        let peer_ids: HashSet<_> = state
-            .peers()
+        // we've received are a subset of "peers - primary". We need to use the list of
+        // peers from the block we're verifying the seal for, since it may have changed.
+        let settings = self
+            .service
+            .get_settings(
+                block.previous_id.clone(),
+                vec![String::from("sawtooth.consensus.pbft.peers")],
+            ).expect("Failed to get settings");
+        let peers = get_peers_from_settings(&settings);
+
+        let peer_ids: HashSet<_> = peers
             .iter()
             .cloned()
             .filter_map(|pid| {
@@ -530,6 +538,11 @@ impl PbftNode {
     /// the primary decides not to commit this block. If a `BlockCommit` update doesn't happen in a
     /// timely fashion, then the primary can be considered faulty and a view change should happen.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
+        if block.block_num == 0 {
+            info!("Got genesis block as BlockNew; skipping");
+            return Ok(());
+        }
+
         info!("{}: Got BlockNew: {:?}", state, block.block_id);
 
         let pbft_block = pbft_block_from_block(block.clone());
@@ -541,14 +554,14 @@ impl PbftNode {
                 &PbftMessageType::BlockNew,
                 state.view,
                 state.seq_num, // primary knows the proper sequence number
-                state.get_own_peer_id(),
+                state.id.clone(),
             ));
         } else {
             msg.set_info(handlers::make_msg_info(
                 &PbftMessageType::BlockNew,
                 state.view,
                 0, // default to unset; change it later when we receive PrePrepare
-                state.get_own_peer_id(),
+                state.id.clone(),
             ));
         }
 
@@ -620,14 +633,14 @@ impl PbftNode {
                     state, block_id
                 );
                 self.service
-                    .initialize_block(Some(block_id))
+                    .initialize_block(Some(block_id.clone()))
                     .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
             }
 
             state.switch_phase(PbftPhase::NotStarted);
 
-            // Start a view change if we need to force one for fairness
-            if state.at_forced_view_change() {
+            // Start a view change if we need to force one for fairness or if membership changed
+            if state.at_forced_view_change() || self.update_membership(block_id, state) {
                 self.force_view_change(state);
             }
 
@@ -878,7 +891,7 @@ impl PbftNode {
             &PbftMessageType::ViewChange,
             state.view + 1,
             stable_seq_num,
-            state.get_own_peer_id(),
+            state.id.clone(),
         );
 
         let mut vc_msg = PbftViewChange::new();
@@ -889,6 +902,34 @@ impl PbftNode {
             .map_err(PbftError::SerializationError)?;
 
         self._broadcast_message(&PbftMessageType::ViewChange, msg_bytes, state)
+    }
+
+    /// Check the on-chain list of peers; if it has changed, update peers list and return true.
+    fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) -> bool {
+        // Get list of peers from settings
+        let settings = self
+            .service
+            .get_settings(
+                block_id,
+                vec![String::from("sawtooth.consensus.pbft.peers")],
+            ).expect("Failed to get settings");
+        let peers = get_peers_from_settings(&settings);
+        let new_peers_set: HashSet<PeerId> = peers.iter().cloned().collect();
+
+        // Check if membership has changed
+        let old_peers_set: HashSet<PeerId> = state.peer_ids.iter().cloned().collect();
+
+        if new_peers_set != old_peers_set {
+            state.peer_ids = peers;
+            let f = ((state.peer_ids.len() - 1) / 3) as u64;
+            if f == 0 {
+                panic!("This network no longer contains enough nodes to be fault tolerant");
+            }
+            state.f = f;
+            return true;
+        }
+
+        false
     }
 
     // ---------- Methods for communication between nodes ----------
@@ -908,7 +949,7 @@ impl PbftNode {
         }
 
         let msg_bytes = make_msg_bytes(
-            handlers::make_msg_info(&msg_type, state.view, seq_num, state.get_own_peer_id()),
+            handlers::make_msg_info(&msg_type, state.view, seq_num, state.id.clone()),
             block,
         ).unwrap_or_default();
 
@@ -1101,7 +1142,12 @@ mod tests {
             _block_id: BlockId,
             _settings: Vec<String>,
         ) -> Result<HashMap<String, String>, Error> {
-            Ok(Default::default())
+            let mut settings: HashMap<String, String> = Default::default();
+            settings.insert(
+                "sawtooth.consensus.pbft.peers".to_string(),
+                "[\"00\", \"01\", \"02\", \"03\"]".to_string(),
+            );
+            Ok(settings)
         }
         fn get_state(
             &mut self,
@@ -1113,26 +1159,19 @@ mod tests {
     }
 
     /// Create a node, based on a given ID
-    fn mock_node(node_id: usize) -> PbftNode {
+    fn mock_node(node_id: PeerId) -> PbftNode {
         let service: Box<MockService> = Box::new(MockService {
             // Create genesis block (but with actual ID)
             chain: vec![mock_block_id(0)],
         });
         let cfg = mock_config(4);
-        PbftNode::new(&cfg, service, node_id == 0)
+        PbftNode::new(&cfg, service, node_id == vec![0])
     }
 
     /// Create a deterministic BlockId hash based on a block number
     fn mock_block_id(num: u64) -> BlockId {
         BlockId::from(hash_sha256(
             format!("I'm a block with block num {}", num).as_bytes(),
-        ))
-    }
-
-    /// Create a deterministic PeerId hash based on a peer number
-    fn mock_peer_id(num: u64) -> PeerId {
-        PeerId::from(hash_sha256(
-            format!("I'm a peer (number {})", num).as_bytes(),
         ))
     }
 
@@ -1155,9 +1194,9 @@ mod tests {
         view: u64,
         seq_num: u64,
         block: Block,
-        from: u64,
+        from: PeerId,
     ) -> ParsedMessage {
-        let info = make_msg_info(&msg_type, view, seq_num, mock_peer_id(from));
+        let info = make_msg_info(&msg_type, view, seq_num, from);
 
         let mut pbft_msg = PbftMessage::new();
         pbft_msg.set_info(info);
@@ -1180,9 +1219,9 @@ mod tests {
     #[test]
     fn block_new() {
         // NOTE: Special case for primary node
-        let mut node0 = mock_node(0);
+        let mut node0 = mock_node(vec![0]);
         let cfg = mock_config(4);
-        let mut state0 = PbftState::new(0, &cfg);
+        let mut state0 = PbftState::new(vec![0], &cfg);
         node0
             .on_block_new(mock_block(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
@@ -1194,8 +1233,8 @@ mod tests {
         );
 
         // Try the next block
-        let mut node1 = mock_node(1);
-        let mut state1 = PbftState::new(1, &cfg);
+        let mut node1 = mock_node(vec![1]);
+        let mut state1 = PbftState::new(vec![], &cfg);
         node1
             .on_block_new(mock_block(1), &mut state1)
             .unwrap_or_else(handle_pbft_err);
@@ -1210,10 +1249,9 @@ mod tests {
     /// Make sure that `BlockNew` properly checks the consensus seal.
     #[test]
     fn block_new_consensus() {
-        let mut cfg = mock_config(4);
-        cfg.peers = (0..4).map(|i| vec![i]).collect();
-        let mut node = mock_node(1);
-        let mut state = PbftState::new(1, &cfg);
+        let cfg = mock_config(4);
+        let mut node = mock_node(vec![1]);
+        let mut state = PbftState::new(vec![], &cfg);
         state.seq_num = 6;
         let head = mock_block(6);
         let mut block = mock_block(7);
@@ -1266,9 +1304,9 @@ mod tests {
     /// Make sure that receiving a `BlockValid` update works as expected
     #[test]
     fn block_valid() {
-        let mut node = mock_node(0);
+        let mut node = mock_node(vec![0]);
         let cfg = mock_config(4);
-        let mut state0 = PbftState::new(0, &cfg);
+        let mut state0 = PbftState::new(vec![0], &cfg);
         state0.phase = PbftPhase::Checking;
         node.on_block_valid(mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
@@ -1278,9 +1316,9 @@ mod tests {
     /// Make sure that receiving a `BlockCommit` update works as expected
     #[test]
     fn block_commit() {
-        let mut node = mock_node(0);
+        let mut node = mock_node(vec![0]);
         let cfg = mock_config(4);
-        let mut state0 = PbftState::new(0, &cfg);
+        let mut state0 = PbftState::new(vec![0], &cfg);
         state0.phase = PbftPhase::Finished;
         node.on_block_commit(mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
@@ -1293,15 +1331,15 @@ mod tests {
         let cfg = mock_config(4);
 
         // Make sure BlockNew is in the log
-        let mut node1 = mock_node(1);
-        let mut state1 = PbftState::new(1, &cfg);
+        let mut node1 = mock_node(vec![1]);
+        let mut state1 = PbftState::new(vec![], &cfg);
         let block = mock_block(1);
         node1
             .on_block_new(block.clone(), &mut state1)
             .unwrap_or_else(handle_pbft_err);
 
         // Receive a PrePrepare
-        let msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, block.clone(), 0);
+        let msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, block.clone(), vec![0]);
         node1
             .on_peer_message(msg, &mut state1)
             .unwrap_or_else(handle_pbft_err);
@@ -1317,7 +1355,7 @@ mod tests {
         // Receive 3 `Prepare` messages
         for peer in 0..3 {
             assert_eq!(state1.phase, PbftPhase::Preparing);
-            let msg = mock_msg(&PbftMessageType::Prepare, 0, 1, block.clone(), peer);
+            let msg = mock_msg(&PbftMessageType::Prepare, 0, 1, block.clone(), vec![peer]);
             node1
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
@@ -1330,7 +1368,7 @@ mod tests {
         // Receive 3 `Commit` messages
         for peer in 0..3 {
             assert_eq!(state1.phase, PbftPhase::Committing);
-            let msg = mock_msg(&PbftMessageType::Commit, 0, 1, block.clone(), peer);
+            let msg = mock_msg(&PbftMessageType::Commit, 0, 1, block.clone(), vec![peer]);
             node1
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
@@ -1362,9 +1400,9 @@ mod tests {
     /// + A stable checkpoint is created
     #[test]
     fn checkpoint() {
-        let mut node1 = mock_node(1);
+        let mut node1 = mock_node(vec![1]);
         let cfg = mock_config(4);
-        let mut state1 = PbftState::new(1, &cfg);
+        let mut state1 = PbftState::new(vec![], &cfg);
         // Pretend that the node just finished block 10
         state1.seq_num = 10;
         let block = mock_block(10);
@@ -1373,7 +1411,13 @@ mod tests {
 
         // Receive 3 `Checkpoint` messages
         for peer in 0..3 {
-            let msg = mock_msg(&PbftMessageType::Checkpoint, 0, 10, block.clone(), peer);
+            let msg = mock_msg(
+                &PbftMessageType::Checkpoint,
+                0,
+                10,
+                block.clone(),
+                vec![peer],
+            );
             node1
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
@@ -1387,9 +1431,9 @@ mod tests {
     /// change
     #[test]
     fn view_change() {
-        let mut node1 = mock_node(1);
+        let mut node1 = mock_node(vec![1]);
         let cfg = mock_config(4);
-        let mut state1 = PbftState::new(1, &cfg);
+        let mut state1 = PbftState::new(vec![1], &cfg);
 
         assert!(!state1.is_primary());
 
@@ -1402,7 +1446,7 @@ mod tests {
             } else {
                 assert_eq!(state1.mode, PbftMode::ViewChanging);
             }
-            let info = make_msg_info(&PbftMessageType::ViewChange, 1, 1, mock_peer_id(peer));
+            let info = make_msg_info(&PbftMessageType::ViewChange, 1, 1, vec![peer]);
             let mut vc_msg = PbftViewChange::new();
             vc_msg.set_info(info);
             vc_msg.set_checkpoint_messages(RepeatedField::default());
@@ -1419,9 +1463,9 @@ mod tests {
     /// Make sure that view changes start correctly
     #[test]
     fn propose_view_change() {
-        let mut node1 = mock_node(1);
+        let mut node1 = mock_node(vec![1]);
         let cfg = mock_config(4);
-        let mut state1 = PbftState::new(1, &cfg);
+        let mut state1 = PbftState::new(vec![], &cfg);
         assert_eq!(state1.mode, PbftMode::Normal);
 
         node1
@@ -1434,9 +1478,9 @@ mod tests {
     /// Test that try_publish adds in the consensus seal
     #[test]
     fn try_publish() {
-        let mut node0 = mock_node(0);
+        let mut node0 = mock_node(vec![0]);
         let cfg = mock_config(4);
-        let mut state0 = PbftState::new(0, &cfg);
+        let mut state0 = PbftState::new(vec![0], &cfg);
         let block0 = mock_block(1);
         let pbft_block0 = pbft_block_from_block(block0);
 

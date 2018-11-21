@@ -54,16 +54,9 @@ impl Engine for PbftEngine {
         // Load on-chain settings
         let config = config::load_pbft_config(chain_head.block_id, &mut *service);
 
-        let node_id = config
-            .peers
-            .iter()
-            .position(|ref id| id == &&local_peer_info.peer_id)
-            .ok_or_else(|| {
-                Error::UnknownPeer("This node is not in the peers list, which is necessary".into())
-            })? as u64;
-
-        let mut pbft_state = get_storage(&config.storage, || PbftState::new(node_id, &config))
-            .expect("Couldn't load state!");
+        let mut pbft_state = get_storage(&config.storage, || {
+            PbftState::new(local_peer_info.peer_id.clone(), &config)
+        }).expect("Couldn't load state!");
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
         let mut backlog_ticker = timing::Ticker::new(config.message_timeout);
@@ -148,7 +141,7 @@ fn handle_update(
         }
         Ok(Update::Shutdown) => return Ok(false),
         Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
-            error!("PBFT currently only supports static networks");
+            debug!("Received PeerConnected/PeerDisconnected message");
         }
         Err(RecvTimeoutError::Timeout) => return Err(PbftError::Timeout),
         Err(RecvTimeoutError::Disconnected) => {

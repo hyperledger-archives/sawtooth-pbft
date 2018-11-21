@@ -23,7 +23,6 @@ use hex;
 use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
 
 use config::PbftConfig;
-use error::PbftError;
 use message_type::PbftMessageType;
 use protos::pbft_message::PbftBlock;
 use timing::Timeout;
@@ -85,7 +84,7 @@ impl fmt::Display for PbftState {
 
         write!(
             f,
-            "({} {} {}, seq {}, wb {}), Node {}{:02}",
+            "({} {} {}, seq {}, wb {}), Node {}{:?}",
             phase, mode, self.view, self.seq_num, wb, ast, self.id,
         )
     }
@@ -115,7 +114,7 @@ impl WorkingBlockOption {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PbftState {
     /// This node's ID
-    pub id: u64,
+    pub id: PeerId,
 
     /// The node's current sequence number
     /// Always starts at 0; representative of an unknown sequence number.
@@ -135,7 +134,7 @@ pub struct PbftState {
     pub pre_checkpoint_mode: PbftMode,
 
     /// Map of peers in the network, including ourselves
-    peer_ids: Vec<PeerId>,
+    pub peer_ids: Vec<PeerId>,
 
     /// The maximum number of faulty nodes in the network
     pub f: u64,
@@ -159,7 +158,8 @@ impl PbftState {
     /// # Panics
     /// Panics if the network this node is on does not have enough nodes to be Byzantine fault
     /// tolernant.
-    pub fn new(id: u64, config: &PbftConfig) -> Self {
+    #[allow(needless_pass_by_value)]
+    pub fn new(id: PeerId, config: &PbftConfig) -> Self {
         // Maximum number of faulty nodes in this network. Panic if there are not enough nodes.
         let f = ((config.peers.len() - 1) / 3) as u64;
         if f == 0 {
@@ -167,11 +167,11 @@ impl PbftState {
         }
 
         PbftState {
-            id,
+            id: id.clone(),
             seq_num: 0, // Default to unknown
             view: 0,    // Node ID 0 is default primary
             phase: PbftPhase::NotStarted,
-            role: if id == 0 {
+            role: if config.peers[0] == id {
                 PbftNodeRole::Primary
             } else {
                 PbftNodeRole::Secondary
@@ -203,26 +203,10 @@ impl PbftState {
         }
     }
 
-    /// Obtain the node ID (u64) from a serialized PeerId
-    pub fn get_node_id_from_bytes(&self, peer_id: &[u8]) -> Result<u64, PbftError> {
-        let deser_id = peer_id.to_vec();
-
-        if let Some(node_id) = self.peer_ids.iter().position(|ref info| info == &&deser_id) {
-            Ok(node_id as u64)
-        } else {
-            Err(PbftError::NodeNotFound)
-        }
-    }
-
-    /// Obtain the Peer ID for this node
-    pub fn get_own_peer_id(&self) -> PeerId {
-        self.peer_ids[self.id as usize].clone()
-    }
-
-    /// Obtain the Peer ID for the primary node in the network
-    pub fn get_primary_peer_id(&self) -> PeerId {
-        let primary_node_id = (self.view % (self.peer_ids.len() as u64)) as usize;
-        self.peer_ids[primary_node_id].clone()
+    /// Obtain the ID for the primary node in the network
+    pub fn get_primary_id(&self) -> PeerId {
+        let primary_index = (self.view % (self.peer_ids.len() as u64)) as usize;
+        self.peer_ids[primary_index].clone()
     }
 
     /// Tell if this node is currently the primary
@@ -289,7 +273,7 @@ mod tests {
     fn no_fault_tolerance() {
         let config = mock_config(1);
         let caught = ::std::panic::catch_unwind(|| {
-            PbftState::new(0, &config);
+            PbftState::new(vec![0], &config);
         }).is_err();
         assert!(caught);
     }
@@ -303,8 +287,8 @@ mod tests {
     #[test]
     fn initial_config() {
         let config = mock_config(4);
-        let state0 = PbftState::new(0, &config);
-        let state1 = PbftState::new(1, &config);
+        let state0 = PbftState::new(vec![0], &config);
+        let state1 = PbftState::new(vec![], &config);
 
         assert!(state0.is_primary());
         assert!(!state1.is_primary());
@@ -315,31 +299,15 @@ mod tests {
         assert_eq!(state0.check_msg_type(), PbftMessageType::Unset);
         assert_eq!(state1.check_msg_type(), PbftMessageType::Unset);
 
-        assert_eq!(
-            state0
-                .get_node_id_from_bytes(&Vec::<u8>::from(state0.peer_ids[0].clone()))
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            state1
-                .get_node_id_from_bytes(&Vec::<u8>::from(state1.peer_ids[1].clone()))
-                .unwrap(),
-            1
-        );
-
-        assert_eq!(state0.get_own_peer_id(), state0.peer_ids[0]);
-        assert_eq!(state1.get_own_peer_id(), state1.peer_ids[1]);
-
-        assert_eq!(state0.get_primary_peer_id(), state0.peer_ids[0]);
-        assert_eq!(state1.get_primary_peer_id(), state1.peer_ids[0]);
+        assert_eq!(state0.get_primary_id(), state0.peer_ids[0]);
+        assert_eq!(state1.get_primary_id(), state1.peer_ids[0]);
     }
 
     /// Make sure that nodes transition from primary to secondary and back smoothly
     #[test]
     fn role_changes() {
         let config = mock_config(4);
-        let mut state = PbftState::new(0, &config);
+        let mut state = PbftState::new(vec![0], &config);
 
         state.downgrade_role();
         assert!(!state.is_primary());
@@ -355,7 +323,7 @@ mod tests {
     #[test]
     fn phase_changes() {
         let config = mock_config(4);
-        let mut state = PbftState::new(0, &config);
+        let mut state = PbftState::new(vec![0], &config);
 
         assert!(state.switch_phase(PbftPhase::PrePreparing).is_some());
         assert!(state.switch_phase(PbftPhase::Preparing).is_some());
