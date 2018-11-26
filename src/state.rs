@@ -84,8 +84,14 @@ impl fmt::Display for PbftState {
 
         write!(
             f,
-            "({} {} {}, seq {}, wb {}), Node {}{:?}",
-            phase, mode, self.view, self.seq_num, wb, ast, self.id,
+            "({} {} {}, seq {}, wb {}), Node {}{}",
+            phase,
+            mode,
+            self.view,
+            self.seq_num,
+            wb,
+            ast,
+            &hex::encode(self.id.clone())[..6],
         )
     }
 }
