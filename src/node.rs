@@ -1229,16 +1229,14 @@ mod tests {
         }
     }
 
-    /// Make sure that receiving a `BlockNew` update works as expected
+    /// Make sure that receiving a `BlockNew` update works as expected for block #1
     #[test]
-    fn block_new() {
+    fn block_new_initial() {
         // NOTE: Special case for primary node
         let mut node0 = mock_node(vec![0]);
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], &cfg);
-        node0
-            .on_block_new(mock_block(1), &mut state0)
-            .unwrap_or_else(handle_pbft_err);
+        node0.on_block_new(mock_block(1), &mut state0).unwrap();
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.seq_num, 1);
         assert_eq!(
