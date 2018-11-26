@@ -50,7 +50,8 @@ services:
           -o config-genesis.batch && \
         sawset proposal create \
           -k /shared_data/keys/settings.priv \
-          sawtooth.consensus.algorithm=pbft \
+          sawtooth.consensus.algorithm.name=sawtooth-pbft \
+          sawtooth.consensus.algorithm.version=0.1 \
           sawtooth.consensus.pbft.peers=\\['\\\"'$$(cd /shared_data/validators && paste $$(ls -1) -d , | sed s/,/\\\\\\\",\\\\\\\"/g)'\\\"'\\]
           -o config.batch && \
         sawadm genesis \
