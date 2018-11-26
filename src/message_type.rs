@@ -193,6 +193,23 @@ impl ParsedMessage {
 
         Self::from_peer_message(peer_message, true)
     }
+
+    /// Constructs a copy of this message with the given message type
+    #[allow(needless_pass_by_value)]
+    pub fn as_msg_type(&self, msg_type: PbftMessageType) -> ParsedMessage {
+        let mut new_msg = self.get_pbft_message().clone();
+        let mut info = new_msg.take_info();
+        info.set_msg_type(String::from(&msg_type));
+        new_msg.set_info(info);
+
+        ParsedMessage {
+            from_self: self.from_self,
+            header_bytes: self.header_bytes.clone(),
+            header_signature: self.header_signature.clone(),
+            message: PbftMessageWrapper::Message(new_msg),
+            message_bytes: self.message_bytes.clone(),
+        }
+    }
 }
 
 /// Enum for showing the difference between future messages, present messages, and past messages.
