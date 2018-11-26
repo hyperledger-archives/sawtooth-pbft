@@ -1146,7 +1146,7 @@ mod tests {
                 block_id: self.chain.last().unwrap().clone(),
                 previous_id: self.chain.get(prev_num).unwrap().clone(),
                 signer_id: PeerId::from(vec![]),
-                block_num: self.chain.len() as u64,
+                block_num: self.chain.len().checked_sub(1).unwrap_or(0) as u64,
                 payload: vec![],
                 summary: vec![],
             })
