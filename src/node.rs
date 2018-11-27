@@ -571,9 +571,13 @@ impl PbftNode {
             Ok(()) => {}
             Err(err) => {
                 warn!(
-                    "Proposing view change due to failed consensus seal verification! Error was {}",
+                    "Failing block due to failed consensus seal verification and \
+                     proposing view change! Error was {}",
                     err
                 );
+                self.service.fail_block(block.block_id).map_err(|err| {
+                    PbftError::InternalError(format!("Couldn't fail block: {}", err))
+                })?;
                 self.propose_view_change(state)?;
                 return Err(err);
             }
