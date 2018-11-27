@@ -510,6 +510,12 @@ impl PbftNode {
                     Ok(msgs)
                 })?;
 
+        let view = messages[0].info().get_view();
+        if state.view != view {
+            info!("Updating view from {} to {}.", state.view, view);
+            state.view = view;
+        }
+
         for message in &messages {
             self.msg_log.add_message(message.clone());
         }
@@ -520,7 +526,6 @@ impl PbftNode {
 
         // Start a view change if we need to force one for fairness
         if state.at_forced_view_change() {
-            state.seq_num += 1;
             self.force_view_change(state);
         }
 
@@ -549,7 +554,9 @@ impl PbftNode {
 
         let mut msg = PbftMessage::new();
         if state.is_primary() {
-            state.seq_num += 1;
+            // Ensure that our local state doesn't get out of sync with actual state
+            state.seq_num = head.block_num + 1;
+
             msg.set_info(handlers::make_msg_info(
                 &PbftMessageType::BlockNew,
                 state.view,
@@ -557,6 +564,9 @@ impl PbftNode {
                 state.id.clone(),
             ));
         } else {
+            // Ensure that our local state doesn't get out of sync with actual state
+            state.seq_num = head.block_num;
+
             msg.set_info(handlers::make_msg_info(
                 &PbftMessageType::BlockNew,
                 state.view,
