@@ -206,7 +206,7 @@ echo "Waiting for all remaining nodes to reach block 30"
 docker exec $ADMIN bash -c '\
   APIS=$(cd /shared_data/rest_apis && ls -d *); \
   NODES_ON_30=0; \
-  until [ "$NODES_ON_30" -eq 5 ]; do \
+  until [ "$NODES_ON_30" -ge 5 ]; do \
     NODES_ON_30=0; \
     sleep 5; \
     for api in $APIS; do \
