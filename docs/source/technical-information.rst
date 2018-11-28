@@ -92,6 +92,8 @@ used to represent all consensus-related messages in the Sawtooth PBFT system:
    }
 
 
+.. _pbft-on-chain-settings-label:
+
 On-Chain Settings
 =================
 
