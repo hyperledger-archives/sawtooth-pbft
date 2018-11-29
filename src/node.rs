@@ -762,7 +762,7 @@ impl PbftNode {
                 .get_messages_of_type(&PbftMessageType::Commit, state.seq_num, state.view - 1)
                 .into_iter()
                 .filter(|&m| !m.from_self)
-                .collect::<Vec<_>>();;
+                .collect::<Vec<_>>();
         }
 
         let min_votes = 2 * state.f as usize;
