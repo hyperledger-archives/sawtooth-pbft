@@ -78,6 +78,8 @@ impl PbftNode {
         msg: ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
+        info!("{}: Got peer message: {}", state, msg.info());
+
         let msg_type = PbftMessageType::from(msg.info().msg_type.as_str());
 
         // Handle a multicast protocol message
@@ -391,13 +393,17 @@ impl PbftNode {
         let seal: PbftSeal =
             protobuf::parse_from_bytes(&block.payload).map_err(PbftError::SerializationError)?;
 
-        let id_matches = seal.previous_id == &block.previous_id[..];
-        let summary_matches = seal.summary == &block.summary[..];
-
-        if !(id_matches && summary_matches) {
+        if seal.previous_id != &block.previous_id[..] {
             return Err(PbftError::InternalError(format!(
-                "Consensus seal failed verification. ID matched? {} Summary matched? {}",
-                id_matches, summary_matches
+                "Consensus seal failed verification. Seal's previous ID `{}` doesn't match block's previous ID `{}`",
+                hex::encode(&seal.previous_id[..3]), hex::encode(&block.previous_id[..3])
+            )));
+        }
+
+        if seal.summary != &block.summary[..] {
+            return Err(PbftError::InternalError(format!(
+                "Consensus seal failed verification. Seal's summary {:?} doesn't match block's summary {:?}",
+                seal.summary, block.summary
             )));
         }
 
@@ -477,14 +483,25 @@ impl PbftNode {
                 let block_id_matches = block.previous_id == wb.get_block_id();
 
                 if !block_num_matches || !block_id_matches {
+                    debug!(
+                        "Block didn't match for catchup, skipping: {} {}",
+                        block_num_matches, block_id_matches
+                    );
                     return Ok(false);
+                } else {
+                    debug!("Catching up from working block");
                 }
             }
             WorkingBlockOption::TentativeWorkingBlock(bid) => {
                 if block.previous_id == bid {
                     // If we've got a tentative working block, replace it with a regular working block
+                    debug!("Catching up from tentative working block");
                     state.working_block = WorkingBlockOption::WorkingBlock(msg.get_block().clone());
                 } else {
+                    debug!(
+                        "Skipping catchup from tentative working blockdue to ID mismatch: {:?} != {:?}",
+                        block.block_id, bid
+                    );
                     return Ok(false);
                 }
             }
@@ -493,7 +510,7 @@ impl PbftNode {
             }
         };
 
-        info!("Catching up to block #{}", block.block_num);
+        info!("{}: Catching up to block #{}", state, block.block_num - 1);
 
         // Parse messages from seal, and add them to the backlog
         let seal: PbftSeal =
@@ -548,7 +565,12 @@ impl PbftNode {
             return Ok(());
         }
 
-        info!("{}: Got BlockNew: {:?}", state, block.block_id);
+        info!(
+            "{}: Got BlockNew: {} / {}",
+            state,
+            block.block_num,
+            hex::encode(&block.block_id[..3]),
+        );
 
         let pbft_block = pbft_block_from_block(block.clone());
 
@@ -716,6 +738,8 @@ impl PbftNode {
         summary: Vec<u8>,
         head: Block,
     ) -> Result<Vec<u8>, PbftError> {
+        info!("{}: Building seal with head at {}", state, head.block_num);
+
         let mut messages = self
             .msg_log
             .get_messages_of_type(&PbftMessageType::Commit, state.seq_num, state.view)
