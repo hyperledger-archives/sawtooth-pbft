@@ -27,7 +27,7 @@ use sawtooth_sdk::consensus::engine::Block;
 
 use config::PbftConfig;
 use error::PbftError;
-use message_type::{ParsedMessage, PbftHint, PbftMessageType, PbftMessageWrapper};
+use message_type::{ParsedMessage, PbftHint, PbftMessageType};
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 /// The log keeps track of the last stable checkpoint
@@ -104,20 +104,6 @@ impl fmt::Display for PbftLog {
 
 fn check_msg_has_type(pbft_message: &ParsedMessage, check_type: &PbftMessageType) -> bool {
     pbft_message.info().get_msg_type() != String::from(check_type)
-}
-
-fn commit_msg_into_prepare_msg(message: &ParsedMessage) -> ParsedMessage {
-    let mut prepare_message = message.get_pbft_message().clone();
-    let mut info = prepare_message.get_info().clone();
-    info.set_msg_type(String::from(&PbftMessageType::Prepare));
-    prepare_message.set_info(info);
-    ParsedMessage {
-        from_self: false,
-        header_bytes: message.header_bytes.clone(),
-        header_signature: message.header_signature.clone(),
-        message: PbftMessageWrapper::Message(prepare_message),
-        message_bytes: message.message_bytes.clone(),
-    }
 }
 
 impl PbftLog {
@@ -231,7 +217,7 @@ impl PbftLog {
         }
         self.check_msg_against_log(&pbft_message, true, 2 * f + 1)?;
 
-        self.check_prepared(&commit_msg_into_prepare_msg(pbft_message), f)?;
+        self.check_prepared(&pbft_message.as_msg_type(PbftMessageType::Prepare), f)?;
         Ok(())
     }
 

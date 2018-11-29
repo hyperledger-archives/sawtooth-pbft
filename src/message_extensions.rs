@@ -21,8 +21,12 @@
 // every field in the struct and that's exactly what the implementation of Hash is doing below
 #![allow(unknown_lints, derive_hash_xor_eq)]
 
+use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use hex;
+
+use message_type::PbftMessageType;
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 impl Eq for PbftMessage {}
@@ -60,5 +64,18 @@ impl Hash for PbftViewChange {
             msg.get_info().hash(state);
             msg.get_block().hash(state);
         }
+    }
+}
+
+impl fmt::Display for PbftMessageInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "MsgInfo ({} S {} V {} <- {})",
+            PbftMessageType::from(self.get_msg_type()),
+            self.get_seq_num(),
+            self.get_view(),
+            &hex::encode(self.get_signer_id())[..6],
+        )
     }
 }

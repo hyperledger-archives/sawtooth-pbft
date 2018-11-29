@@ -20,29 +20,51 @@
 # a node, verifying all nodes reach block 20, restarting the node, and
 # verifying that all nodes reach block 30.
 
-if [ -z "$ISOLATION_ID " ]; then export ISOLATION_ID=latest; fi
+if [ -z "$ISOLATION_ID" ]; then export ISOLATION_ID=latest; fi
+
+set -eux
+
+# Clean up docker on exit, even if it failed
+function cleanup {
+    echo "Done testing; shutting down all containers"
+    docker-compose -p ${ISOLATION_ID} -f adhoc/workload.yaml down --remove-orphans --volumes
+    docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml down --remove-orphans --volumes
+    docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml down --remove-orphans --volumes
+    docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml down --remove-orphans --volumes
+    GENESIS=1 docker-compose -p ${ISOLATION_ID}-epsilon -f adhoc/node.yaml down --remove-orphans --volumes
+    docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml down --remove-orphans --volumes
+}
+
+trap cleanup EXIT
 
 echo "Ensuring sawtooth services are built"
-docker-compose -p ${ISOLATION_ID} -f /project/sawtooth-pbft/tests/sawtooth-services.yaml build
+docker-compose -p ${ISOLATION_ID} -f tests/sawtooth-services.yaml build
+
+echo "Building PBFT engine"
+# Try to create these if they don't exist
+docker network create pbft_validators_${ISOLATION_ID} || true
+docker network create pbft_rest_apis_${ISOLATION_ID} || true
+docker volume create --name=pbft_shared_data_${ISOLATION_ID} || true
+docker-compose -f adhoc/node.yaml run --rm pbft cargo build
 
 echo "Starting initial network"
-docker-compose -p ${ISOLATION_ID} -f /project/sawtooth-pbft/adhoc/admin.yaml up -d
-docker-compose -p ${ISOLATION_ID}-alpha -f /project/sawtooth-pbft/adhoc/node.yaml up -d
-docker-compose -p ${ISOLATION_ID}-beta -f /project/sawtooth-pbft/adhoc/node.yaml up -d
-docker-compose -p ${ISOLATION_ID}-gamma -f /project/sawtooth-pbft/adhoc/node.yaml up -d
-GENESIS=1 docker-compose -p ${ISOLATION_ID}-epsilon -f /project/sawtooth-pbft/adhoc/node.yaml up -d
+docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml up -d
+docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml up -d
+docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml up -d
+docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml up -d
+GENESIS=1 docker-compose -p ${ISOLATION_ID}-epsilon -f adhoc/node.yaml up -d
 
 ADMIN=${ISOLATION_ID}_admin_1
 
 echo "Gathering list of initial keys and REST APIs"
-INIT_KEYS=($(docker exec $ADMIN bash -c '\
+INIT_KEYS=($(docker exec ${ADMIN} bash -c '\
   cd /shared_data/validators && paste $(ls -1) -d , | sed s/,/\ /g'))
 echo "Initial keys:" ${INIT_KEYS[*]}
-INIT_APIS=($(docker exec $ADMIN bash -c 'cd /shared_data/rest_apis && ls -d *'))
+INIT_APIS=($(docker exec ${ADMIN} bash -c 'cd /shared_data/rest_apis && ls -d *'))
 echo "Initial APIs:" ${INIT_APIS[*]}
 
 echo "Waiting until network has started"
-docker exec -e API=${INIT_APIS[0]} $ADMIN bash -c 'while true; do \
+docker exec -e API=${INIT_APIS[0]} ${ADMIN} bash -c 'while true; do \
   BLOCK_LIST=$(sawtooth block list --url "http://$API:8008" 2>&1); \
   if [[ $BLOCK_LIST == *"BLOCK_ID"* ]]; then \
     echo "Network ready" && break; \
@@ -54,7 +76,7 @@ echo "Starting workload"
 RATE=1 docker-compose -p ${ISOLATION_ID} -f adhoc/workload.yaml up -d
 
 echo "Waiting for all nodes to reach block 10"
-docker exec $ADMIN bash -c '\
+docker exec ${ADMIN} bash -c '\
   APIS=$(cd /shared_data/rest_apis && ls -d *); \
   NODES_ON_10=0; \
   until [ "$NODES_ON_10" -eq 4 ]; do \
@@ -77,7 +99,7 @@ echo "Shutting down alpha node"
 docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml stop
 
 echo "Waiting for remaining nodes to reach block 20"
-docker exec $ADMIN bash -c '\
+docker exec ${ADMIN} bash -c '\
   APIS=$(cd /shared_data/rest_apis && ls -d *); \
   NODES_ON_20=0; \
   until [ "$NODES_ON_20" -gt 2 ]; do \
@@ -100,7 +122,7 @@ echo "Restarting alpha node"
 docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml start
 
 echo "Waiting for all nodes to reach block 30"
-docker exec $ADMIN bash -c '\
+docker exec ${ADMIN} bash -c '\
   APIS=$(cd /shared_data/rest_apis && ls -d *); \
   NODES_ON_30=0; \
   until [ "$NODES_ON_30" -eq 4 ]; do \
@@ -121,22 +143,14 @@ echo "All nodes have reached block 30!"
 
 echo "Dumping logs"
 echo "-- Workload --"
-docker-compose -p ${ISOLATION_ID} -f /project/sawtooth-pbft/adhoc/workload.yaml logs
+docker-compose -p ${ISOLATION_ID} -f adhoc/workload.yaml logs
 echo "-- Alpha --"
-docker-compose -p ${ISOLATION_ID}-alpha -f /project/sawtooth-pbft/adhoc/node.yaml logs
+docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml logs
 echo "-- Beta --"
-docker-compose -p ${ISOLATION_ID}-beta -f /project/sawtooth-pbft/adhoc/node.yaml logs
+docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml logs
 echo "-- Gamma --"
-docker-compose -p ${ISOLATION_ID}-gamma -f /project/sawtooth-pbft/adhoc/node.yaml logs
-echo "-- Gamma --"
-GENESIS=1 docker-compose -p ${ISOLATION_ID}-epsilon -f /project/sawtooth-pbft/adhoc/node.yaml logs
+docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml logs
+echo "-- Epsilon --"
+GENESIS=1 docker-compose -p ${ISOLATION_ID}-epsilon -f adhoc/node.yaml logs
 echo "-- Admin --"
-docker-compose -p ${ISOLATION_ID} -f /project/sawtooth-pbft/adhoc/admin.yaml logs
-
-echo "Done testing; shutting down all containers"
-docker-compose -p ${ISOLATION_ID} -f /project/sawtooth-pbft/adhoc/workload.yaml down && \
-docker-compose -p ${ISOLATION_ID}-alpha -f /project/sawtooth-pbft/adhoc/node.yaml down && \
-docker-compose -p ${ISOLATION_ID}-beta -f /project/sawtooth-pbft/adhoc/node.yaml down && \
-docker-compose -p ${ISOLATION_ID}-gamma -f /project/sawtooth-pbft/adhoc/node.yaml down && \
-GENESIS=1 docker-compose -p ${ISOLATION_ID}-epsilon -f /project/sawtooth-pbft/adhoc/node.yaml down && \
-docker-compose -p ${ISOLATION_ID} -f /project/sawtooth-pbft/adhoc/admin.yaml down
+docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml logs

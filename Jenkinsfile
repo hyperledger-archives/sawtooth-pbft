@@ -82,7 +82,7 @@ pipeline {
             }
         }
 
-        stage('Run integration tests') {
+        stage('Run liveness tests') {
             steps {
                 sh 'docker-compose -f tests/test_liveness.yaml run pbft-0 cargo build'
                 sh 'docker-compose -f tests/test_liveness.yaml up --abort-on-container-exit --exit-code-from test-pbft-engine'
@@ -94,10 +94,27 @@ pipeline {
             }
         }
 
+        stage('Run CFT tests') {
+            options {
+                timeout(time: 10, unit: 'MINUTES')
+            }
+            steps {
+                sh 'tests/test_crash_fault_tolerance.sh'
+            }
+            post {
+                always {
+                    // The CFT tests use the local target/ directory to build and share the PBFT binary between
+                    // containers, and that results in writing files to that local directory as root, which gives
+                    // permission denied errors on a second run unless we fix the permissions here.
+                    sh 'docker run --rm -v $(pwd)/target:/target sawtooth-pbft-engine-local:${ISOLATION_ID} bash -c "chown -R ${JENKINS_UID} /target"'
+                }
+            }
+        }
+
         stage("Archive Build artifacts") {
             steps {
                 sh 'docker-compose -f docker-compose-installed.yaml build'
-                sh 'docker run --rm -v $(pwd)/build/debs:/build sawtooth-pbft-engine:${ISOLATION_ID} bash -c "cp /tmp/sawtooth-pbft-engine*.deb /build && chown ${JENKINS_UID} /build/*.deb"'
+                sh 'docker run --rm -v $(pwd)/build:/build sawtooth-pbft-engine:${ISOLATION_ID} bash -c "cp /tmp/sawtooth-pbft-engine*.deb /build && chown -R ${JENKINS_UID} /build"'
             }
         }
     }
@@ -107,7 +124,7 @@ pipeline {
             sh 'docker-compose down'
         }
         success {
-            archiveArtifacts 'build/debs/*.deb'
+            archiveArtifacts 'build/*.deb'
         }
     }
 }
