@@ -712,7 +712,7 @@ impl PbftNode {
 
     fn build_seal(
         &mut self,
-        state: &mut PbftState,
+        state: &PbftState,
         summary: Vec<u8>,
         head: Block,
     ) -> Result<Vec<u8>, PbftError> {
@@ -1306,7 +1306,7 @@ mod tests {
             node.msg_log.add_message(message);
         }
 
-        let seal = node.build_seal(&mut state, vec![1, 2, 3], head).unwrap();
+        let seal = node.build_seal(&state, vec![1, 2, 3], head).unwrap();
         block.payload = seal;
 
         node.on_block_new(block, &mut state).unwrap();
