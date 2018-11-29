@@ -22,9 +22,9 @@ fewer than one-third of the nodes are considered faulty. PBFT networks need a
 minimum of four nodes to be Byzantine fault-tolerant.
 
 This implementation is based around the algorithm described in that paper, and
-adapted for use in Hyperledger Sawtooth. It uses the experimental Consensus
-API that is loosely described by [this
-RFC](https://github.com/aludvik/sawtooth-rfcs/blob/consensus/text/0000-consensus-api.md).
+adapted for use in Hyperledger Sawtooth. It uses the Sawtooth Consensus API that
+is described by [this
+RFC](https://github.com/hyperledger/sawtooth-rfcs/blob/master/text/0000-consensus-api.md).
 
 Note that this project uses the terms "primary" and "secondary" to refer to
 the role of nodes in the network, which differs slightly from the terminology

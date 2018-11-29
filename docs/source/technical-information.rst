@@ -3,8 +3,8 @@ Technical Information
 *********************
 
 The Sawtooth PBFT algorithm operates within the framework described by the
-`Consensus API
-<https://github.com/aludvik/sawtooth-rfcs/blob/500b3688acfb0cd4834ea6451a8c5e000f7f5174/text/0000-consensus-api.md>`__.
+`Sawtooth Consensus API
+<https://github.com/hyperledger/sawtooth-rfcs/blob/master/text/0000-consensus-api.md>`__.
 The ``start`` method contains an event loop which handles all incoming
 messages, in the form of ``Update``\ s. The most important form of ``Update``
 to the functionality of PBFT is ``Update::PeerMessage``, but other updates
@@ -37,7 +37,7 @@ like ``BlockNew`` and ``BlockCommit``, and the system update ``Shutdown``.
 
 The following `Protobuf
 <https://developers.google.com/protocol-buffers/>`__-style definitions are
-used to represent all consensus-related messages in the Sawtooth PBFT system:
+used to represent consensus-related messages in the Sawtooth PBFT system:
 
 .. code-block:: protobuf
 
@@ -61,14 +61,12 @@ used to represent all consensus-related messages in the Sawtooth PBFT system:
      // View number
      uint64 view = 2;
 
-     // Sequence number
+     // Sequence number (helps with ordering the log)
      uint64 seq_num = 3;
 
      // Node who signed the message
      bytes signer_id = 4;
    }
-
-.. code-block:: protobuf
 
    // A generic PBFT message (PrePrepare, Prepare, Commit, Checkpoint)
    message PbftMessage {
@@ -79,15 +77,13 @@ used to represent all consensus-related messages in the Sawtooth PBFT system:
      PbftBlock block = 2;
    }
 
-.. code-block:: protobuf
-
    // View change message, for when a node suspects the primary node is faulty
    message PbftViewChange {
      // Message information
      PbftMessageInfo info = 1;
 
-     // Set of `2f + 1` Checkpoint messages, proving correctness of stable
-     // Checkpoint mentioned in info's `seq_num`
+     // Set of `2f + 1` checkpoint messages, proving correctness of stable
+     // checkpoint mentioned in info's `sequence_number`
      repeated PbftMessage checkpoint_messages = 2;
    }
 
@@ -111,12 +107,12 @@ transaction family
 
   .. code-block:: console
 
-     \\[ \
-     '\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"', \
-     '\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"', \
-     '\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"', \
-     '\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"' \
-     \\]
+    [
+      "0203f3a0f914c9d80825b72346eeae42e884094ae3d0bd3c544c4c7e8ed37a3e6c",
+      "02f83c8fb57bb8dc4c72a4ba0846e5c14bc02228e1d627f5c2dcafa209b7c5ffd2",
+      "dc26a7099e81bb02869cc8ae57da030fbe4cf276b38ab37d2cc815fec63a14ab",
+      "df8e8388ced559bd35c2b05199ca9f8fbebb420979715003355dcb7363016c1d"
+    ]
 
 - | ``sawtooth.consensus.pbft.block_duration`` (optional, default 200 ms):
   | How often to try to publish a block
@@ -124,8 +120,8 @@ transaction family
 - | ``sawtooth.consensus.pbft.checkpoint_period`` (optional, default 100 blocks):
   | How many committed blocks in between each checkpoint
 
-- | ``sawtooth.consensus.pbft.view_change_timeout`` (optional, default 4000 ms):
-  | How long to wait before deeming a primary node faulty
+- | ``sawtooth.consensus.pbft.commit_timeout`` (optional, default 4000 ms):
+  | How long to wait between block commits before deeming a primary node faulty
 
 - | ``sawtooth.consensus.pbft.message_timeout`` (optional, default 10 ms):
   | How long to wait for updates from the Consensus API
@@ -158,11 +154,10 @@ Every node keeps track of the following state information:
   algorithm; can be `garbage collected
   <algorithm-operation.html#checkpointing-mode>`__ every so often).
 
-- List of its connected peers. This is provided at startup from on-chain
-  settings specified by the user. The length of this peer list is used to
-  calculate :math:`f`, the maximum number of faulty nodes this network can
-  tolerate. Currently, only static networks are supported (that is, there is
-  no adding or removal of peers).
+- List of its connected peers. This is taken from the
+  `sawtooth.consensus.pbft.peers` on-chain setting. The length of this peer list
+  is used to calculate :math:`f`, the maximum number of faulty nodes this
+  network can tolerate.
 
 
 Message Types
@@ -194,16 +189,15 @@ States
 **States:** Sawtooth PBFT follows a state-machine replication pattern, where
 these states are defined:
 
-- ``NotStarted``: The algorithm has not been started yet. No ``BlockNew``
-  updates have been received. In this stage, a node enters ``Checkpointing``
-  mode if ``checkpoint_period`` blocks have been committed to the chain. If no
+- ``NotStarted``: No blocks are being processed. No new ``BlockNew`` updates
+  have been received. In this stage, a node enters ``Checkpointing`` mode if
+  ``checkpoint_period`` blocks have been committed to the chain. If no
   checkpoint occurs, the node is ready to receive a ``BlockNew`` update for
   the next block.
 
 - ``PrePreparing``: A ``BlockNew`` has been received through the Consensus
-  API, and its consensus seal has been verified. Ready to receive a
-  ``PrePrepare`` message for the block corresponding to the ``BlockNew``
-  message just received.
+  API. Ready to receive a ``PrePrepare`` message for the block corresponding to
+  the ``BlockNew`` message just received.
 
 - ``Preparing``: A ``PrePrepare`` message has been received and is valid.
   Ready to receive ``Prepare`` messages corresponding to this ``PrePrepare``.
@@ -218,8 +212,8 @@ these states are defined:
 - ``Finished``: The predicate ``committed`` is true and the block has been
   committed to the chain. Ready to receive a ``BlockCommit`` update.
 
-These states may be interrupted at any time if the view change timer
-expires, forcing the node into ``ViewChanging`` mode.
+These states may be interrupted at any time if the commit timeout expires,
+forcing the node into ``ViewChanging`` mode.
 
 **State Transitions:** The following state transitions are defined;
 listed with their causes:
@@ -256,10 +250,9 @@ Initialization
 At the beginning of the Engine’s ``start`` method, some initial setup is
 required:
 
-- Create the message processor, which in turn initializes:
+- Initialize state with sequence number 0 and view 0
 
-  - The state, starting with sequence number 0 and view 0
-  - The message log, with all of its fields empty
+- Create the message log with all of its fields empty
 
 - Establish timers and counters for checkpoint periods and block durations,
   which are loaded from the on-chain settings

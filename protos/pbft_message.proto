@@ -35,7 +35,7 @@ message PbftMessageInfo {
   // View number
   uint64 view = 2;
 
-  // Sequence number (helps with ordering log)
+  // Sequence number (helps with ordering the log)
   uint64 seq_num = 3;
 
   // Node who signed the message
