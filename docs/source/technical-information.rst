@@ -6,10 +6,7 @@ The Sawtooth PBFT algorithm operates within the framework described by the
 `Sawtooth Consensus API
 <https://github.com/hyperledger/sawtooth-rfcs/blob/master/text/0000-consensus-api.md>`__.
 The ``start`` method contains an event loop which handles all incoming
-messages, in the form of ``Update``\ s. The most important form of ``Update``
-to the functionality of PBFT is ``Update::PeerMessage``, but other updates
-like ``BlockNew``, ``BlockCommit``, ``BlockValid``, ``BlockInvalid``, and
-``Shutdown`` are considered.
+messages, in the form of ``Update``\ s.
 
 
 Peer Messages
