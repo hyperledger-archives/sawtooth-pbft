@@ -1202,6 +1202,57 @@ mod tests {
         }
     }
 
+    /// Creates a block with a valid consensus seal for the previous block
+    fn mock_block_with_seal(num: u64, node: &mut PbftNode, state: &mut PbftState) -> Block {
+        let head = mock_block(num - 1);
+        let mut block = mock_block(num);
+        block.summary = vec![1, 2, 3];
+        let context = create_context("secp256k1").unwrap();
+
+        for i in 0..3 {
+            let mut info = PbftMessageInfo::new();
+            info.set_msg_type("Commit".into());
+            info.set_view(0);
+            info.set_seq_num(num - 1);
+            info.set_signer_id(vec![i]);
+
+            let mut block = PbftBlock::new();
+            block.set_block_id(head.block_id.clone());
+
+            let mut msg = PbftMessage::new();
+            msg.set_info(info);
+            msg.set_block(block);
+
+            let mut message = ParsedMessage::from_pbft_message(msg);
+
+            let key = context.new_random_private_key().unwrap();
+            let pub_key = context.get_public_key(&*key).unwrap();
+            let mut header = ConsensusPeerMessageHeader::new();
+
+            header.set_signer_id(pub_key.as_slice().to_vec());
+            header.set_content_sha512(hash_sha512(&message.message_bytes));
+
+            let header_bytes = header.write_to_bytes().unwrap();
+            let header_signature =
+                hex::decode(context.sign(&header_bytes, &*key).unwrap()).unwrap();
+
+            message.from_self = false;
+            message.header_bytes = header_bytes;
+            message.header_signature = header_signature;
+
+            node.msg_log.add_message(message);
+        }
+
+        // Do some special jiu-jitsu to generate the seal for the node from itself. Basically,
+        // do a bit of time travel into the future and then reset state.
+        let actual_seq_num = state.seq_num;
+        state.seq_num = num - 1;
+        block.payload = node.build_seal(state, vec![1, 2, 3], head).unwrap();
+        state.seq_num = actual_seq_num;
+
+        block
+    }
+
     /// Create a mock serialized PbftMessage
     fn mock_msg(
         msg_type: &PbftMessageType,
@@ -1256,6 +1307,84 @@ mod tests {
             WorkingBlockOption::TentativeWorkingBlock(mock_block_id(1))
         );
         assert_eq!(state1.seq_num, 0);
+    }
+
+    #[test]
+    fn block_new_first_10_blocks() {
+        let mut node = mock_node(vec![0]);
+        let cfg = mock_config(4);
+        let mut state = PbftState::new(vec![0], &cfg);
+
+        let block_0_id = mock_block_id(0);
+        let block_1_id = mock_block_id(1);
+
+        // Assert starting state
+        let head = node.service.get_chain_head().unwrap();
+        assert_eq!(head.block_num, 0);
+        assert_eq!(head.block_id, block_0_id);
+        assert_eq!(head.previous_id, block_0_id);
+
+        assert_eq!(state.id, vec![0]);
+        assert_eq!(state.seq_num, 0);
+        assert_eq!(state.view, 0);
+        assert_eq!(state.phase, PbftPhase::NotStarted);
+        assert_eq!(state.mode, PbftMode::Normal);
+        assert_eq!(state.pre_checkpoint_mode, PbftMode::Normal);
+        assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
+        assert_eq!(state.f, 1);
+        assert_eq!(state.forced_view_change_period, 30);
+        assert_eq!(state.working_block, WorkingBlockOption::NoWorkingBlock);
+        assert!(state.is_primary());
+
+        // Handle the first block and assert resulting state
+        node.on_block_new(mock_block(1), &mut state).unwrap();
+
+        let head = node.service.get_chain_head().unwrap();
+        assert_eq!(head.block_num, 0);
+        assert_eq!(head.block_id, block_0_id);
+        assert_eq!(head.previous_id, block_0_id);
+
+        assert_eq!(state.id, vec![0]);
+        assert_eq!(state.seq_num, 1);
+        assert_eq!(state.view, 0);
+        assert_eq!(state.phase, PbftPhase::PrePreparing);
+        assert_eq!(state.mode, PbftMode::Normal);
+        assert_eq!(state.pre_checkpoint_mode, PbftMode::Normal);
+        assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
+        assert_eq!(state.f, 1);
+        assert_eq!(state.forced_view_change_period, 30);
+        assert_eq!(
+            state.working_block,
+            WorkingBlockOption::TentativeWorkingBlock(block_1_id)
+        );
+        assert!(state.is_primary());
+
+        // Handle the rest of the blocks
+        for i in 2..10 {
+            let block_ids = (i - 2..i + 1).map(mock_block_id).collect::<Vec<_>>();
+            let block = mock_block_with_seal(i, &mut node, &mut state);
+            node.on_block_new(block, &mut state).unwrap();
+
+            let head = node.service.get_chain_head().unwrap();
+            assert_eq!(head.block_num, i - 1);
+            assert_eq!(head.block_id, block_ids[1]);
+            assert_eq!(head.previous_id, block_ids[0]);
+
+            assert_eq!(state.id, vec![0]);
+            assert_eq!(state.seq_num, i - 1);
+            assert_eq!(state.view, 0);
+            assert_eq!(state.phase, PbftPhase::PrePreparing);
+            assert_eq!(state.mode, PbftMode::Normal);
+            assert_eq!(state.pre_checkpoint_mode, PbftMode::Normal);
+            assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
+            assert_eq!(state.f, 1);
+            assert_eq!(state.forced_view_change_period, 30);
+            assert_eq!(
+                state.working_block,
+                WorkingBlockOption::TentativeWorkingBlock(block_ids[2].clone())
+            );
+            assert!(state.is_primary());
+        }
     }
 
     /// Make sure that `BlockNew` properly checks the consensus seal.
