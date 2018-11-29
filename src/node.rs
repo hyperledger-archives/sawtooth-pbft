@@ -466,11 +466,19 @@ impl PbftNode {
         &mut self,
         state: &mut PbftState,
         block: &Block,
-        msg: PbftMessage,
+        msg: &PbftMessage,
+        head: &Block,
     ) -> Result<bool, PbftError> {
-        // Don't catch up if we're the primary, since we're the ones who publish.
-        // Also don't catch up from block 0 -> 1, since there's no consensus seal.
-        if state.is_primary() || block.block_num < 2 {
+        info!(
+            "{}: Trying catchup from head #{} to #{}, from BlockNew message #{}",
+            state,
+            head.block_num,
+            head.block_num + 1,
+            block.block_num,
+        );
+
+        // Don't catch up from block 0 -> 1, since there's no consensus seal.
+        if block.block_num < 2 {
             return Ok(false);
         }
 
@@ -533,24 +541,44 @@ impl PbftNode {
             state.view = view;
         }
 
+        // Add messages to backlog so that `handlers::commit` can process a commit
+        // message normally
         for message in &messages {
             self.msg_log.add_message(message.clone());
         }
 
-        // Commit the new block, using one of the parsed commit messages to simulate
+        // Commit the new block, using one of the parsed messages to simulate
         // having received a regular commit message.
-        handlers::commit(state, &mut self.msg_log, &mut *self.service, &messages[0])?;
+        handlers::commit(
+            state,
+            &mut self.msg_log,
+            &mut *self.service,
+            &messages[0].as_msg_type(PbftMessageType::Commit),
+        )?;
 
         // Start a view change if we need to force one for fairness
         if state.at_forced_view_change() {
             self.force_view_change(state);
         }
 
+        // Ensure that the message that we generated from the BlockNew message
+        // has the right sequence number.
+        let mut fixed_msg = msg.clone();
+        let mut fixed_info = fixed_msg.take_info();
+        fixed_info.set_seq_num(head.block_num);
+        fixed_msg.set_info(fixed_info);
+
         self.msg_log
-            .add_message(ParsedMessage::from_pbft_message(msg));
+            .add_message(ParsedMessage::from_pbft_message(fixed_msg));
         state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id.clone());
         state.idle_timeout.stop();
         state.commit_timeout.start();
+
+        if state.is_primary() {
+            state.seq_num = head.block_num + 1;
+        } else {
+            state.seq_num = head.block_num;
+        }
 
         Ok(true)
     }
@@ -565,12 +593,27 @@ impl PbftNode {
             return Ok(());
         }
 
+        let head = self
+            .service
+            .get_chain_head()
+            .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
+
         info!(
             "{}: Got BlockNew: {} / {}",
             state,
             block.block_num,
             hex::encode(&block.block_id[..3]),
         );
+
+        debug!("Head is currently at {}", head.block_num);
+
+        if block.block_num <= head.block_num {
+            info!(
+                "Ignoring block ({}) that's older than head ({}).",
+                block.block_num, head.block_num
+            );
+            return Ok(());
+        }
 
         let pbft_block = pbft_block_from_block(block.clone());
 
@@ -615,12 +658,7 @@ impl PbftNode {
             }
         }
 
-        let head = self
-            .service
-            .get_chain_head()
-            .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
-
-        if self.try_catchup(state, &block, msg.clone())? {
+        if self.try_catchup(state, &block, &msg, &head)? {
             return Ok(());
         }
 
