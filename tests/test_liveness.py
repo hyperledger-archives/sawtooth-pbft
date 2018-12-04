@@ -46,7 +46,7 @@ SYNC_TOLERANCE = 10
 MAX_DURATION = 2.5 * BLOCK_TO_REACH
 
 
-class TestRaftEngine(unittest.TestCase):
+class TestPbftEngine(unittest.TestCase):
     def test_pbft_engine(self):
         start_time = time.time()
         # Wait until all nodes have reached the minimum block number
