@@ -49,35 +49,28 @@ be installed.
 
      .. code-block:: console
 
-        % tests/pbft.sh
+        % bin/run_docker_tests tests/test_liveness.yaml
 
-   This script builds several Docker images, starts up a network of four
+   This command builds several Docker images, starts up a network of four
    Sawtooth nodes with PBFT consensus, then goes through a liveness test of
-   55 blocks (using the Docker Compose file ``test_liveness.yaml``). The default
-   log level is ``INFO``, so the test script displays a large amount of
-   information as it executes.
+   55 blocks, as defined in the Docker Compose file ``test_liveness.yaml``.
+   The default log level is ``INFO``, so the test script displays a large amount
+   of information as it executes.
 
-**Optional Changes**
+   Tips:
 
-* The ``sawtooth-pbft`` repository includes several Docker Compose files for
-  testing. To specify a different Compose file (such as ``grafana.yaml``,
-  ``client.yaml``, or ``pbft_unit_tests.yaml``), include the file name on the
-  command line, as in this example:
+   * This script has several options, such as ``--clean``, ``--no-build``, and
+     ``--timeout``. For more information, execute ``run_docker_test --help``.
 
-    .. code-block:: console
+   * To run a different test, specify a different Compose file for
+     ` run_docker_test``. The ``sawtooth-pbft/tests/`` directory includes several
+     Docker Compose files for testing, such as ``grafana.yaml``, ``client.yaml``,
+     and ``pbft_unit_tests.yaml``.
 
-       $ tests/pbft.sh pbft_unit_tests
-
-* To pass additional arguments to Docker Compose, put them after the Compose
-  file, as in this example:
-
-    .. code-block:: console
-
-       $ tests/pbft.sh client --abort-on-container-exit
-
-* To adjust the :ref:`PBFT on-chain settings <pbft-on-chain-settings-label>`,
-  edit ``test_liveness.yaml`` and change the ``sawset proposal create``
-  parameters for the four validator containers. For example:
+   * To adjust the :ref:`PBFT on-chain settings <pbft-on-chain-settings-label>`,
+     edit the testing Compose file and change the ``sawset proposal create``
+     parameters for the four validator containers. This example shows the
+     settings in ``test_liveness.yaml`` for the first validator container:
 
     .. code-block:: yaml
 
