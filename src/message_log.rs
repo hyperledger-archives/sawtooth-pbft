@@ -203,25 +203,26 @@ impl PbftLog {
     }
 
     /// Add a generic PBFT message to the log
-    pub fn add_message(&mut self, msg: ParsedMessage) {
-        if msg.info().get_seq_num() < self.high_water_mark
-            || msg.info().get_seq_num() >= self.low_water_mark
+    pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) {
+        if msg.info().get_seq_num() >= self.high_water_mark
+            || msg.info().get_seq_num() < self.low_water_mark
         {
-            // If the message wasn't already in the log, increment cycles
-            let msg_type = PbftMessageType::from(msg.info().get_msg_type());
-            let inserted = self.messages.insert(msg);
-            if msg_type == PbftMessageType::BlockNew && inserted {
-                self.cycles += 1;
-            }
-            trace!("{}", self);
-        } else {
             warn!(
                 "Not adding message with sequence number {}; outside of log bounds ({}, {})",
                 msg.info().get_seq_num(),
                 self.low_water_mark,
                 self.high_water_mark,
             );
+            return;
         }
+
+        // If the message wasn't already in the log, increment cycles
+        let msg_type = PbftMessageType::from(msg.info().get_msg_type());
+        let inserted = self.messages.insert(msg);
+        if msg_type == PbftMessageType::BlockNew && inserted {
+            self.cycles += 1;
+        }
+        trace!("{}", self);
     }
 
     /// Adds a message the (back)log, based on the given `PbftHint`
