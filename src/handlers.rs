@@ -522,11 +522,11 @@ mod tests {
 
         // Put the block new in the log
         let block_new0 = mock_msg(&PbftMessageType::BlockNew, 0, 1, mock_block(1), vec![0]);
-        log0.add_message(block_new0);
+        log0.add_message(block_new0, &state0);
         state0.seq_num = 1;
 
         let block_new1 = mock_msg(&PbftMessageType::BlockNew, 0, 0, mock_block(1), vec![0]);
-        log1.add_message(block_new1);
+        log1.add_message(block_new1, &state1);
 
         assert!(pre_prepare(&mut state0, &mut log0, &pre_prep_msg).is_ok());
         assert!(pre_prepare(&mut state1, &mut log1, &pre_prep_msg).is_ok());

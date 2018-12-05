@@ -30,6 +30,7 @@ use config::PbftConfig;
 use error::PbftError;
 use message_type::{ParsedMessage, PbftHint, PbftMessageType};
 use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
+use state::PbftState;
 
 /// The log keeps track of the last stable checkpoint
 #[derive(Clone)]
@@ -216,6 +217,21 @@ impl PbftLog {
             return;
         }
 
+        // Except for Checkpoints and ViewChanges, the message must be for the current view to be
+        // accepted
+        let msg_type = PbftMessageType::from(msg.info().get_msg_type());
+        if msg_type != PbftMessageType::Checkpoint
+            && msg_type != PbftMessageType::ViewChange
+            && msg.info().get_view() != state.view
+        {
+            warn!(
+                "Not adding message with view number {}; does not match node's view: {}",
+                msg.info().get_view(),
+                state.view,
+            );
+            return;
+        }
+
         // If the message wasn't already in the log, increment cycles
         let msg_type = PbftMessageType::from(msg.info().get_msg_type());
         let inserted = self.messages.insert(msg);
@@ -236,6 +252,7 @@ impl PbftLog {
         &mut self,
         msg: ParsedMessage,
         hint: &PbftHint,
+        state: &PbftState,
     ) -> Result<(), PbftError> {
         match hint {
             PbftHint::FutureMessage => {
@@ -243,7 +260,7 @@ impl PbftLog {
                 Err(PbftError::NotReadyForMessage)
             }
             PbftHint::PastMessage => {
-                self.add_message(msg);
+                self.add_message(msg, state);
                 Err(PbftError::NotReadyForMessage)
             }
             PbftHint::PresentMessage => Ok(()),
@@ -459,6 +476,7 @@ mod tests {
     fn one_message() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
+        let state = PbftState::new(vec![], &cfg);
 
         let msg = make_msg(
             &PbftMessageType::PrePrepare,
@@ -468,7 +486,7 @@ mod tests {
             get_peer_id(&cfg, 0),
         );
 
-        log.add_message(msg.clone());
+        log.add_message(msg.clone(), &state);
 
         let gotten_msgs = log.get_messages_of_type(&PbftMessageType::PrePrepare, 1, 0);
 
@@ -481,6 +499,7 @@ mod tests {
     fn prepared_committed() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
+        let state = PbftState::new(vec![], &cfg);
 
         let msg = make_msg(
             &PbftMessageType::BlockNew,
@@ -489,7 +508,7 @@ mod tests {
             get_peer_id(&cfg, 0),
             get_peer_id(&cfg, 0),
         );
-        log.add_message(msg.clone());
+        log.add_message(msg.clone(), &state);
 
         assert_eq!(log.cycles, 1);
         assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
@@ -502,7 +521,7 @@ mod tests {
             get_peer_id(&cfg, 0),
             get_peer_id(&cfg, 0),
         );
-        log.add_message(msg.clone());
+        log.add_message(msg.clone(), &state);
         assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
         assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
 
@@ -515,7 +534,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
             );
 
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
             if peer < 2 {
                 assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
                 assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
@@ -534,7 +553,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
             );
 
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
             if peer < 2 {
                 assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
             } else {
@@ -550,6 +569,7 @@ mod tests {
     fn fix_seq_nums() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
+        let state = PbftState::new(vec![], &cfg);
 
         let msg0 = make_msg(
             &PbftMessageType::BlockNew,
@@ -558,7 +578,7 @@ mod tests {
             get_peer_id(&cfg, 0),
             get_peer_id(&cfg, 0),
         );
-        log.add_message(msg0.clone());
+        log.add_message(msg0.clone(), &state);
 
         let msg = make_msg(
             &PbftMessageType::PrePrepare,
@@ -567,7 +587,7 @@ mod tests {
             get_peer_id(&cfg, 0),
             get_peer_id(&cfg, 0),
         );
-        log.add_message(msg.clone());
+        log.add_message(msg.clone(), &state);
 
         let num_updated = log.fix_seq_nums(&PbftMessageType::BlockNew, 1, 0, msg0.get_block());
 
@@ -590,6 +610,7 @@ mod tests {
     fn garbage_collection() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
+        let state = PbftState::new(vec![], &cfg);
 
         for seq in 1..5 {
             let msg = make_msg(
@@ -599,7 +620,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
                 get_peer_id(&cfg, 0),
             );
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
 
             let msg = make_msg(
                 &PbftMessageType::PrePrepare,
@@ -608,7 +629,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
                 get_peer_id(&cfg, 0),
             );
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
 
             for peer in 0..4 {
                 let msg = make_msg(
@@ -619,7 +640,7 @@ mod tests {
                     get_peer_id(&cfg, 0),
                 );
 
-                log.add_message(msg.clone());
+                log.add_message(msg.clone(), &state);
             }
 
             for peer in 0..4 {
@@ -631,7 +652,7 @@ mod tests {
                     get_peer_id(&cfg, 0),
                 );
 
-                log.add_message(msg.clone());
+                log.add_message(msg.clone(), &state);
             }
         }
 
@@ -644,7 +665,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
             );
 
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
         }
 
         log.garbage_collect(4, 0);
