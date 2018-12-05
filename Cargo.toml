@@ -43,6 +43,7 @@ with-serde = []
 atomicwrites = "0.2"
 clap = "2.31"
 hex = "0.3"
+itertools = "0.7"
 log = "0.4"
 log4rs = "0.8"
 log4rs-syslog = "3.0"

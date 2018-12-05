@@ -23,6 +23,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt;
 
 use hex;
+use itertools::Itertools;
 use sawtooth_sdk::consensus::engine::Block;
 
 use config::PbftConfig;
@@ -320,6 +321,49 @@ impl PbftLog {
                     && info.get_view() == view
             })
             .collect()
+    }
+
+    /// Get sufficient messages for the given type and sequence number
+    ///
+    /// Gets all messages that match the given type and sequence number,
+    /// groups them by the view number, filters out view number groups
+    /// that don't have enough messages, and then sorts by view number
+    /// and returns the highest one found, as an option in case there's
+    /// no matching view number groups.
+    ///
+    /// This is useful in cases where e.g. we have enough messages to
+    /// publish for some view number for the current sequence number,
+    /// but we've forced a view change before the publishing could happen
+    /// and we don't have any/enough messages for the current view num.
+    ///
+    /// Considers messages from self to not count towards being enough,
+    /// as the current usage of this function is building a seal, where
+    /// the publishing node's approval is implicit via publishing.
+    pub fn get_enough_messages(
+        &self,
+        msg_type: &PbftMessageType,
+        sequence_number: u64,
+        minimum: u64,
+    ) -> Option<Vec<&ParsedMessage>> {
+        self.messages
+            .iter()
+            .filter_map(|msg| {
+                let info = msg.info();
+                let same_type = info.get_msg_type() == String::from(msg_type);
+                let same_seq = info.get_seq_num() == sequence_number;
+
+                if same_type && same_seq && !msg.from_self {
+                    Some((info.get_view(), msg))
+                } else {
+                    None
+                }
+            })
+            .into_group_map()
+            .into_iter()
+            .filter(|(_, msgs)| msgs.len() >= minimum as usize)
+            .sorted_by_key(|(view, _)| *view)
+            .pop()
+            .map(|(_, msgs)| msgs)
     }
 
     /// Obtain message information objects from the log that match a given type, sequence number,
