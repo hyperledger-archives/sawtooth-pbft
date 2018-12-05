@@ -17,7 +17,10 @@
 
 pipeline {
     agent {
-        label 'master'
+        node {
+            label 'master'
+            customWorkspace "workspace/${env.BUILD_TAG}"
+        }
     }
 
     options {
