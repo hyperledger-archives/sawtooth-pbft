@@ -105,10 +105,6 @@ impl fmt::Display for PbftLog {
     }
 }
 
-fn check_msg_has_type(pbft_message: &ParsedMessage, check_type: &PbftMessageType) -> bool {
-    pbft_message.info().get_msg_type() != String::from(check_type)
-}
-
 impl PbftLog {
     pub fn new(config: &PbftConfig) -> Self {
         PbftLog {
@@ -131,16 +127,12 @@ impl PbftLog {
     ///  + A `PrePrepare` message matching the original message (in the current view)
     ///  + `2f + 1` matching `Prepare` messages from different nodes that match
     ///    `PrePrepare` message above (including its own)
-    pub fn check_prepared(&self, pbft_message: &ParsedMessage, f: u64) -> Result<(), PbftError> {
-        if check_msg_has_type(pbft_message, &PbftMessageType::Prepare) {
-            return Err(PbftError::NotReadyForMessage);
-        }
-        let info = pbft_message.info();
+    pub fn check_prepared(&self, info: &PbftMessageInfo, f: u64) -> Result<(), PbftError> {
         let block_new_msgs = self.check_log_has_one_block_new_msg(info)?;
         let pre_prep_msgs = self.check_log_has_one_pre_prepared_msg(info)?;
         self.check_log_prepare_msgs_match(&block_new_msgs, &pre_prep_msgs, info)?;
 
-        self.check_msg_against_log(&pbft_message, true, 2 * f + 1)?;
+        self.check_msg_against_log(info, true, 2 * f + 1)?;
 
         Ok(())
     }
@@ -214,24 +206,20 @@ impl PbftLog {
     /// `check_committable` is true if for this node:
     ///   + `check_prepared` is true
     ///   + This node has accepted `2f + 1` `Commit` messages, including its own
-    pub fn check_committable(&self, pbft_message: &ParsedMessage, f: u64) -> Result<(), PbftError> {
-        if check_msg_has_type(pbft_message, &PbftMessageType::Commit) {
-            return Err(PbftError::NotReadyForMessage);
-        }
-        self.check_msg_against_log(&pbft_message, true, 2 * f + 1)?;
+    pub fn check_committable(&self, info: &PbftMessageInfo, f: u64) -> Result<(), PbftError> {
+        self.check_msg_against_log(info, true, 2 * f + 1)?;
 
-        self.check_prepared(&pbft_message.as_msg_type(PbftMessageType::Prepare), f)?;
+        self.check_prepared(info, f)?;
         Ok(())
     }
 
     /// Check an incoming message against its counterparts in the message log
     pub fn check_msg_against_log(
         &self,
-        message: &ParsedMessage,
+        info: &PbftMessageInfo,
         check_match: bool,
         num_cutoff: u64,
     ) -> Result<(), PbftError> {
-        let info = message.info();
         let msg_type = PbftMessageType::from(info.get_msg_type());
 
         let msg_infos: Vec<&PbftMessageInfo> =
@@ -249,7 +237,7 @@ impl PbftLog {
         if check_match {
             let non_matches: usize = msg_infos
                 .iter()
-                .filter(|&m| !infos_match(message.info(), m))
+                .filter(|&m| !infos_match(info, m))
                 .count();
             if non_matches > 0 {
                 return Err(PbftError::MessageMismatch(msg_type));
@@ -596,24 +584,24 @@ mod tests {
         log.add_message(msg.clone());
 
         assert_eq!(log.cycles, 1);
-        assert!(log.check_prepared(&msg, 1 as u64).is_err());
-        assert!(log.check_committable(&msg, 1 as u64).is_err());
+        assert!(log.check_prepared(&msg.info(), 1 as u64).is_err());
+        assert!(log.check_committable(&msg.info(), 1 as u64).is_err());
 
         let msg = make_msg(&PbftMessageType::PrePrepare, 0, 1, get_peer_id(&cfg, 0));
         log.add_message(msg.clone());
-        assert!(log.check_prepared(&msg, 1 as u64).is_err());
-        assert!(log.check_committable(&msg, 1 as u64).is_err());
+        assert!(log.check_prepared(&msg.info(), 1 as u64).is_err());
+        assert!(log.check_committable(&msg.info(), 1 as u64).is_err());
 
         for peer in 0..4 {
             let msg = make_msg(&PbftMessageType::Prepare, 0, 1, get_peer_id(&cfg, peer));
 
             log.add_message(msg.clone());
             if peer < 2 {
-                assert!(log.check_prepared(&msg, 1 as u64).is_err());
-                assert!(log.check_committable(&msg, 1 as u64).is_err());
+                assert!(log.check_prepared(&msg.info(), 1 as u64).is_err());
+                assert!(log.check_committable(&msg.info(), 1 as u64).is_err());
             } else {
-                assert!(log.check_prepared(&msg, 1 as u64).is_ok());
-                assert!(log.check_committable(&msg, 1 as u64).is_err());
+                assert!(log.check_prepared(&msg.info(), 1 as u64).is_ok());
+                assert!(log.check_committable(&msg.info(), 1 as u64).is_err());
             }
         }
 
@@ -622,9 +610,9 @@ mod tests {
 
             log.add_message(msg.clone());
             if peer < 2 {
-                assert!(log.check_committable(&msg, 1 as u64).is_err());
+                assert!(log.check_committable(&msg.info(), 1 as u64).is_err());
             } else {
-                assert!(log.check_committable(&msg, 1 as u64).is_ok());
+                assert!(log.check_committable(&msg.info(), 1 as u64).is_ok());
             }
         }
     }

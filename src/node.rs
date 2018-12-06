@@ -112,7 +112,7 @@ impl PbftNode {
 
                 self.msg_log.add_message(msg.clone());
 
-                self.msg_log.check_prepared(&msg, state.f)?;
+                self.msg_log.check_prepared(&msg.info(), state.f)?;
 
                 self.check_blocks_if_not_checking(&msg, state)?;
             }
@@ -123,7 +123,7 @@ impl PbftNode {
 
                 self.msg_log.add_message(msg.clone());
 
-                self.msg_log.check_committable(&msg, state.f)?;
+                self.msg_log.check_committable(&msg.info(), state.f)?;
 
                 self.commit_block_if_committing(&msg, state)?;
             }
@@ -280,7 +280,7 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         if state.mode == PbftMode::Checkpointing {
             self.msg_log
-                .check_msg_against_log(pbft_message, true, 2 * state.f + 1)?;
+                .check_msg_against_log(pbft_message.info(), true, 2 * state.f + 1)?;
             warn!(
                 "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
                 state,
@@ -306,7 +306,7 @@ impl PbftNode {
             // f + 1 VC messages to prevent being late to the new view party
             if self
                 .msg_log
-                .check_msg_against_log(message, true, state.f + 1)
+                .check_msg_against_log(message.info(), true, state.f + 1)
                 .is_ok()
                 && message.info().get_view() > state.view
             {

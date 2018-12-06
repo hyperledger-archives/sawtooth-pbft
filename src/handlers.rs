@@ -373,7 +373,7 @@ fn check_received_enough_view_changes(
     msg_log: &PbftLog,
     vc_message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    msg_log.check_msg_against_log(vc_message, true, 2 * state.f + 1)
+    msg_log.check_msg_against_log(vc_message.info(), true, 2 * state.f + 1)
 }
 
 fn set_current_view_from_msg(state: &mut PbftState, vc_message: &ParsedMessage) {
