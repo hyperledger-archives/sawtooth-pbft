@@ -760,26 +760,30 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         debug!("{}: <<<<<< BlockValid: {:?}", state, block_id);
+        let block = match state.working_block {
+            WorkingBlockOption::WorkingBlock(ref block) => {
+                if BlockId::from(block.get_block_id()) == block_id {
+                    Ok(block.clone())
+                } else {
+                    warn!("Got BlockValid that doesn't match the working block");
+                    Err(PbftError::NotReadyForMessage)
+                }
+            }
+            WorkingBlockOption::TentativeWorkingBlock(_) => {
+                warn!("Got BlockValid, but node only has a tentative working block");
+                Err(PbftError::NoWorkingBlock)
+            }
+            _ => {
+                warn!("Got BlockValid with no working block");
+                Err(PbftError::NoWorkingBlock)
+            }
+        }?;
+
         state.switch_phase(PbftPhase::Committing);
-
-        debug!("{}: Getting blocks", state);
-        let valid_blocks: Vec<Block> = self
-            .service
-            .get_blocks(vec![block_id])
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(_block_id, block)| block)
-            .collect();
-
-        if valid_blocks.is_empty() {
-            return Err(PbftError::WrongNumBlocks);
-        }
-
-        let s = state.seq_num; // By now, secondaries have the proper seq number
         self._broadcast_pbft_message(
-            s,
+            state.seq_num,
             &PbftMessageType::Commit,
-            handlers::pbft_block_from_block(valid_blocks[0].clone()),
+            block.clone(),
             state,
         )?;
         Ok(())
@@ -1509,6 +1513,8 @@ mod tests {
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], &cfg);
         state0.phase = PbftPhase::Checking;
+        state0.working_block =
+            WorkingBlockOption::WorkingBlock(pbft_block_from_block(mock_block(1)));
         node.on_block_valid(mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
         assert_eq!(state0.phase, PbftPhase::Committing);
