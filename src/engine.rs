@@ -56,7 +56,8 @@ impl Engine for PbftEngine {
 
         let mut pbft_state = get_storage(&config.storage, || {
             PbftState::new(local_peer_info.peer_id.clone(), &config)
-        }).expect("Couldn't load state!");
+        })
+        .expect("Couldn't load state!");
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
         let mut backlog_ticker = timing::Ticker::new(config.message_timeout);
@@ -73,9 +74,11 @@ impl Engine for PbftEngine {
             let state = &mut **pbft_state.write();
 
             match handle_update(&mut node, incoming_message, state) {
-                Ok(again) => if !again {
-                    break;
-                },
+                Ok(again) => {
+                    if !again {
+                        break;
+                    }
+                }
                 Err(err) => handle_pbft_result(Err(err)),
             }
 

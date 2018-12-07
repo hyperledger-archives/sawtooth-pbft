@@ -40,7 +40,8 @@ fn main() {
             serde_derive: Some(true),
             ..Default::default()
         },
-    }).expect("Protoc Error");
+    })
+    .expect("Protoc Error");
 
     // Create mod.rs accordingly
     let mut mod_file = File::create(dest_path.join("mod.rs")).unwrap();

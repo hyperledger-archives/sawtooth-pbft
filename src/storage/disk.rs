@@ -58,7 +58,8 @@ impl<'a, T: 'a + Serialize + DeserializeOwned + fmt::Display> fmt::Display
 
 impl<'a, T: 'a + Serialize + DeserializeOwned> StorageReadGuard<'a, T>
     for DiskStorageReadGuard<'a, T>
-{}
+{
+}
 
 /// A disk-based write guard
 pub struct DiskStorageWriteGuard<'a, T: Serialize + DeserializeOwned + 'a> {
@@ -81,7 +82,8 @@ impl<'a, T: Serialize + DeserializeOwned> Drop for DiskStorageWriteGuard<'a, T> 
                         .expect("Couldn't convert value to string!")
                         .as_bytes(),
                 )
-            }).expect("File write failed while dropping DiskStorageWriteGuard!");
+            })
+            .expect("File write failed while dropping DiskStorageWriteGuard!");
     }
 }
 
@@ -109,7 +111,8 @@ impl<'a, T: 'a + Serialize + DeserializeOwned + fmt::Display> fmt::Display
 
 impl<'a, T: 'a + Serialize + DeserializeOwned> StorageWriteGuard<'a, T>
     for DiskStorageWriteGuard<'a, T>
-{}
+{
+}
 
 /// A disk-based RAII-guarded Storage implementation
 ///
@@ -120,7 +123,7 @@ pub struct DiskStorage<T: Serialize + DeserializeOwned> {
 }
 
 impl<T: Serialize + DeserializeOwned> DiskStorage<T> {
-    pub fn new<P: Into<String>, F: Fn() -> T>(path: P, default: F) -> Result<Self, String> {
+    pub fn from_path<P: Into<String>, F: Fn() -> T>(path: P, default: F) -> Result<Self, String> {
         let path = path.into();
 
         let file = AtomicFile::new(path, AllowOverwrite);

@@ -164,7 +164,7 @@ impl PbftState {
     /// # Panics
     /// Panics if the network this node is on does not have enough nodes to be Byzantine fault
     /// tolernant.
-    #[allow(needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(id: PeerId, config: &PbftConfig) -> Self {
         // Maximum number of faulty nodes in this network. Panic if there are not enough nodes.
         let f = ((config.peers.len() - 1) / 3) as u64;
@@ -280,7 +280,8 @@ mod tests {
         let config = mock_config(1);
         let caught = ::std::panic::catch_unwind(|| {
             PbftState::new(vec![0], &config);
-        }).is_err();
+        })
+        .is_err();
         assert!(caught);
     }
 

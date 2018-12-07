@@ -161,7 +161,7 @@ fn set_current_working_block(state: &mut PbftState, pbft_message: &PbftMessage) 
 /// Once a `2f + 1` `Commit` messages are received, the primary node can commit the block to the
 /// chain. If the block in the message isn't the one that belongs on top of the current chain head,
 /// then the message gets pushed to the backlog.
-#[allow(ptr_arg)]
+#[allow(clippy::ptr_arg)]
 pub fn commit(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
@@ -219,7 +219,7 @@ fn check_if_block_already_seen(
     }
 }
 
-#[allow(ptr_arg)]
+#[allow(clippy::ptr_arg)]
 fn check_if_commiting_with_current_chain_head(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
@@ -421,7 +421,7 @@ fn become_secondary(state: &mut PbftState) {
     state.downgrade_role();
 }
 
-#[allow(ptr_arg)]
+#[allow(clippy::ptr_arg)]
 // There should only be one block with a matching ID
 fn get_block_by_id(service: &mut Service, block_id: &BlockId) -> Option<Block> {
     let blocks: Vec<Block> = service

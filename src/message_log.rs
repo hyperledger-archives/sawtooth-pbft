@@ -79,7 +79,8 @@ impl fmt::Display for PbftLog {
                 self.view_changes
                     .iter()
                     .map(|ref msg| msg.get_info().clone()),
-            ).collect();
+            )
+            .collect();
         let string_infos: Vec<String> = msg_infos
             .iter()
             .map(|info: &PbftMessageInfo| -> String {
@@ -90,7 +91,8 @@ impl fmt::Display for PbftLog {
                     info.get_seq_num(),
                     hex::encode(info.get_signer_id()),
                 )
-            }).collect();
+            })
+            .collect();
 
         write!(
             f,
@@ -283,7 +285,7 @@ impl PbftLog {
     /// Future messages are added to the backlog of messages to handle at a later time
     /// Present messages are ignored, as they're generally added immediately after
     /// this method is called by the calling code, except for `PrePrepare` messages
-    #[allow(ptr_arg)]
+    #[allow(clippy::ptr_arg)]
     pub fn add_message_with_hint(
         &mut self,
         msg: ParsedMessage,
@@ -316,7 +318,8 @@ impl PbftLog {
                 info.get_msg_type() == String::from(msg_type)
                     && info.get_seq_num() == sequence_number
                     && info.get_view() == view
-            }).collect()
+            })
+            .collect()
     }
 
     /// Obtain message information objects from the log that match a given type, sequence number,
@@ -359,7 +362,6 @@ impl PbftLog {
         view: u64,
         block: &PbftBlock,
     ) -> usize {
-        #[allow(map_clone)]
         let zero_seq_msgs: Vec<ParsedMessage> = self
             .get_messages_of_type(msg_type, 0, view)
             .iter()
@@ -417,7 +419,6 @@ impl PbftLog {
         self.cycles = 0;
 
         // Update the stable checkpoint
-        #[allow(map_clone)]
         let cp_msgs: Vec<PbftMessage> = self
             .get_messages_of_type(&PbftMessageType::Checkpoint, stable_checkpoint, view)
             .iter()
@@ -437,7 +438,8 @@ impl PbftLog {
             .filter(|ref msg| {
                 let seq_num = msg.info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
-            }).cloned()
+            })
+            .cloned()
             .collect();
         self.view_changes = self
             .view_changes
@@ -445,7 +447,8 @@ impl PbftLog {
             .filter(|ref msg| {
                 let seq_num = msg.get_info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
-            }).cloned()
+            })
+            .cloned()
             .collect();
     }
 

@@ -17,7 +17,7 @@
 
 //! Message types for PeerMessages
 
-#![allow(unknown_lints, derive_hash_xor_eq)]
+#![allow(unknown_lints, clippy::derive_hash_xor_eq)]
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -169,11 +169,13 @@ impl ParsedMessage {
                 } else {
                     Some(PbftMessageWrapper::Message(m))
                 }
-            }).or_else(|| {
+            })
+            .or_else(|| {
                 protobuf::parse_from_bytes::<PbftViewChange>(&message.content)
                     .ok()
                     .and_then(|m| Some(PbftMessageWrapper::ViewChange(m)))
-            }).ok_or_else(|| PbftError::InternalError("Couldn't parse message!".into()))?;
+            })
+            .ok_or_else(|| PbftError::InternalError("Couldn't parse message!".into()))?;
 
         Ok(Self {
             header_bytes: message.header_bytes,
@@ -195,7 +197,7 @@ impl ParsedMessage {
     }
 
     /// Constructs a copy of this message with the given message type
-    #[allow(needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn as_msg_type(&self, msg_type: PbftMessageType) -> ParsedMessage {
         let mut new_msg = self.get_pbft_message().clone();
         let mut info = new_msg.take_info();

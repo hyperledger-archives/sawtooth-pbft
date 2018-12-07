@@ -58,7 +58,8 @@ impl<'a, T: 'a + Serialize + DeserializeOwned + fmt::Display> fmt::Display
 
 impl<'a, T: 'a + Serialize + DeserializeOwned> StorageReadGuard<'a, T>
     for MemStorageReadGuard<'a, T>
-{}
+{
+}
 
 /// Memory-backed write guard
 #[derive(Debug)]
@@ -96,7 +97,8 @@ impl<'a, T: 'a + Serialize + DeserializeOwned + fmt::Display> fmt::Display
 
 impl<'a, T: 'a + Serialize + DeserializeOwned> StorageWriteGuard<'a, T>
     for MemStorageWriteGuard<'a, T>
-{}
+{
+}
 
 /// Memory-backed RAII-guarded Storage implementation
 ///
@@ -107,8 +109,8 @@ pub struct MemStorage<T: Serialize + DeserializeOwned> {
 }
 
 impl<T: Serialize + DeserializeOwned> MemStorage<T> {
-    pub fn new<F: Fn() -> T>(default: F) -> Result<Self, String> {
-        Ok(Self { data: default() })
+    pub fn new<F: Fn() -> T>(default: F) -> Self {
+        Self { data: default() }
     }
 }
 
