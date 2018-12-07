@@ -29,7 +29,7 @@ use sawtooth_sdk::consensus::engine::Block;
 use config::PbftConfig;
 use error::PbftError;
 use message_type::{ParsedMessage, PbftHint, PbftMessageType};
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
+use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
 
 /// The log keeps track of the last stable checkpoint
 #[derive(Clone)]
@@ -42,9 +42,6 @@ pub struct PbftStableCheckpoint {
 pub struct PbftLog {
     /// Generic messages (BlockNew, PrePrepare, Prepare, Commit, Checkpoint)
     messages: HashSet<ParsedMessage>,
-
-    /// View change messages
-    view_changes: HashSet<PbftViewChange>,
 
     /// Watermarks (minimum/maximum sequence numbers)
     /// Ensure that log does not get too large
@@ -76,11 +73,6 @@ impl fmt::Display for PbftLog {
             .messages
             .iter()
             .map(|ref msg| msg.info().clone())
-            .chain(
-                self.view_changes
-                    .iter()
-                    .map(|ref msg| msg.get_info().clone()),
-            )
             .collect();
         let string_infos: Vec<String> = msg_infos
             .iter()
@@ -109,7 +101,6 @@ impl PbftLog {
     pub fn new(config: &PbftConfig) -> Self {
         PbftLog {
             messages: HashSet::new(),
-            view_changes: HashSet::new(),
             low_water_mark: 0,
             cycles: 0,
             checkpoint_period: config.checkpoint_period,
@@ -425,11 +416,6 @@ impl PbftLog {
         changed_msgs
     }
 
-    /// Add a `ViewChange` message to the log
-    pub fn add_view_change(&mut self, vc: PbftViewChange) {
-        self.view_changes.insert(vc);
-    }
-
     /// Get the latest stable checkpoint
     pub fn get_latest_checkpoint(&self) -> u64 {
         if let Some(ref cp) = self.latest_stable_checkpoint {
@@ -469,15 +455,6 @@ impl PbftLog {
             .iter()
             .filter(|ref msg| {
                 let seq_num = msg.info().get_seq_num();
-                seq_num >= self.get_latest_checkpoint() && seq_num > 0
-            })
-            .cloned()
-            .collect();
-        self.view_changes = self
-            .view_changes
-            .iter()
-            .filter(|ref msg| {
-                let seq_num = msg.get_info().get_seq_num();
                 seq_num >= self.get_latest_checkpoint() && seq_num > 0
             })
             .cloned()

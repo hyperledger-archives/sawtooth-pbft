@@ -148,7 +148,6 @@ impl PbftNode {
             }
 
             PbftMessageType::ViewChange => {
-                let vc_message = msg.get_view_change_message();
                 let info = msg.info();
                 debug!(
                     "{}: Received ViewChange message from Node {:?} (v {}, seq {})",
@@ -158,7 +157,7 @@ impl PbftNode {
                     info.get_seq_num(),
                 );
 
-                self.msg_log.add_view_change(vc_message.clone());
+                self.msg_log.add_message(msg.clone());
 
                 if self.propose_view_change_if_enough_messages(&msg, state)? {
                     return Ok(());
