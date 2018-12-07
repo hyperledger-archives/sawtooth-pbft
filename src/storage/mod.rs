@@ -99,10 +99,11 @@ mod tests {
 
     #[test]
     fn test_read_guard() {
-        let filename = String::from("/tmp/") + &thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .collect::<String>();
+        let filename = String::from("/tmp/")
+            + &thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(10)
+                .collect::<String>();
 
         let storage = DiskStorage::new(&filename[..], || 1).unwrap();
         let val = storage.read();
@@ -116,10 +117,11 @@ mod tests {
     #[test]
     // Ensures that data is persisted between object lifetimes
     fn test_disk_persistence() {
-        let filename = String::from("/tmp/") + &thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .collect::<String>();
+        let filename = String::from("/tmp/")
+            + &thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(10)
+                .collect::<String>();
 
         {
             let mut storage = DiskStorage::new(&filename[..], || 0).unwrap();
@@ -138,10 +140,11 @@ mod tests {
     #[test]
     // Ensure we don't overwrite longer data with shorter data, and get a mixture of the two
     fn test_truncation() {
-        let filename = String::from("/tmp/") + &thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .collect::<String>();
+        let filename = String::from("/tmp/")
+            + &thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(10)
+                .collect::<String>();
 
         {
             let storage = DiskStorage::new(&filename[..], || 500).unwrap();
@@ -166,10 +169,11 @@ mod tests {
 
     #[test]
     fn test_write_guard() {
-        let filename = String::from("/tmp/") + &thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .collect::<String>();
+        let filename = String::from("/tmp/")
+            + &thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(10)
+                .collect::<String>();
 
         {
             let mut storage = DiskStorage::new(&filename[..], || 1).unwrap();
@@ -192,10 +196,11 @@ mod tests {
 
     #[test]
     fn test_fn_arg() {
-        let filename = String::from("/tmp/") + &thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .collect::<String>();
+        let filename = String::from("/tmp/")
+            + &thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(10)
+                .collect::<String>();
 
         let mut diskval = DiskStorage::new(&filename[..], || 1).unwrap();
         let mut memval = MemStorage::new(|| 5).unwrap();
@@ -213,10 +218,11 @@ mod tests {
 
     #[test]
     fn test_get_storage() {
-        let filename = String::from("/tmp/") + &thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .collect::<String>();
+        let filename = String::from("/tmp/")
+            + &thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(10)
+                .collect::<String>();
 
         let memval = get_storage("memory", || 1).unwrap();
         let mut diskval = get_storage(&format!("disk+{}", filename), || 1).unwrap();

@@ -280,7 +280,8 @@ mod tests {
         let config = mock_config(1);
         let caught = ::std::panic::catch_unwind(|| {
             PbftState::new(vec![0], &config);
-        }).is_err();
+        })
+        .is_err();
         assert!(caught);
     }
 

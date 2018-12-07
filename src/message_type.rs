@@ -169,11 +169,13 @@ impl ParsedMessage {
                 } else {
                     Some(PbftMessageWrapper::Message(m))
                 }
-            }).or_else(|| {
+            })
+            .or_else(|| {
                 protobuf::parse_from_bytes::<PbftViewChange>(&message.content)
                     .ok()
                     .and_then(|m| Some(PbftMessageWrapper::ViewChange(m)))
-            }).ok_or_else(|| PbftError::InternalError("Couldn't parse message!".into()))?;
+            })
+            .ok_or_else(|| PbftError::InternalError("Couldn't parse message!".into()))?;
 
         Ok(Self {
             header_bytes: message.header_bytes,

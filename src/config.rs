@@ -110,7 +110,8 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
                 String::from("sawtooth.consensus.pbft.message_timeout"),
                 String::from("sawtooth.consensus.pbft.max_log_size"),
             ],
-        ).expect("Failed to get on-chain settings");
+        )
+        .expect("Failed to get on-chain settings");
 
     // Get the peers associated with this node (including ourselves). Panic if it is not provided;
     // the network cannot function without this setting.

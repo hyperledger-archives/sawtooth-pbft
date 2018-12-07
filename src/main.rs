@@ -112,7 +112,8 @@ fn get_console_config(log_level: log::LevelFilter) -> Config {
     let stdout = ConsoleAppender::builder()
         .encoder(Box::new(PatternEncoder::new(
             "{h({l:5.5})} | {({M}:{L}):20.20} | {m}{n}",
-        ))).build();
+        )))
+        .build();
 
     Config::builder()
         .appender(Appender::builder().build("stdout", Box::new(stdout)))
@@ -132,7 +133,8 @@ fn parse_args() -> PbftCliArgs {
         (@arg verbose: -v --verbose +multiple
          "increase output verbosity")
         (@arg logconfig: -L --log_config +takes_value
-         "path to logging config file")).get_matches();
+         "path to logging config file"))
+    .get_matches();
 
     let log_config = matches.value_of("logconfig").map(|s| s.into());
 

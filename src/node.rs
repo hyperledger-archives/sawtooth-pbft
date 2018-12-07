@@ -426,7 +426,8 @@ impl PbftNode {
             .get_settings(
                 block.previous_id.clone(),
                 vec![String::from("sawtooth.consensus.pbft.peers")],
-            ).expect("Failed to get settings");
+            )
+            .expect("Failed to get settings");
         let peers = get_peers_from_settings(&settings);
 
         let peer_ids: HashSet<_> = peers
@@ -438,7 +439,8 @@ impl PbftNode {
                 } else {
                     Some(pid)
                 }
-            }).collect();
+            })
+            .collect();
 
         if !voter_ids.is_subset(&peer_ids) {
             return Err(PbftError::InternalError(format!(
@@ -827,7 +829,8 @@ impl PbftNode {
                     vote.set_message_bytes(m.message_bytes.clone());
 
                     vote
-                }).collect::<Vec<_>>(),
+                })
+                .collect::<Vec<_>>(),
         ));
 
         seal.write_to_bytes().map_err(PbftError::SerializationError)
@@ -988,7 +991,8 @@ impl PbftNode {
             .get_settings(
                 block_id,
                 vec![String::from("sawtooth.consensus.pbft.peers")],
-            ).expect("Failed to get settings");
+            )
+            .expect("Failed to get settings");
         let peers = get_peers_from_settings(&settings);
         let new_peers_set: HashSet<PeerId> = peers.iter().cloned().collect();
 
@@ -1027,7 +1031,8 @@ impl PbftNode {
         let msg_bytes = make_msg_bytes(
             handlers::make_msg_info(&msg_type, state.view, seq_num, state.id.clone()),
             block,
-        ).unwrap_or_default();
+        )
+        .unwrap_or_default();
 
         self._broadcast_message(&msg_type, msg_bytes, state)
     }
