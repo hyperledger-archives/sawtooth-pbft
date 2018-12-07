@@ -72,7 +72,7 @@ impl PbftNode {
     /// This method handles all messages from other nodes. Such messages may include `PrePrepare`,
     /// `Prepare`, `Commit`, `Checkpoint`, or `ViewChange`. If a node receives a type of message
     /// before it is ready to do so, the message is pushed into a backlog queue.
-    #[allow(needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn on_peer_message(
         &mut self,
         msg: ParsedMessage,
@@ -206,7 +206,7 @@ impl PbftNode {
         Ok(())
     }
 
-    #[allow(ptr_arg)]
+    #[allow(clippy::ptr_arg)]
     fn commit_block_if_committing(
         &mut self,
         msg: &ParsedMessage,
@@ -246,7 +246,7 @@ impl PbftNode {
         }
     }
 
-    #[allow(ptr_arg)]
+    #[allow(clippy::ptr_arg)]
     fn check_if_checkpoint_started(&mut self, msg: &ParsedMessage, state: &mut PbftState) -> bool {
         // Not ready to receive checkpoint yet; only acceptable in NotStarted
         if state.phase != PbftPhase::NotStarted {

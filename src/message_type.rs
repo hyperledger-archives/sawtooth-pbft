@@ -17,7 +17,7 @@
 
 //! Message types for PeerMessages
 
-#![allow(unknown_lints, derive_hash_xor_eq)]
+#![allow(unknown_lints, clippy::derive_hash_xor_eq)]
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -197,7 +197,7 @@ impl ParsedMessage {
     }
 
     /// Constructs a copy of this message with the given message type
-    #[allow(needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn as_msg_type(&self, msg_type: PbftMessageType) -> ParsedMessage {
         let mut new_msg = self.get_pbft_message().clone();
         let mut info = new_msg.take_info();

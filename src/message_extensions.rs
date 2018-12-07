@@ -19,7 +19,7 @@
 
 // We know that the property `k1 == k2 ==>  hash(k1) == hash(k2)` holds, since protobuf just compares
 // every field in the struct and that's exactly what the implementation of Hash is doing below
-#![allow(unknown_lints, derive_hash_xor_eq)]
+#![allow(unknown_lints, clippy::derive_hash_xor_eq)]
 
 use std::fmt;
 use std::hash::{Hash, Hasher};

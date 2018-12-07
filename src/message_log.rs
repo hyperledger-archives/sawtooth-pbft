@@ -285,7 +285,7 @@ impl PbftLog {
     /// Future messages are added to the backlog of messages to handle at a later time
     /// Present messages are ignored, as they're generally added immediately after
     /// this method is called by the calling code, except for `PrePrepare` messages
-    #[allow(ptr_arg)]
+    #[allow(clippy::ptr_arg)]
     pub fn add_message_with_hint(
         &mut self,
         msg: ParsedMessage,
