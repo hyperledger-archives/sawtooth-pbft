@@ -433,13 +433,7 @@ impl PbftNode {
         let peer_ids: HashSet<_> = peers
             .iter()
             .cloned()
-            .filter_map(|pid| {
-                if pid == block.signer_id {
-                    None
-                } else {
-                    Some(pid)
-                }
-            })
+            .filter(|pid| pid != &block.signer_id)
             .collect();
 
         if !voter_ids.is_subset(&peer_ids) {
