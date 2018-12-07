@@ -27,6 +27,7 @@ extern crate clap;
 #[macro_use]
 extern crate log;
 extern crate hex;
+extern crate itertools;
 extern crate log4rs;
 extern crate log4rs_syslog;
 extern crate openssl;

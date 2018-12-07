@@ -774,39 +774,17 @@ impl PbftNode {
     ) -> Result<Vec<u8>, PbftError> {
         info!("{}: Building seal with head at {}", state, head.block_num);
 
-        let mut messages = self
+        let min_votes = 2 * state.f;
+        let messages = self
             .msg_log
-            .get_messages_of_type(&PbftMessageType::Commit, state.seq_num, state.view)
-            .into_iter()
-            .filter(|&m| !m.from_self)
-            .collect::<Vec<_>>();
-
-        // A forced view change will simply increment the view number, without sending
-        // new messages. If we don't have enough messages for the current view, try
-        // the previous view.
-        if messages.is_empty() && state.view > 0 {
-            info!(
-                "Found 0 messages for seq num {} view {}, trying view {}",
-                state.seq_num,
-                state.view,
-                state.view - 1
-            );
-            messages = self
-                .msg_log
-                .get_messages_of_type(&PbftMessageType::Commit, state.seq_num, state.view - 1)
-                .into_iter()
-                .filter(|&m| !m.from_self)
-                .collect::<Vec<_>>();
-        }
-
-        let min_votes = 2 * state.f as usize;
-        if messages.len() < min_votes {
-            return Err(PbftError::InternalError(format!(
-                "Need {} commit messages to publish block, only have {}!",
-                min_votes,
-                messages.len()
-            )));
-        }
+            .get_enough_messages(&PbftMessageType::Commit, state.seq_num, min_votes)
+            .ok_or_else(|| {
+                debug!("{}: {}", state, self.msg_log);
+                PbftError::InternalError(format!(
+                    "Couldn't find {} commit messages in the message log for building a seal!",
+                    min_votes
+                ))
+            })?;
 
         let mut seal = PbftSeal::new();
 
