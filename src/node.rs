@@ -1652,7 +1652,7 @@ mod tests {
             } else {
                 assert_eq!(state1.mode, PbftMode::ViewChanging);
             }
-            let info = make_msg_info(&PbftMessageType::ViewChange, 1, 1, vec![peer]);
+            let info = make_msg_info(&PbftMessageType::ViewChange, 1, 0, vec![peer]);
             let mut vc_msg = PbftViewChange::new();
             vc_msg.set_info(info);
             vc_msg.set_checkpoint_messages(RepeatedField::default());
