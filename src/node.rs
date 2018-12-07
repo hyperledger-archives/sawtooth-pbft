@@ -112,9 +112,9 @@ impl PbftNode {
 
                 self.msg_log.add_message(msg.clone());
 
-                self.msg_log.check_prepared(&msg.info(), state.f)?;
-
-                self.check_blocks_if_not_checking(&msg, state)?;
+                if self.msg_log.check_prepared(&msg.info(), state.f)? {
+                    self.check_blocks_if_not_checking(&msg, state)?;
+                }
             }
 
             PbftMessageType::Commit => {
@@ -123,9 +123,9 @@ impl PbftNode {
 
                 self.msg_log.add_message(msg.clone());
 
-                self.msg_log.check_committable(&msg.info(), state.f)?;
-
-                self.commit_block_if_committing(&msg, state)?;
+                if self.msg_log.check_committable(&msg.info(), state.f)? {
+                    self.commit_block_if_committing(&msg, state)?;
+                }
             }
 
             PbftMessageType::Checkpoint => {
@@ -278,8 +278,14 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         if state.mode == PbftMode::Checkpointing {
-            self.msg_log
-                .check_msg_against_log(pbft_message.info(), true, 2 * state.f + 1)?;
+            if !self.msg_log.log_has_required_msgs(
+                &PbftMessageType::Checkpoint,
+                pbft_message,
+                false,
+                2 * state.f + 1,
+            ) {
+                return Ok(());
+            }
             warn!(
                 "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
                 state,
@@ -303,11 +309,12 @@ impl PbftNode {
         if state.mode != PbftMode::ViewChanging {
             // Even if our own timer hasn't expired, still do a ViewChange if we've received
             // f + 1 VC messages to prevent being late to the new view party
-            if self
-                .msg_log
-                .check_msg_against_log(message.info(), true, state.f + 1)
-                .is_ok()
-                && message.info().get_view() > state.view
+            if self.msg_log.log_has_required_msgs(
+                &PbftMessageType::ViewChange,
+                message,
+                false,
+                state.f + 1,
+            ) && message.info().get_view() > state.view
             {
                 warn!("{}: Starting ViewChange from a ViewChange message", state);
                 self.propose_view_change(state)?;
