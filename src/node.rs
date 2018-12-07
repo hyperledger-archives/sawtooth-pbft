@@ -510,7 +510,28 @@ impl PbftNode {
                 }
             }
             WorkingBlockOption::NoWorkingBlock => {
-                return Ok(false);
+                // If we've crashed and don't have persistent logs, we'll end up getting a
+                // new block with no working block. Or if the timing is right during regular
+                // catchup, we could end up with no working block during a BlockNew. However,
+                // we also have no working block here in the normal course of operations. So,
+                // we check to see if there's any logs for the new block. If there are, then
+                // we skip catchup since the node will process this new block normally.
+                // Otherwise, we've fallen behind and need to catch up.
+                let any_messages = self
+                    .msg_log
+                    .get_enough_messages(&PbftMessageType::Commit, head.block_num + 1, 2 * state.f)
+                    .is_some();
+
+                if block.block_num == head.block_num + 2
+                    && !block.payload.is_empty()
+                    && !any_messages
+                {
+                    debug!("{}: Catching up from no working block", state);
+                    state.working_block = WorkingBlockOption::WorkingBlock(msg.get_block().clone());
+                } else {
+                    debug!("{}: Skipping catchup due to no working block", state);
+                    return Ok(false);
+                }
             }
         };
 
