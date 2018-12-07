@@ -123,7 +123,7 @@ pub struct DiskStorage<T: Serialize + DeserializeOwned> {
 }
 
 impl<T: Serialize + DeserializeOwned> DiskStorage<T> {
-    pub fn new<P: Into<String>, F: Fn() -> T>(path: P, default: F) -> Result<Self, String> {
+    pub fn from_path<P: Into<String>, F: Fn() -> T>(path: P, default: F) -> Result<Self, String> {
         let path = path.into();
 
         let file = AtomicFile::new(path, AllowOverwrite);

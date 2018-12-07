@@ -109,8 +109,8 @@ pub struct MemStorage<T: Serialize + DeserializeOwned> {
 }
 
 impl<T: Serialize + DeserializeOwned> MemStorage<T> {
-    pub fn new<F: Fn() -> T>(default: F) -> Result<Self, String> {
-        Ok(Self { data: default() })
+    pub fn new<F: Fn() -> T>(default: F) -> Self {
+        Self { data: default() }
     }
 }
 

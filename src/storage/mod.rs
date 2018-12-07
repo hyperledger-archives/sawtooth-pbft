@@ -63,7 +63,7 @@ pub fn get_storage<'a, T: Sized + Serialize + DeserializeOwned + 'a, F: Fn() -> 
     default: F,
 ) -> Result<Box<dyn Storage<S = T> + 'a>, String> {
     if location == "memory" {
-        Ok(Box::new(MemStorage::new(default).unwrap()) as Box<Storage<S = T>>)
+        Ok(Box::new(MemStorage::new(default)) as Box<Storage<S = T>>)
     } else if location.starts_with("disk") {
         let split = location.splitn(2, '+').collect::<Vec<_>>();
 
@@ -71,7 +71,7 @@ pub fn get_storage<'a, T: Sized + Serialize + DeserializeOwned + 'a, F: Fn() -> 
             Err(format!("Invalid location: {}", location))?
         }
 
-        Ok(Box::new(DiskStorage::new(split[1], default).unwrap()))
+        Ok(Box::new(DiskStorage::from_path(split[1], default).unwrap()))
     } else {
         Err(format!("Unknown storage location type: {}", location))
     }
@@ -105,7 +105,7 @@ mod tests {
                 .take(10)
                 .collect::<String>();
 
-        let storage = DiskStorage::new(&filename[..], || 1).unwrap();
+        let storage = DiskStorage::from_path(&filename[..], || 1).unwrap();
         let val = storage.read();
         let other = storage.read();
         assert_eq!(**val, 1);
@@ -124,13 +124,13 @@ mod tests {
                 .collect::<String>();
 
         {
-            let mut storage = DiskStorage::new(&filename[..], || 0).unwrap();
+            let mut storage = DiskStorage::from_path(&filename[..], || 0).unwrap();
             let mut val = storage.write();
             **val = 5;
             assert_eq!(**val, 5);
         }
 
-        let storage = DiskStorage::new(&filename[..], || 0).unwrap();
+        let storage = DiskStorage::from_path(&filename[..], || 0).unwrap();
         let val = storage.read();
         assert_eq!(**val, 5);
 
@@ -147,20 +147,20 @@ mod tests {
                 .collect::<String>();
 
         {
-            let storage = DiskStorage::new(&filename[..], || 500).unwrap();
+            let storage = DiskStorage::from_path(&filename[..], || 500).unwrap();
             let val = storage.read();
             assert_eq!(**val, 500);
         }
 
         {
-            let mut storage = DiskStorage::new(&filename[..], || 0).unwrap();
+            let mut storage = DiskStorage::from_path(&filename[..], || 0).unwrap();
             let mut val = storage.write();
             assert_eq!(**val, 500);
             **val = 2;
             assert_eq!(**val, 2);
         }
 
-        let storage = DiskStorage::new(&filename[..], || 0).unwrap();
+        let storage = DiskStorage::from_path(&filename[..], || 0).unwrap();
         let val = storage.read();
         assert_eq!(**val, 2);
 
@@ -176,7 +176,7 @@ mod tests {
                 .collect::<String>();
 
         {
-            let mut storage = DiskStorage::new(&filename[..], || 1).unwrap();
+            let mut storage = DiskStorage::from_path(&filename[..], || 1).unwrap();
             let mut val = storage.write();
             assert_eq!(**val, 1);
             **val = 5;
@@ -184,7 +184,7 @@ mod tests {
         }
 
         {
-            let mut storage = DiskStorage::new(&filename[..], || 1).unwrap();
+            let mut storage = DiskStorage::from_path(&filename[..], || 1).unwrap();
             let mut val = storage.write();
             assert_eq!(**val, 5);
             **val = 64;
@@ -202,8 +202,8 @@ mod tests {
                 .take(10)
                 .collect::<String>();
 
-        let mut diskval = DiskStorage::new(&filename[..], || 1).unwrap();
-        let mut memval = MemStorage::new(|| 5).unwrap();
+        let mut diskval = DiskStorage::from_path(&filename[..], || 1).unwrap();
+        let mut memval = MemStorage::new(|| 5);
 
         assert_eq!(**diskval.read(), 1);
         add_refs(&mut *diskval.write(), &*memval.read());
