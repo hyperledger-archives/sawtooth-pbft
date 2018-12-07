@@ -362,7 +362,6 @@ impl PbftLog {
         view: u64,
         block: &PbftBlock,
     ) -> usize {
-        #[allow(map_clone)]
         let zero_seq_msgs: Vec<ParsedMessage> = self
             .get_messages_of_type(msg_type, 0, view)
             .iter()
@@ -420,7 +419,6 @@ impl PbftLog {
         self.cycles = 0;
 
         // Update the stable checkpoint
-        #[allow(map_clone)]
         let cp_msgs: Vec<PbftMessage> = self
             .get_messages_of_type(&PbftMessageType::Checkpoint, stable_checkpoint, view)
             .iter()
