@@ -167,7 +167,7 @@ impl PbftLog {
     }
 
     /// Get one message matching the type, view number, and sequence number
-    fn get_one_msg(
+    pub fn get_one_msg(
         &self,
         info: &PbftMessageInfo,
         msg_type: &PbftMessageType,
