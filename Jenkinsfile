@@ -25,6 +25,7 @@ pipeline {
 
     options {
         timestamps()
+        buildDiscarder(logRotator(daysToKeepStr: '31'))
     }
 
     environment {
