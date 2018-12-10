@@ -442,7 +442,7 @@ mod tests {
         Block {
             block_id: mock_block_id(num),
             previous_id: mock_block_id(num - 1),
-            signer_id: PeerId::from(vec![]),
+            signer_id: PeerId::from(vec![0]),
             block_num: num,
             payload: vec![],
             summary: vec![],
@@ -481,7 +481,7 @@ mod tests {
         log0.add_message(block_new0, &state0);
         state0.seq_num = 1;
 
-        let block_new1 = mock_msg(&PbftMessageType::BlockNew, 0, 0, mock_block(1), vec![0]);
+        let block_new1 = mock_msg(&PbftMessageType::BlockNew, 0, 1, mock_block(1), vec![0]);
         log1.add_message(block_new1, &state1);
 
         assert!(pre_prepare(&mut state0, &mut log0, &pre_prep_msg).is_ok());
