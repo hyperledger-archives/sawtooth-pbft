@@ -32,9 +32,6 @@ pub enum PbftError {
     /// An error occured while serializing or deserializing a Protobuf message
     SerializationError(ProtobufError),
 
-    /// The message already exists in the log
-    MessageExists(PbftMessageType),
-
     /// Too many or too few messages recieved so far (expected, got)
     WrongNumMessages(PbftMessageType, usize, usize),
 
@@ -68,6 +65,9 @@ pub enum PbftError {
 
     /// Not ready for this message type
     NotReadyForMessage,
+
+    /// The message should only come from the primary, but was sent by a secondary node
+    NotFromPrimary,
 }
 
 impl Error for PbftError {
@@ -75,7 +75,6 @@ impl Error for PbftError {
         use self::PbftError::*;
         match self {
             SerializationError(_) => "SerializationError",
-            MessageExists(_) => "MessageExists",
             WrongNumMessages(_, _, _) => "WrongNumMessages",
             BlockMismatch(_, _) => "BlockMismatch",
             MessageMismatch(_) => "MessageMismatch",
@@ -87,6 +86,7 @@ impl Error for PbftError {
             Timeout => "Timeout",
             NoWorkingBlock => "NoWorkingBlock",
             NotReadyForMessage => "NotReadyForMessage",
+            NotFromPrimary => "NotFromPrimary",
         }
     }
 }
@@ -96,11 +96,6 @@ impl fmt::Display for PbftError {
         write!(f, "{}: ", self.description())?;
         match self {
             PbftError::SerializationError(pb_err) => pb_err.fmt(f),
-            PbftError::MessageExists(t) => write!(
-                f,
-                "A {:?} message already exists with this sequence number",
-                t
-            ),
             PbftError::WrongNumMessages(t, exp, got) => write!(
                 f,
                 "Wrong number of {:?} messages in this sequence (expected {}, got {})",
@@ -125,6 +120,10 @@ impl fmt::Display for PbftError {
             PbftError::InternalError(description) => write!(f, "{}", description),
             PbftError::NoWorkingBlock => write!(f, "There is no working block"),
             PbftError::NotReadyForMessage => write!(f, "Not ready"),
+            PbftError::NotFromPrimary => write!(
+                f,
+                "Message should be from primary, but was sent by secondary"
+            ),
         }
     }
 }

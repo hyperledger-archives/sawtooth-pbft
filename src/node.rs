@@ -98,11 +98,6 @@ impl PbftNode {
 
                 handlers::pre_prepare(state, &mut self.msg_log, &msg)?;
 
-                // NOTE: Putting log add here is necessary because on_peer_message gets
-                // called again inside of _broadcast_pbft_message
-                self.msg_log.add_message(msg.clone(), state)?;
-                state.switch_phase(PbftPhase::Preparing);
-
                 self.broadcast_pre_prepare(&msg, state)?;
             }
 

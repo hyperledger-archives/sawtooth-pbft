@@ -32,84 +32,61 @@ use protos::pbft_message::{PbftBlock, PbftMessageInfo};
 use state::{PbftPhase, PbftState, WorkingBlockOption};
 
 /// Handle a `PrePrepare` message
-/// A `PrePrepare` message with this view and sequence number must not already exist in the log.
-/// Make sure there's a corresponding BlockNew message.
+///
+/// A `PrePrepare` message is accepted and added to the log if the following are true:
+/// - The message signature is valid (already verified by validator)
+/// - The message is from the primary
+/// - There is a matching BlockNew message
+/// - A `PrePrepare` message does not already exist at this view and sequence number with a
+///   different block
+/// - The message's view matches the node's current view (handled by message log)
+/// - The sequence number is between the low and high watermarks (handled by message log)
+///
+/// If a `PrePrepare` message is accepted, we update the phase, working block, and sequence number
 pub fn pre_prepare(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
     message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    let info = message.info();
-
-    check_view_mismatch(state, info)?;
-
-    check_pre_prepare_does_not_exist(msg_log, info)?;
-
-    check_pre_prepare_matches_original_block_new(msg_log, message)?;
-
-    set_current_working_block(state, message);
-
-    state.seq_num = info.get_seq_num();
-
-    Ok(())
-}
-
-fn check_view_mismatch(state: &PbftState, info: &PbftMessageInfo) -> Result<(), PbftError> {
-    if info.get_view() != state.view {
-        Err(PbftError::ViewMismatch(
-            info.get_view() as usize,
-            state.view as usize,
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn check_pre_prepare_does_not_exist(
-    msg_log: &PbftLog,
-    info: &PbftMessageInfo,
-) -> Result<(), PbftError> {
-    // Check that this PrePrepare doesn't already exist
-    let existing_pre_prep_msgs = msg_log.get_messages_of_type_seq_view(
-        &PbftMessageType::PrePrepare,
-        info.get_seq_num(),
-        info.get_view(),
-    );
-
-    if !existing_pre_prep_msgs.is_empty() {
-        return Err(PbftError::MessageExists(PbftMessageType::PrePrepare));
+    // Check that message is from the current primary
+    if PeerId::from(message.info().get_signer_id()) != state.get_primary_id() {
+        error!(
+            "Got PrePrepare from a secondary node {:?}; ignoring message",
+            message.info().get_signer_id()
+        );
+        return Err(PbftError::NotFromPrimary);
     }
 
-    Ok(())
-}
-
-fn check_pre_prepare_matches_original_block_new(
-    msg_log: &PbftLog,
-    message: &ParsedMessage,
-) -> Result<(), PbftError> {
-    let block_new_msgs =
-        msg_log.get_messages_of_type_seq(&PbftMessageType::BlockNew, message.info().get_seq_num());
-
-    if block_new_msgs.len() != 1 {
-        return Err(PbftError::WrongNumMessages(
-            PbftMessageType::BlockNew,
-            1,
-            block_new_msgs.len(),
-        ));
+    // Check that there is a matching BlockNew message
+    let block_new_exists = msg_log
+        .get_messages_of_type_seq(&PbftMessageType::BlockNew, message.info().get_seq_num())
+        .iter()
+        .any(|block_new_msg| block_new_msg.get_block() == message.get_block());
+    if !block_new_exists {
+        error!("No matching BlockNew found for PrePrepare {:?}", message);
+        return Err(PbftError::WrongNumMessages(PbftMessageType::BlockNew, 1, 0));
     }
 
-    if block_new_msgs[0].get_block() != message.get_block() {
-        return Err(PbftError::BlockMismatch(
-            block_new_msgs[0].get_block().clone(),
-            message.get_block().clone(),
-        ));
+    // Check that a `PrePrepare` doesn't already exist with this view and sequence number but a
+    // different block
+    if let Some(existing_msg) = msg_log.get_one_msg(message.info(), &PbftMessageType::PrePrepare) {
+        if existing_msg.get_block() != message.get_block() {
+            // If the blocks don't match between two PrePrepares with the same view and
+            // sequence number, the primary is faulty
+            error!("Found two PrePrepares at view {} and seq num {} with different blocks: {:?} and {:?}", message.info().get_view(), message.info().get_seq_num(), existing_msg.get_block(), message.get_block());
+            return Err(PbftError::BlockMismatch(
+                existing_msg.get_block().clone(),
+                message.get_block().clone(),
+            ));
+        }
     }
 
-    Ok(())
-}
+    msg_log.add_message(message.clone(), state)?;
 
-fn set_current_working_block(state: &mut PbftState, message: &ParsedMessage) {
+    state.switch_phase(PbftPhase::Preparing);
     state.working_block = WorkingBlockOption::WorkingBlock(message.get_block().clone());
+
+    Ok(())
 }
 
 /// Handle a `Commit` message
