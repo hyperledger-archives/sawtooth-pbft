@@ -28,7 +28,7 @@ use error::PbftError;
 use message_log::PbftLog;
 use message_type::ParsedMessage;
 use message_type::{PbftHint, PbftMessageType};
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
+use protos::pbft_message::{PbftBlock, PbftMessageInfo};
 use state::{PbftPhase, PbftState, WorkingBlockOption};
 
 /// Handle a `PrePrepare` message
@@ -39,16 +39,15 @@ pub fn pre_prepare(
     msg_log: &mut PbftLog,
     message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    let pbft_message = message.get_pbft_message();
     let info = message.info();
 
     check_view_mismatch(state, info)?;
 
     check_pre_prepare_does_not_exist(msg_log, info)?;
 
-    check_pre_prepare_matches_original_block_new(msg_log, pbft_message, info)?;
+    check_pre_prepare_matches_original_block_new(msg_log, message)?;
 
-    set_current_working_block(state, pbft_message);
+    set_current_working_block(state, message);
 
     state.seq_num = info.get_seq_num();
 
@@ -86,11 +85,10 @@ fn check_pre_prepare_does_not_exist(
 
 fn check_pre_prepare_matches_original_block_new(
     msg_log: &PbftLog,
-    pbft_message: &PbftMessage,
-    info: &PbftMessageInfo,
+    message: &ParsedMessage,
 ) -> Result<(), PbftError> {
     let block_new_msgs =
-        msg_log.get_messages_of_type_seq(&PbftMessageType::BlockNew, info.get_seq_num());
+        msg_log.get_messages_of_type_seq(&PbftMessageType::BlockNew, message.info().get_seq_num());
 
     if block_new_msgs.len() != 1 {
         return Err(PbftError::WrongNumMessages(
@@ -100,18 +98,18 @@ fn check_pre_prepare_matches_original_block_new(
         ));
     }
 
-    if block_new_msgs[0].get_block() != pbft_message.get_block() {
+    if block_new_msgs[0].get_block() != message.get_block() {
         return Err(PbftError::BlockMismatch(
             block_new_msgs[0].get_block().clone(),
-            pbft_message.get_block().clone(),
+            message.get_block().clone(),
         ));
     }
 
     Ok(())
 }
 
-fn set_current_working_block(state: &mut PbftState, pbft_message: &PbftMessage) {
-    state.working_block = WorkingBlockOption::WorkingBlock(pbft_message.get_block().clone());
+fn set_current_working_block(state: &mut PbftState, message: &ParsedMessage) {
+    state.working_block = WorkingBlockOption::WorkingBlock(message.get_block().clone());
 }
 
 /// Handle a `Commit` message
@@ -432,6 +430,7 @@ mod tests {
     use super::*;
     use config;
     use hash::hash_sha256;
+    use protos::pbft_message::PbftMessage;
 
     fn mock_block_id(num: u64) -> BlockId {
         BlockId::from(hash_sha256(
