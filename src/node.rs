@@ -760,15 +760,16 @@ impl PbftNode {
     /// This message arrives after `check_blocks` is called, signifying that the validator has
     /// successfully checked a block with this `BlockId`.
     /// Once a `BlockValid` is received, transition to committing blocks.
+    #[allow(clippy::ptr_arg)]
     pub fn on_block_valid(
         &mut self,
-        block_id: BlockId,
+        block_id: &BlockId,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         debug!("{}: <<<<<< BlockValid: {:?}", state, block_id);
         let block = match state.working_block {
             WorkingBlockOption::WorkingBlock(ref block) => {
-                if BlockId::from(block.get_block_id()) == block_id {
+                if &BlockId::from(block.get_block_id()) == block_id {
                     Ok(block.clone())
                 } else {
                     warn!("Got BlockValid that doesn't match the working block");
@@ -1521,7 +1522,7 @@ mod tests {
         state0.phase = PbftPhase::Checking;
         state0.working_block =
             WorkingBlockOption::WorkingBlock(pbft_block_from_block(mock_block(1)));
-        node.on_block_valid(mock_block_id(1), &mut state0)
+        node.on_block_valid(&mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
         assert_eq!(state0.phase, PbftPhase::Committing);
     }
@@ -1576,7 +1577,7 @@ mod tests {
         assert_eq!(state1.phase, PbftPhase::Checking);
 
         // Spoof the `check_blocks()` call
-        assert!(node1.on_block_valid(mock_block_id(1), &mut state1).is_ok());
+        assert!(node1.on_block_valid(&mock_block_id(1), &mut state1).is_ok());
 
         // Receive 3 `Commit` messages
         for peer in 0..3 {
