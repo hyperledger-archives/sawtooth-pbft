@@ -29,7 +29,7 @@ use sawtooth_sdk::consensus::engine::Block;
 use config::PbftConfig;
 use error::PbftError;
 use message_type::{ParsedMessage, PbftHint, PbftMessageType};
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
+use protos::pbft_message::{PbftMessage, PbftMessageInfo};
 use state::PbftState;
 
 /// The log keeps track of the last stable checkpoint
@@ -268,6 +268,22 @@ impl PbftLog {
         }
     }
 
+    /// Obtain all messages from the log that match a given type and sequence_number
+    pub fn get_messages_of_type_seq(
+        &self,
+        msg_type: &PbftMessageType,
+        sequence_number: u64,
+    ) -> Vec<&ParsedMessage> {
+        self.messages
+            .iter()
+            .filter(|&msg| {
+                let info = (*msg).info();
+                info.get_msg_type() == String::from(msg_type)
+                    && info.get_seq_num() == sequence_number
+            })
+            .collect()
+    }
+
     /// Obtain messages from the log that match a given type, sequence number, and view
     pub fn get_messages_of_type_seq_view(
         &self,
@@ -327,47 +343,6 @@ impl PbftLog {
             .sorted_by_key(|(view, _)| *view)
             .pop()
             .map(|(_, msgs)| msgs)
-    }
-
-    /// Fix sequence numbers of generic PBFT messages that are defaulted to zero
-    /// This is used to fix the `BlockNew` messages in secondary nodes, once they receive a
-    /// `PrePrepare` message with the proper sequence number.
-    pub fn fix_seq_nums(
-        &mut self,
-        msg_type: &PbftMessageType,
-        new_sequence_number: u64,
-        view: u64,
-        block: &PbftBlock,
-    ) -> usize {
-        let zero_seq_msgs: Vec<ParsedMessage> = self
-            .get_messages_of_type(msg_type, 0, view)
-            .iter()
-            .map(|&msg| msg.clone())
-            .collect();
-
-        for m in &zero_seq_msgs {
-            self.messages.remove(m);
-        }
-
-        let mut fixed_msgs = Vec::<ParsedMessage>::new();
-        for mut m in zero_seq_msgs {
-            if m.info().get_msg_type() == String::from(msg_type)
-                && m.info().get_seq_num() == 0
-                && m.get_block().get_block_id() == block.get_block_id()
-            {
-                let mut info: PbftMessageInfo = m.info().clone();
-                let mut new_msg = m.clone();
-                info.set_seq_num(new_sequence_number);
-                *new_msg.info_mut() = info;
-                fixed_msgs.push(new_msg.clone());
-            }
-        }
-
-        let changed_msgs = fixed_msgs.len();
-        for m in fixed_msgs {
-            self.messages.insert(m);
-        }
-        changed_msgs
     }
 
     /// Get the latest stable checkpoint
@@ -437,6 +412,7 @@ mod tests {
     use super::*;
     use config;
     use hash::hash_sha256;
+    use protos::pbft_message::PbftBlock;
     use sawtooth_sdk::consensus::engine::PeerId;
 
     /// Create a PbftMessage, given its type, view, sequence number, and who it's from
@@ -561,38 +537,6 @@ mod tests {
                 assert!(log.check_committable(&msg.info(), 1 as u64).unwrap());
             }
         }
-    }
-
-    /// Test that sequence number adjustments work as expected
-    /// (This is used by secondary nodes to adjust the sequence number of their `BlockNew`, when
-    /// they receive a `PrePrepare` from the primary)
-    #[test]
-    fn fix_seq_nums() {
-        let cfg = config::mock_config(4);
-        let mut log = PbftLog::new(&cfg);
-        let state = PbftState::new(vec![], &cfg);
-
-        let msg0 = make_msg(
-            &PbftMessageType::BlockNew,
-            0,
-            0,
-            get_peer_id(&cfg, 0),
-            get_peer_id(&cfg, 0),
-        );
-        log.add_message(msg0.clone(), &state);
-
-        let msg = make_msg(
-            &PbftMessageType::PrePrepare,
-            0,
-            1,
-            get_peer_id(&cfg, 0),
-            get_peer_id(&cfg, 0),
-        );
-        log.add_message(msg.clone(), &state);
-
-        let num_updated = log.fix_seq_nums(&PbftMessageType::BlockNew, 1, 0, msg0.get_block());
-
-        assert_eq!(num_updated, 1);
     }
 
     /// Make sure that the log doesn't start out checkpointing

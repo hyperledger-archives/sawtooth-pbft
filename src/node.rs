@@ -638,30 +638,24 @@ impl PbftNode {
             return Ok(());
         }
 
-        let pbft_block = pbft_block_from_block(block.clone());
-
-        let mut msg = PbftMessage::new();
         if state.is_primary() {
             // Ensure that our local state doesn't get out of sync with actual state
             state.seq_num = head.block_num + 1;
-
-            msg.set_info(handlers::make_msg_info(
-                &PbftMessageType::BlockNew,
-                state.view,
-                state.seq_num, // primary knows the proper sequence number
-                state.id.clone(),
-            ));
         } else {
             // Ensure that our local state doesn't get out of sync with actual state
             state.seq_num = head.block_num;
-
-            msg.set_info(handlers::make_msg_info(
-                &PbftMessageType::BlockNew,
-                state.view,
-                0, // default to unset; change it later when we receive PrePrepare
-                state.id.clone(),
-            ));
         }
+
+        let mut msg = PbftMessage::new();
+
+        msg.set_info(handlers::make_msg_info(
+            &PbftMessageType::BlockNew,
+            state.view,
+            block.block_num,
+            state.id.clone(),
+        ));
+
+        let pbft_block = pbft_block_from_block(block.clone());
 
         msg.set_block(pbft_block.clone());
 

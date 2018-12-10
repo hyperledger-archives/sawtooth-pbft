@@ -32,9 +32,8 @@ use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
 use state::{PbftPhase, PbftState, WorkingBlockOption};
 
 /// Handle a `PrePrepare` message
-/// A `PrePrepare` message with this view and sequence number must not already exist in the log. If
-/// this node is a primary, make sure there's a corresponding BlockNew message. If this node is a
-/// secondary, then it takes the sequence number from this message as its own.
+/// A `PrePrepare` message with this view and sequence number must not already exist in the log.
+/// Make sure there's a corresponding BlockNew message.
 pub fn pre_prepare(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
@@ -47,13 +46,11 @@ pub fn pre_prepare(
 
     check_pre_prepare_does_not_exist(msg_log, info)?;
 
-    if state.is_primary() {
-        check_pre_prepare_matches_original_block_new(msg_log, pbft_message, info)?;
-    } else {
-        set_seq_num_and_fix_block_new_seq_num(state, msg_log, &pbft_message, info)?;
-    }
+    check_pre_prepare_matches_original_block_new(msg_log, pbft_message, info)?;
 
     set_current_working_block(state, pbft_message);
+
+    state.seq_num = info.get_seq_num();
 
     Ok(())
 }
@@ -92,11 +89,8 @@ fn check_pre_prepare_matches_original_block_new(
     pbft_message: &PbftMessage,
     info: &PbftMessageInfo,
 ) -> Result<(), PbftError> {
-    let block_new_msgs = msg_log.get_messages_of_type_seq_view(
-        &PbftMessageType::BlockNew,
-        info.get_seq_num(),
-        info.get_view(),
-    );
+    let block_new_msgs =
+        msg_log.get_messages_of_type_seq(&PbftMessageType::BlockNew, info.get_seq_num());
 
     if block_new_msgs.len() != 1 {
         return Err(PbftError::WrongNumMessages(
@@ -114,43 +108,6 @@ fn check_pre_prepare_matches_original_block_new(
     }
 
     Ok(())
-}
-
-fn set_seq_num_and_fix_block_new_seq_num(
-    state: &mut PbftState,
-    msg_log: &mut PbftLog,
-    pbft_message: &PbftMessage,
-    info: &PbftMessageInfo,
-) -> Result<(), PbftError> {
-    // Set this secondary's sequence number from the PrePrepare message
-    // (this was originally set by the primary)...
-    state.seq_num = info.get_seq_num();
-
-    // ...then update the BlockNew message we received with the correct
-    // sequence number
-    let num_updated = msg_log.fix_seq_nums(
-        &PbftMessageType::BlockNew,
-        info.get_seq_num(),
-        info.get_view(),
-        pbft_message.get_block(),
-    );
-
-    debug!(
-        "{}: The log updated {} BlockNew messages to seq num {}",
-        state,
-        num_updated,
-        info.get_seq_num()
-    );
-
-    if num_updated < 1 {
-        Err(PbftError::WrongNumMessages(
-            PbftMessageType::BlockNew,
-            1,
-            num_updated,
-        ))
-    } else {
-        Ok(())
-    }
 }
 
 fn set_current_working_block(state: &mut PbftState, pbft_message: &PbftMessage) {
