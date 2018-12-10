@@ -100,7 +100,7 @@ impl PbftNode {
 
                 // NOTE: Putting log add here is necessary because on_peer_message gets
                 // called again inside of _broadcast_pbft_message
-                self.msg_log.add_message(msg.clone(), state);
+                self.msg_log.add_message(msg.clone(), state)?;
                 state.switch_phase(PbftPhase::Preparing);
 
                 self.broadcast_pre_prepare(&msg, state)?;
@@ -110,7 +110,7 @@ impl PbftNode {
                 self.msg_log
                     .add_message_with_hint(msg.clone(), &multicast_hint, state)?;
 
-                self.msg_log.add_message(msg.clone(), state);
+                self.msg_log.add_message(msg.clone(), state)?;
 
                 if self.msg_log.check_prepared(&msg.info(), state.f)? {
                     self.check_blocks_if_not_checking(&msg, state)?;
@@ -121,7 +121,7 @@ impl PbftNode {
                 self.msg_log
                     .add_message_with_hint(msg.clone(), &multicast_hint, state)?;
 
-                self.msg_log.add_message(msg.clone(), state);
+                self.msg_log.add_message(msg.clone(), state)?;
 
                 if self.msg_log.check_committable(&msg.info(), state.f)? {
                     self.commit_block_if_committing(&msg, state)?;
@@ -138,7 +138,7 @@ impl PbftNode {
                 }
 
                 // Add message to the log
-                self.msg_log.add_message(msg.clone(), state);
+                self.msg_log.add_message(msg.clone(), state)?;
 
                 if check_if_secondary(state) {
                     self.start_checkpointing_and_forward(&msg, state)?;
@@ -157,7 +157,7 @@ impl PbftNode {
                     info.get_seq_num(),
                 );
 
-                self.msg_log.add_message(msg.clone(), state);
+                self.msg_log.add_message(msg.clone(), state)?;
 
                 if self.propose_view_change_if_enough_messages(&msg, state)? {
                     return Ok(());
@@ -567,7 +567,7 @@ impl PbftNode {
         // Add messages to backlog so that `handlers::commit` can process a commit
         // message normally
         for message in &messages {
-            self.msg_log.add_message(message.clone(), state);
+            self.msg_log.add_message(message.clone(), state)?;
         }
 
         // Commit the new block, using one of the parsed messages to simulate
@@ -592,7 +592,7 @@ impl PbftNode {
         fixed_msg.set_info(fixed_info);
 
         self.msg_log
-            .add_message(ParsedMessage::from_pbft_message(fixed_msg), state);
+            .add_message(ParsedMessage::from_pbft_message(fixed_msg), state)?;
         state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id.clone());
         state.idle_timeout.stop();
         state.commit_timeout.start();
@@ -692,7 +692,7 @@ impl PbftNode {
         }
 
         self.msg_log
-            .add_message(ParsedMessage::from_pbft_message(msg), state);
+            .add_message(ParsedMessage::from_pbft_message(msg), state)?;
         state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id);
         state.idle_timeout.stop();
         state.commit_timeout.start();
@@ -1305,7 +1305,7 @@ mod tests {
             message.header_bytes = header_bytes;
             message.header_signature = header_signature;
 
-            node.msg_log.add_message(message, state);
+            node.msg_log.add_message(message, state).unwrap();
         }
 
         // Do some special jiu-jitsu to generate the seal for the node from itself. Basically,
@@ -1495,7 +1495,7 @@ mod tests {
             message.header_bytes = header_bytes;
             message.header_signature = header_signature;
 
-            node.msg_log.add_message(message, &state);
+            node.msg_log.add_message(message, &state).unwrap();
         }
 
         let seal = node.build_seal(&state, vec![1, 2, 3], head).unwrap();
@@ -1703,7 +1703,8 @@ mod tests {
             msg.set_info(info);
             node0
                 .msg_log
-                .add_message(ParsedMessage::from_pbft_message(msg), &state0);
+                .add_message(ParsedMessage::from_pbft_message(msg), &state0)
+                .unwrap();
         }
 
         state0.phase = PbftPhase::NotStarted;

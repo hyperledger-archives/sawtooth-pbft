@@ -205,17 +205,22 @@ impl PbftLog {
     }
 
     /// Add a generic PBFT message to the log
-    pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) {
+    pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) -> Result<(), PbftError> {
+        // The sequence number must be between the watermarks
         if msg.info().get_seq_num() >= self.high_water_mark
             || msg.info().get_seq_num() < self.low_water_mark
         {
-            warn!(
-                "Not adding message with sequence number {}; outside of log bounds ({}, {})",
+            error!(
+                "Got message with invalid sequence number: {} is not in range [{},{})",
                 msg.info().get_seq_num(),
                 self.low_water_mark,
                 self.high_water_mark,
             );
-            return;
+            return Err(PbftError::InvalidSequenceNumber(
+                msg.info().get_seq_num() as usize,
+                self.low_water_mark as usize,
+                self.high_water_mark as usize,
+            ));
         }
 
         // Except for Checkpoints and ViewChanges, the message must be for the current view to be
@@ -225,12 +230,15 @@ impl PbftLog {
             && msg_type != PbftMessageType::ViewChange
             && msg.info().get_view() != state.view
         {
-            warn!(
-                "Not adding message with view number {}; does not match node's view: {}",
+            error!(
+                "Got message with mismatched view number; {} != {}",
                 msg.info().get_view(),
                 state.view,
             );
-            return;
+            return Err(PbftError::ViewMismatch(
+                msg.info().get_view() as usize,
+                state.view as usize,
+            ));
         }
 
         // If the message wasn't already in the log, increment cycles
@@ -240,6 +248,8 @@ impl PbftLog {
             self.cycles += 1;
         }
         trace!("{}", self);
+
+        Ok(())
     }
 
     /// Adds a message the (back)log, based on the given `PbftHint`
@@ -261,7 +271,7 @@ impl PbftLog {
                 Err(PbftError::NotReadyForMessage)
             }
             PbftHint::PastMessage => {
-                self.add_message(msg, state);
+                self.add_message(msg, state)?;
                 Err(PbftError::NotReadyForMessage)
             }
             PbftHint::PresentMessage => Ok(()),
@@ -463,7 +473,7 @@ mod tests {
             get_peer_id(&cfg, 0),
         );
 
-        log.add_message(msg.clone(), &state);
+        log.add_message(msg.clone(), &state).unwrap();
 
         let gotten_msgs = log.get_messages_of_type_seq_view(&PbftMessageType::PrePrepare, 1, 0);
 
@@ -485,7 +495,7 @@ mod tests {
             get_peer_id(&cfg, 0),
             get_peer_id(&cfg, 0),
         );
-        log.add_message(msg.clone(), &state);
+        log.add_message(msg.clone(), &state).unwrap();
 
         assert_eq!(log.cycles, 1);
         assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
@@ -498,7 +508,7 @@ mod tests {
             get_peer_id(&cfg, 0),
             get_peer_id(&cfg, 0),
         );
-        log.add_message(msg.clone(), &state);
+        log.add_message(msg.clone(), &state).unwrap();
         assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
         assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
 
@@ -511,7 +521,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
             );
 
-            log.add_message(msg.clone(), &state);
+            log.add_message(msg.clone(), &state).unwrap();
             if peer < 2 {
                 assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
                 assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
@@ -530,7 +540,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
             );
 
-            log.add_message(msg.clone(), &state);
+            log.add_message(msg.clone(), &state).unwrap();
             if peer < 2 {
                 assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
             } else {
@@ -565,7 +575,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
                 get_peer_id(&cfg, 0),
             );
-            log.add_message(msg.clone(), &state);
+            log.add_message(msg.clone(), &state).unwrap();
 
             let msg = make_msg(
                 &PbftMessageType::PrePrepare,
@@ -574,7 +584,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
                 get_peer_id(&cfg, 0),
             );
-            log.add_message(msg.clone(), &state);
+            log.add_message(msg.clone(), &state).unwrap();
 
             for peer in 0..4 {
                 let msg = make_msg(
@@ -585,7 +595,7 @@ mod tests {
                     get_peer_id(&cfg, 0),
                 );
 
-                log.add_message(msg.clone(), &state);
+                log.add_message(msg.clone(), &state).unwrap();
             }
 
             for peer in 0..4 {
@@ -597,7 +607,7 @@ mod tests {
                     get_peer_id(&cfg, 0),
                 );
 
-                log.add_message(msg.clone(), &state);
+                log.add_message(msg.clone(), &state).unwrap();
             }
         }
 
@@ -610,7 +620,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
             );
 
-            log.add_message(msg.clone(), &state);
+            log.add_message(msg.clone(), &state).unwrap();
         }
 
         log.garbage_collect(4, 0);
