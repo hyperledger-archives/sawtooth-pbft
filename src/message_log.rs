@@ -172,7 +172,8 @@ impl PbftLog {
         info: &PbftMessageInfo,
         msg_type: &PbftMessageType,
     ) -> Option<&ParsedMessage> {
-        let msgs = self.get_messages_of_type(msg_type, info.get_seq_num(), info.get_view());
+        let msgs =
+            self.get_messages_of_type_seq_view(msg_type, info.get_seq_num(), info.get_view());
         msgs.first().cloned()
     }
 
@@ -185,7 +186,7 @@ impl PbftLog {
         check_block: bool,
         required: u64,
     ) -> bool {
-        let msgs = self.get_messages_of_type(
+        let msgs = self.get_messages_of_type_seq_view(
             msg_type,
             ref_msg.info().get_seq_num(),
             ref_msg.info().get_view(),
@@ -268,7 +269,7 @@ impl PbftLog {
     }
 
     /// Obtain messages from the log that match a given type, sequence number, and view
-    pub fn get_messages_of_type(
+    pub fn get_messages_of_type_seq_view(
         &self,
         msg_type: &PbftMessageType,
         sequence_number: u64,
@@ -391,7 +392,7 @@ impl PbftLog {
 
         // Update the stable checkpoint
         let cp_msgs: Vec<PbftMessage> = self
-            .get_messages_of_type(&PbftMessageType::Checkpoint, stable_checkpoint, view)
+            .get_messages_of_type_seq_view(&PbftMessageType::Checkpoint, stable_checkpoint, view)
             .iter()
             .map(|&cp| cp.get_pbft_message().clone())
             .collect();
@@ -488,7 +489,7 @@ mod tests {
 
         log.add_message(msg.clone(), &state);
 
-        let gotten_msgs = log.get_messages_of_type(&PbftMessageType::PrePrepare, 1, 0);
+        let gotten_msgs = log.get_messages_of_type_seq_view(&PbftMessageType::PrePrepare, 1, 0);
 
         assert_eq!(gotten_msgs.len(), 1);
         assert_eq!(&msg, gotten_msgs[0]);
@@ -677,16 +678,19 @@ mod tests {
                 PbftMessageType::Prepare,
                 PbftMessageType::Commit,
             ] {
-                assert_eq!(log.get_messages_of_type(&msg_type, old, 0).len(), 0);
+                assert_eq!(
+                    log.get_messages_of_type_seq_view(&msg_type, old, 0).len(),
+                    0
+                );
             }
         }
 
         for msg_type in &[PbftMessageType::BlockNew, PbftMessageType::PrePrepare] {
-            assert_eq!(log.get_messages_of_type(&msg_type, 4, 0).len(), 1);
+            assert_eq!(log.get_messages_of_type_seq_view(&msg_type, 4, 0).len(), 1);
         }
 
         for msg_type in &[PbftMessageType::Prepare, PbftMessageType::Commit] {
-            assert_eq!(log.get_messages_of_type(&msg_type, 4, 0).len(), 4);
+            assert_eq!(log.get_messages_of_type_seq_view(&msg_type, 4, 0).len(), 4);
         }
     }
 }

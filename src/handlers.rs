@@ -74,7 +74,7 @@ fn check_pre_prepare_does_not_exist(
     info: &PbftMessageInfo,
 ) -> Result<(), PbftError> {
     // Check that this PrePrepare doesn't already exist
-    let existing_pre_prep_msgs = msg_log.get_messages_of_type(
+    let existing_pre_prep_msgs = msg_log.get_messages_of_type_seq_view(
         &PbftMessageType::PrePrepare,
         info.get_seq_num(),
         info.get_view(),
@@ -92,7 +92,7 @@ fn check_pre_prepare_matches_original_block_new(
     pbft_message: &PbftMessage,
     info: &PbftMessageInfo,
 ) -> Result<(), PbftError> {
-    let block_new_msgs = msg_log.get_messages_of_type(
+    let block_new_msgs = msg_log.get_messages_of_type_seq_view(
         &PbftMessageType::BlockNew,
         info.get_seq_num(),
         info.get_view(),
