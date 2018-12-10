@@ -18,10 +18,9 @@
 //! Handlers for individual message types
 
 use std::convert::From;
-use std::error::Error;
 
 use hex;
-use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId};
+use sawtooth_sdk::consensus::engine::{Block, PeerId};
 use sawtooth_sdk::consensus::service::Service;
 
 use error::PbftError;
@@ -90,112 +89,28 @@ pub fn pre_prepare(
 }
 
 /// Handle a `Commit` message
-/// Once a `2f + 1` `Commit` messages are received, the primary node can commit the block to the
-/// chain. If the block in the message isn't the one that belongs on top of the current chain head,
-/// then the message gets pushed to the backlog.
+///
+/// We have received `2f + 1` `Commit` messages so we are ready to commit the block to the chain.
 #[allow(clippy::ptr_arg)]
 pub fn commit(
     state: &mut PbftState,
-    msg_log: &mut PbftLog,
     service: &mut Service,
     message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    let working_block = clone_working_block(state)?;
-
-    state.switch_phase(PbftPhase::Finished);
-
-    check_if_block_already_seen(state, &working_block, message)?;
-
-    check_if_commiting_with_current_chain_head(state, msg_log, service, message, &working_block)?;
-
     info!(
         "{}: Committing block {:?}",
         state,
         message.get_block().block_id.clone()
     );
 
-    commit_block_from_message(service, message)?;
-
-    reset_working_block(state);
-
-    Ok(())
-}
-
-fn clone_working_block(state: &PbftState) -> Result<PbftBlock, PbftError> {
-    if let WorkingBlockOption::WorkingBlock(ref wb) = state.working_block {
-        Ok(wb.clone())
-    } else {
-        Err(PbftError::NoWorkingBlock)
-    }
-}
-
-fn check_if_block_already_seen(
-    state: &PbftState,
-    working_block: &PbftBlock,
-    message: &ParsedMessage,
-) -> Result<(), PbftError> {
-    let block = message.get_block();
-    let block_id = &block.block_id;
-    // Don't commit if we've seen this block already, but go ahead if we somehow
-    // skipped a block.
-    if block_id != &working_block.get_block_id()
-        && block.get_block_num() >= working_block.get_block_num()
-    {
-        warn!("{}: Not committing block {:?}", state, block_id);
-        Err(PbftError::BlockMismatch(
-            block.clone(),
-            working_block.clone(),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-#[allow(clippy::ptr_arg)]
-fn check_if_commiting_with_current_chain_head(
-    state: &mut PbftState,
-    msg_log: &mut PbftLog,
-    service: &mut Service,
-    message: &ParsedMessage,
-    working_block: &PbftBlock,
-) -> Result<(), PbftError> {
-    let block = message.get_block();
-    let block_id = block.get_block_id().to_vec();
-
-    let head = service
-        .get_chain_head()
-        .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
-
-    let cur_block = get_block_by_id(&mut *service, &block_id.to_vec())
-        .ok_or_else(|| PbftError::WrongNumBlocks)?;
-
-    if cur_block.previous_id != head.block_id {
-        warn!(
-            "{}: Not committing block {:?} but pushing to backlog",
-            state,
-            block_id.clone()
-        );
-        msg_log.push_backlog(message.clone());
-        Err(PbftError::BlockMismatch(
-            block.clone(),
-            working_block.clone(),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn commit_block_from_message(
-    service: &mut Service,
-    message: &ParsedMessage,
-) -> Result<(), PbftError> {
     service
         .commit_block(message.get_block().block_id.clone())
-        .map_err(|_| PbftError::InternalError(String::from("Failed to commit block")))
-}
+        .map_err(|e| PbftError::InternalError(format!("Failed to commit block: {:?}", e)))?;
 
-fn reset_working_block(state: &mut PbftState) {
+    state.switch_phase(PbftPhase::Finished);
     state.working_block = WorkingBlockOption::NoWorkingBlock;
+
+    Ok(())
 }
 
 /// Decide if this message is a future message, past message, or current message.
@@ -360,22 +275,6 @@ fn become_secondary(state: &mut PbftState) {
     state.downgrade_role();
 }
 
-#[allow(clippy::ptr_arg)]
-// There should only be one block with a matching ID
-fn get_block_by_id(service: &mut Service, block_id: &BlockId) -> Option<Block> {
-    let blocks: Vec<Block> = service
-        .get_blocks(vec![block_id.clone()])
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(_block_id, block)| block)
-        .collect();
-    if blocks.is_empty() {
-        None
-    } else {
-        Some(blocks[0].clone())
-    }
-}
-
 /// Create a PbftMessageInfo struct with the desired type, view, sequence number, and signer ID
 pub fn make_msg_info(
     msg_type: &PbftMessageType,
@@ -408,6 +307,7 @@ mod tests {
     use config;
     use hash::hash_sha256;
     use protos::pbft_message::PbftMessage;
+    use sawtooth_sdk::consensus::engine::BlockId;
 
     fn mock_block_id(num: u64) -> BlockId {
         BlockId::from(hash_sha256(

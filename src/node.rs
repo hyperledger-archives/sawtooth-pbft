@@ -207,7 +207,7 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         if state.phase == PbftPhase::Committing {
-            handlers::commit(state, &mut self.msg_log, &mut *self.service, msg)
+            handlers::commit(state, &mut *self.service, msg)
         } else {
             debug!(
                 "{}: Already committed block {:?}",
@@ -569,7 +569,6 @@ impl PbftNode {
         // having received a regular commit message.
         handlers::commit(
             state,
-            &mut self.msg_log,
             &mut *self.service,
             &messages[0].as_msg_type(PbftMessageType::Commit),
         )?;
