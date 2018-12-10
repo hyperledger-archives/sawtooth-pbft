@@ -73,9 +73,11 @@ impl fmt::Display for PbftState {
         };
 
         let wb = match self.working_block {
-            WorkingBlockOption::WorkingBlock(ref block) => {
-                String::from(&hex::encode(block.get_block_id())[..6])
-            }
+            WorkingBlockOption::WorkingBlock(ref block) => format!(
+                "{}/{}",
+                block.block_num,
+                &hex::encode(block.get_block_id())[..6]
+            ),
             WorkingBlockOption::TentativeWorkingBlock(ref block_id) => {
                 String::from(&hex::encode(block_id)[..5]) + "~"
             }
