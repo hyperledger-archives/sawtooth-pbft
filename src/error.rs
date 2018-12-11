@@ -35,7 +35,7 @@ pub enum PbftError {
     /// The message already exists in the log
     MessageExists(PbftMessageType),
 
-    /// Insufficient number of messages recieved so far (expected, got)
+    /// Too many or too few messages recieved so far (expected, got)
     WrongNumMessages(PbftMessageType, usize, usize),
 
     /// The block in the message doesn't match the one this node was expecting

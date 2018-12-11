@@ -112,9 +112,9 @@ impl PbftNode {
 
                 self.msg_log.add_message(msg.clone());
 
-                self.msg_log.check_prepared(&msg, state.f)?;
-
-                self.check_blocks_if_not_checking(&msg, state)?;
+                if self.msg_log.check_prepared(&msg.info(), state.f)? {
+                    self.check_blocks_if_not_checking(&msg, state)?;
+                }
             }
 
             PbftMessageType::Commit => {
@@ -123,9 +123,9 @@ impl PbftNode {
 
                 self.msg_log.add_message(msg.clone());
 
-                self.msg_log.check_committable(&msg, state.f)?;
-
-                self.commit_block_if_committing(&msg, state)?;
+                if self.msg_log.check_committable(&msg.info(), state.f)? {
+                    self.commit_block_if_committing(&msg, state)?;
+                }
             }
 
             PbftMessageType::Checkpoint => {
@@ -148,7 +148,6 @@ impl PbftNode {
             }
 
             PbftMessageType::ViewChange => {
-                let vc_message = msg.get_view_change_message();
                 let info = msg.info();
                 debug!(
                     "{}: Received ViewChange message from Node {:?} (v {}, seq {})",
@@ -158,7 +157,7 @@ impl PbftNode {
                     info.get_seq_num(),
                 );
 
-                self.msg_log.add_view_change(vc_message.clone());
+                self.msg_log.add_message(msg.clone());
 
                 if self.propose_view_change_if_enough_messages(&msg, state)? {
                     return Ok(());
@@ -279,8 +278,14 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         if state.mode == PbftMode::Checkpointing {
-            self.msg_log
-                .check_msg_against_log(pbft_message, true, 2 * state.f + 1)?;
+            if !self.msg_log.log_has_required_msgs(
+                &PbftMessageType::Checkpoint,
+                pbft_message,
+                false,
+                2 * state.f + 1,
+            ) {
+                return Ok(());
+            }
             warn!(
                 "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
                 state,
@@ -304,11 +309,12 @@ impl PbftNode {
         if state.mode != PbftMode::ViewChanging {
             // Even if our own timer hasn't expired, still do a ViewChange if we've received
             // f + 1 VC messages to prevent being late to the new view party
-            if self
-                .msg_log
-                .check_msg_against_log(message, true, state.f + 1)
-                .is_ok()
-                && message.info().get_view() > state.view
+            if self.msg_log.log_has_required_msgs(
+                &PbftMessageType::ViewChange,
+                message,
+                false,
+                state.f + 1,
+            ) && message.info().get_view() > state.view
             {
                 warn!("{}: Starting ViewChange from a ViewChange message", state);
                 self.propose_view_change(state)?;
@@ -754,32 +760,37 @@ impl PbftNode {
     /// This message arrives after `check_blocks` is called, signifying that the validator has
     /// successfully checked a block with this `BlockId`.
     /// Once a `BlockValid` is received, transition to committing blocks.
+    #[allow(clippy::ptr_arg)]
     pub fn on_block_valid(
         &mut self,
-        block_id: BlockId,
+        block_id: &BlockId,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         debug!("{}: <<<<<< BlockValid: {:?}", state, block_id);
+        let block = match state.working_block {
+            WorkingBlockOption::WorkingBlock(ref block) => {
+                if &BlockId::from(block.get_block_id()) == block_id {
+                    Ok(block.clone())
+                } else {
+                    warn!("Got BlockValid that doesn't match the working block");
+                    Err(PbftError::NotReadyForMessage)
+                }
+            }
+            WorkingBlockOption::TentativeWorkingBlock(_) => {
+                warn!("Got BlockValid, but node only has a tentative working block");
+                Err(PbftError::NoWorkingBlock)
+            }
+            _ => {
+                warn!("Got BlockValid with no working block");
+                Err(PbftError::NoWorkingBlock)
+            }
+        }?;
+
         state.switch_phase(PbftPhase::Committing);
-
-        debug!("{}: Getting blocks", state);
-        let valid_blocks: Vec<Block> = self
-            .service
-            .get_blocks(vec![block_id])
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(_block_id, block)| block)
-            .collect();
-
-        if valid_blocks.is_empty() {
-            return Err(PbftError::WrongNumBlocks);
-        }
-
-        let s = state.seq_num; // By now, secondaries have the proper seq number
         self._broadcast_pbft_message(
-            s,
+            state.seq_num,
             &PbftMessageType::Commit,
-            handlers::pbft_block_from_block(valid_blocks[0].clone()),
+            block.clone(),
             state,
         )?;
         Ok(())
@@ -1509,7 +1520,9 @@ mod tests {
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], &cfg);
         state0.phase = PbftPhase::Checking;
-        node.on_block_valid(mock_block_id(1), &mut state0)
+        state0.working_block =
+            WorkingBlockOption::WorkingBlock(pbft_block_from_block(mock_block(1)));
+        node.on_block_valid(&mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
         assert_eq!(state0.phase, PbftPhase::Committing);
     }
@@ -1564,7 +1577,7 @@ mod tests {
         assert_eq!(state1.phase, PbftPhase::Checking);
 
         // Spoof the `check_blocks()` call
-        assert!(node1.on_block_valid(mock_block_id(1), &mut state1).is_ok());
+        assert!(node1.on_block_valid(&mock_block_id(1), &mut state1).is_ok());
 
         // Receive 3 `Commit` messages
         for peer in 0..3 {
@@ -1647,7 +1660,7 @@ mod tests {
             } else {
                 assert_eq!(state1.mode, PbftMode::ViewChanging);
             }
-            let info = make_msg_info(&PbftMessageType::ViewChange, 1, 1, vec![peer]);
+            let info = make_msg_info(&PbftMessageType::ViewChange, 1, 0, vec![peer]);
             let mut vc_msg = PbftViewChange::new();
             vc_msg.set_info(info);
             vc_msg.set_checkpoint_messages(RepeatedField::default());

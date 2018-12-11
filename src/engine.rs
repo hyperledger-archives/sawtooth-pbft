@@ -123,7 +123,7 @@ fn handle_update(
 ) -> Result<bool, PbftError> {
     match incoming_message {
         Ok(Update::BlockNew(block)) => node.on_block_new(block, state)?,
-        Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id, state)?,
+        Ok(Update::BlockValid(block_id)) => node.on_block_valid(&block_id, state)?,
         Ok(Update::BlockInvalid(_)) => {
             warn!("{}: BlockInvalid received, starting view change", state);
             node.propose_view_change(state)?

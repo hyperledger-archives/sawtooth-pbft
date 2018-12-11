@@ -338,7 +338,9 @@ pub fn view_change(
     service: &mut Service,
     vc_message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    check_received_enough_view_changes(state, msg_log, vc_message)?;
+    if !check_received_enough_view_changes(state, msg_log, vc_message) {
+        return Ok(());
+    }
 
     set_current_view_from_msg(state, vc_message);
 
@@ -372,8 +374,13 @@ fn check_received_enough_view_changes(
     state: &PbftState,
     msg_log: &PbftLog,
     vc_message: &ParsedMessage,
-) -> Result<(), PbftError> {
-    msg_log.check_msg_against_log(vc_message, true, 2 * state.f + 1)
+) -> bool {
+    msg_log.log_has_required_msgs(
+        &PbftMessageType::ViewChange,
+        vc_message,
+        false,
+        2 * state.f + 1,
+    )
 }
 
 fn set_current_view_from_msg(state: &mut PbftState, vc_message: &ParsedMessage) {
