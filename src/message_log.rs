@@ -26,11 +26,11 @@ use hex;
 use itertools::Itertools;
 use sawtooth_sdk::consensus::engine::Block;
 
-use config::PbftConfig;
-use error::PbftError;
-use message_type::{ParsedMessage, PbftHint, PbftMessageType};
-use protos::pbft_message::{PbftMessage, PbftMessageInfo};
-use state::PbftState;
+use crate::config::PbftConfig;
+use crate::error::PbftError;
+use crate::message_type::{ParsedMessage, PbftHint, PbftMessageType};
+use crate::protos::pbft_message::{PbftMessage, PbftMessageInfo};
+use crate::state::PbftState;
 
 /// The log keeps track of the last stable checkpoint
 #[derive(Clone)]
@@ -422,9 +422,9 @@ impl PbftLog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config;
-    use hash::hash_sha256;
-    use protos::pbft_message::PbftBlock;
+    use crate::config;
+    use crate::hash::hash_sha256;
+    use crate::protos::pbft_message::PbftBlock;
     use sawtooth_sdk::consensus::engine::PeerId;
 
     /// Create a PbftMessage, given its type, view, sequence number, and who it's from

@@ -26,8 +26,8 @@ use std::hash::{Hash, Hasher};
 
 use hex;
 
-use message_type::PbftMessageType;
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
+use crate::message_type::PbftMessageType;
+use crate::protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 impl Eq for PbftMessage {}
 impl Eq for PbftViewChange {}

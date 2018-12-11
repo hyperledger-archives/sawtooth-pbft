@@ -21,13 +21,13 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
 use sawtooth_sdk::consensus::{engine::*, service::Service};
 
-use config;
-use error::PbftError;
-use message_type::ParsedMessage;
-use node::PbftNode;
-use state::PbftState;
-use storage::get_storage;
-use timing;
+use crate::config;
+use crate::error::PbftError;
+use crate::message_type::ParsedMessage;
+use crate::node::PbftNode;
+use crate::state::PbftState;
+use crate::storage::get_storage;
+use crate::timing;
 
 #[derive(Default)]
 pub struct PbftEngine {}

@@ -23,12 +23,12 @@ use hex;
 use sawtooth_sdk::consensus::engine::{Block, PeerId};
 use sawtooth_sdk::consensus::service::Service;
 
-use error::PbftError;
-use message_log::PbftLog;
-use message_type::ParsedMessage;
-use message_type::{PbftHint, PbftMessageType};
-use protos::pbft_message::{PbftBlock, PbftMessageInfo};
-use state::{PbftPhase, PbftState, WorkingBlockOption};
+use crate::error::PbftError;
+use crate::message_log::PbftLog;
+use crate::message_type::ParsedMessage;
+use crate::message_type::{PbftHint, PbftMessageType};
+use crate::protos::pbft_message::{PbftBlock, PbftMessageInfo};
+use crate::state::{PbftPhase, PbftState, WorkingBlockOption};
 
 /// Handle a `PrePrepare` message
 ///
@@ -304,9 +304,9 @@ pub fn pbft_block_from_block(block: Block) -> PbftBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config;
-    use hash::hash_sha256;
-    use protos::pbft_message::PbftMessage;
+    use crate::config;
+    use crate::hash::hash_sha256;
+    use crate::protos::pbft_message::PbftMessage;
     use sawtooth_sdk::consensus::engine::BlockId;
 
     fn mock_block_id(num: u64) -> BlockId {

@@ -23,8 +23,8 @@ use std::fmt;
 use hex;
 use protobuf::error::ProtobufError;
 
-use message_type::PbftMessageType;
-use protos::pbft_message::PbftBlock;
+use crate::message_type::PbftMessageType;
+use crate::protos::pbft_message::PbftBlock;
 
 /// Errors that might occur in a PbftNode
 #[derive(Debug)]
