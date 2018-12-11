@@ -61,7 +61,7 @@ fn main() {
             match log4rs::load_config_file(path, deserializers) {
                 Ok(mut config) => {
                     {
-                        let mut root = config.root_mut();
+                        let root = config.root_mut();
                         root.set_level(args.log_level);
                     }
                     config
