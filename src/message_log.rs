@@ -29,7 +29,8 @@ use sawtooth_sdk::consensus::engine::Block;
 use config::PbftConfig;
 use error::PbftError;
 use message_type::{ParsedMessage, PbftHint, PbftMessageType};
-use protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo};
+use protos::pbft_message::{PbftMessage, PbftMessageInfo};
+use state::PbftState;
 
 /// The log keeps track of the last stable checkpoint
 #[derive(Clone)]
@@ -171,7 +172,8 @@ impl PbftLog {
         info: &PbftMessageInfo,
         msg_type: &PbftMessageType,
     ) -> Option<&ParsedMessage> {
-        let msgs = self.get_messages_of_type(msg_type, info.get_seq_num(), info.get_view());
+        let msgs =
+            self.get_messages_of_type_seq_view(msg_type, info.get_seq_num(), info.get_view());
         msgs.first().cloned()
     }
 
@@ -184,7 +186,7 @@ impl PbftLog {
         check_block: bool,
         required: u64,
     ) -> bool {
-        let msgs = self.get_messages_of_type(
+        let msgs = self.get_messages_of_type_seq_view(
             msg_type,
             ref_msg.info().get_seq_num(),
             ref_msg.info().get_view(),
@@ -203,25 +205,41 @@ impl PbftLog {
     }
 
     /// Add a generic PBFT message to the log
-    pub fn add_message(&mut self, msg: ParsedMessage) {
-        if msg.info().get_seq_num() < self.high_water_mark
-            || msg.info().get_seq_num() >= self.low_water_mark
+    pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) {
+        if msg.info().get_seq_num() >= self.high_water_mark
+            || msg.info().get_seq_num() < self.low_water_mark
         {
-            // If the message wasn't already in the log, increment cycles
-            let msg_type = PbftMessageType::from(msg.info().get_msg_type());
-            let inserted = self.messages.insert(msg);
-            if msg_type == PbftMessageType::BlockNew && inserted {
-                self.cycles += 1;
-            }
-            trace!("{}", self);
-        } else {
             warn!(
                 "Not adding message with sequence number {}; outside of log bounds ({}, {})",
                 msg.info().get_seq_num(),
                 self.low_water_mark,
                 self.high_water_mark,
             );
+            return;
         }
+
+        // Except for Checkpoints and ViewChanges, the message must be for the current view to be
+        // accepted
+        let msg_type = PbftMessageType::from(msg.info().get_msg_type());
+        if msg_type != PbftMessageType::Checkpoint
+            && msg_type != PbftMessageType::ViewChange
+            && msg.info().get_view() != state.view
+        {
+            warn!(
+                "Not adding message with view number {}; does not match node's view: {}",
+                msg.info().get_view(),
+                state.view,
+            );
+            return;
+        }
+
+        // If the message wasn't already in the log, increment cycles
+        let msg_type = PbftMessageType::from(msg.info().get_msg_type());
+        let inserted = self.messages.insert(msg);
+        if msg_type == PbftMessageType::BlockNew && inserted {
+            self.cycles += 1;
+        }
+        trace!("{}", self);
     }
 
     /// Adds a message the (back)log, based on the given `PbftHint`
@@ -235,6 +253,7 @@ impl PbftLog {
         &mut self,
         msg: ParsedMessage,
         hint: &PbftHint,
+        state: &PbftState,
     ) -> Result<(), PbftError> {
         match hint {
             PbftHint::FutureMessage => {
@@ -242,15 +261,31 @@ impl PbftLog {
                 Err(PbftError::NotReadyForMessage)
             }
             PbftHint::PastMessage => {
-                self.add_message(msg);
+                self.add_message(msg, state);
                 Err(PbftError::NotReadyForMessage)
             }
             PbftHint::PresentMessage => Ok(()),
         }
     }
 
+    /// Obtain all messages from the log that match a given type and sequence_number
+    pub fn get_messages_of_type_seq(
+        &self,
+        msg_type: &PbftMessageType,
+        sequence_number: u64,
+    ) -> Vec<&ParsedMessage> {
+        self.messages
+            .iter()
+            .filter(|&msg| {
+                let info = (*msg).info();
+                info.get_msg_type() == String::from(msg_type)
+                    && info.get_seq_num() == sequence_number
+            })
+            .collect()
+    }
+
     /// Obtain messages from the log that match a given type, sequence number, and view
-    pub fn get_messages_of_type(
+    pub fn get_messages_of_type_seq_view(
         &self,
         msg_type: &PbftMessageType,
         sequence_number: u64,
@@ -310,47 +345,6 @@ impl PbftLog {
             .map(|(_, msgs)| msgs)
     }
 
-    /// Fix sequence numbers of generic PBFT messages that are defaulted to zero
-    /// This is used to fix the `BlockNew` messages in secondary nodes, once they receive a
-    /// `PrePrepare` message with the proper sequence number.
-    pub fn fix_seq_nums(
-        &mut self,
-        msg_type: &PbftMessageType,
-        new_sequence_number: u64,
-        view: u64,
-        block: &PbftBlock,
-    ) -> usize {
-        let zero_seq_msgs: Vec<ParsedMessage> = self
-            .get_messages_of_type(msg_type, 0, view)
-            .iter()
-            .map(|&msg| msg.clone())
-            .collect();
-
-        for m in &zero_seq_msgs {
-            self.messages.remove(m);
-        }
-
-        let mut fixed_msgs = Vec::<ParsedMessage>::new();
-        for mut m in zero_seq_msgs {
-            if m.info().get_msg_type() == String::from(msg_type)
-                && m.info().get_seq_num() == 0
-                && m.get_block().get_block_id() == block.get_block_id()
-            {
-                let mut info: PbftMessageInfo = m.info().clone();
-                let mut new_msg = m.clone();
-                info.set_seq_num(new_sequence_number);
-                *new_msg.info_mut() = info;
-                fixed_msgs.push(new_msg.clone());
-            }
-        }
-
-        let changed_msgs = fixed_msgs.len();
-        for m in fixed_msgs {
-            self.messages.insert(m);
-        }
-        changed_msgs
-    }
-
     /// Get the latest stable checkpoint
     pub fn get_latest_checkpoint(&self) -> u64 {
         if let Some(ref cp) = self.latest_stable_checkpoint {
@@ -373,7 +367,7 @@ impl PbftLog {
 
         // Update the stable checkpoint
         let cp_msgs: Vec<PbftMessage> = self
-            .get_messages_of_type(&PbftMessageType::Checkpoint, stable_checkpoint, view)
+            .get_messages_of_type_seq_view(&PbftMessageType::Checkpoint, stable_checkpoint, view)
             .iter()
             .map(|&cp| cp.get_pbft_message().clone())
             .collect();
@@ -418,6 +412,7 @@ mod tests {
     use super::*;
     use config;
     use hash::hash_sha256;
+    use protos::pbft_message::PbftBlock;
     use sawtooth_sdk::consensus::engine::PeerId;
 
     /// Create a PbftMessage, given its type, view, sequence number, and who it's from
@@ -458,6 +453,7 @@ mod tests {
     fn one_message() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
+        let state = PbftState::new(vec![], &cfg);
 
         let msg = make_msg(
             &PbftMessageType::PrePrepare,
@@ -467,9 +463,9 @@ mod tests {
             get_peer_id(&cfg, 0),
         );
 
-        log.add_message(msg.clone());
+        log.add_message(msg.clone(), &state);
 
-        let gotten_msgs = log.get_messages_of_type(&PbftMessageType::PrePrepare, 1, 0);
+        let gotten_msgs = log.get_messages_of_type_seq_view(&PbftMessageType::PrePrepare, 1, 0);
 
         assert_eq!(gotten_msgs.len(), 1);
         assert_eq!(&msg, gotten_msgs[0]);
@@ -480,6 +476,7 @@ mod tests {
     fn prepared_committed() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
+        let state = PbftState::new(vec![], &cfg);
 
         let msg = make_msg(
             &PbftMessageType::BlockNew,
@@ -488,7 +485,7 @@ mod tests {
             get_peer_id(&cfg, 0),
             get_peer_id(&cfg, 0),
         );
-        log.add_message(msg.clone());
+        log.add_message(msg.clone(), &state);
 
         assert_eq!(log.cycles, 1);
         assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
@@ -501,7 +498,7 @@ mod tests {
             get_peer_id(&cfg, 0),
             get_peer_id(&cfg, 0),
         );
-        log.add_message(msg.clone());
+        log.add_message(msg.clone(), &state);
         assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
         assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
 
@@ -514,7 +511,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
             );
 
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
             if peer < 2 {
                 assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
                 assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
@@ -533,44 +530,13 @@ mod tests {
                 get_peer_id(&cfg, 0),
             );
 
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
             if peer < 2 {
                 assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
             } else {
                 assert!(log.check_committable(&msg.info(), 1 as u64).unwrap());
             }
         }
-    }
-
-    /// Test that sequence number adjustments work as expected
-    /// (This is used by secondary nodes to adjust the sequence number of their `BlockNew`, when
-    /// they receive a `PrePrepare` from the primary)
-    #[test]
-    fn fix_seq_nums() {
-        let cfg = config::mock_config(4);
-        let mut log = PbftLog::new(&cfg);
-
-        let msg0 = make_msg(
-            &PbftMessageType::BlockNew,
-            0,
-            0,
-            get_peer_id(&cfg, 0),
-            get_peer_id(&cfg, 0),
-        );
-        log.add_message(msg0.clone());
-
-        let msg = make_msg(
-            &PbftMessageType::PrePrepare,
-            0,
-            1,
-            get_peer_id(&cfg, 0),
-            get_peer_id(&cfg, 0),
-        );
-        log.add_message(msg.clone());
-
-        let num_updated = log.fix_seq_nums(&PbftMessageType::BlockNew, 1, 0, msg0.get_block());
-
-        assert_eq!(num_updated, 1);
     }
 
     /// Make sure that the log doesn't start out checkpointing
@@ -589,6 +555,7 @@ mod tests {
     fn garbage_collection() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
+        let state = PbftState::new(vec![], &cfg);
 
         for seq in 1..5 {
             let msg = make_msg(
@@ -598,7 +565,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
                 get_peer_id(&cfg, 0),
             );
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
 
             let msg = make_msg(
                 &PbftMessageType::PrePrepare,
@@ -607,7 +574,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
                 get_peer_id(&cfg, 0),
             );
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
 
             for peer in 0..4 {
                 let msg = make_msg(
@@ -618,7 +585,7 @@ mod tests {
                     get_peer_id(&cfg, 0),
                 );
 
-                log.add_message(msg.clone());
+                log.add_message(msg.clone(), &state);
             }
 
             for peer in 0..4 {
@@ -630,7 +597,7 @@ mod tests {
                     get_peer_id(&cfg, 0),
                 );
 
-                log.add_message(msg.clone());
+                log.add_message(msg.clone(), &state);
             }
         }
 
@@ -643,7 +610,7 @@ mod tests {
                 get_peer_id(&cfg, 0),
             );
 
-            log.add_message(msg.clone());
+            log.add_message(msg.clone(), &state);
         }
 
         log.garbage_collect(4, 0);
@@ -655,16 +622,19 @@ mod tests {
                 PbftMessageType::Prepare,
                 PbftMessageType::Commit,
             ] {
-                assert_eq!(log.get_messages_of_type(&msg_type, old, 0).len(), 0);
+                assert_eq!(
+                    log.get_messages_of_type_seq_view(&msg_type, old, 0).len(),
+                    0
+                );
             }
         }
 
         for msg_type in &[PbftMessageType::BlockNew, PbftMessageType::PrePrepare] {
-            assert_eq!(log.get_messages_of_type(&msg_type, 4, 0).len(), 1);
+            assert_eq!(log.get_messages_of_type_seq_view(&msg_type, 4, 0).len(), 1);
         }
 
         for msg_type in &[PbftMessageType::Prepare, PbftMessageType::Commit] {
-            assert_eq!(log.get_messages_of_type(&msg_type, 4, 0).len(), 4);
+            assert_eq!(log.get_messages_of_type_seq_view(&msg_type, 4, 0).len(), 4);
         }
     }
 }
