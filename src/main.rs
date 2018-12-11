@@ -21,23 +21,12 @@
 
 #![allow(unknown_lints)]
 
-extern crate atomicwrites;
 #[macro_use]
 extern crate clap;
 #[macro_use]
 extern crate log;
-extern crate hex;
-extern crate itertools;
-extern crate log4rs;
-extern crate log4rs_syslog;
-extern crate openssl;
-extern crate protobuf;
-extern crate sawtooth_sdk;
-extern crate serde;
 #[macro_use]
 extern crate serde_derive;
-extern crate serde_json;
-extern crate serde_millis;
 
 use std::process;
 
