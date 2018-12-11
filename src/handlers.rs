@@ -41,7 +41,7 @@ use state::{PbftPhase, PbftState, WorkingBlockOption};
 /// - The message's view matches the node's current view (handled by message log)
 /// - The sequence number is between the low and high watermarks (handled by message log)
 ///
-/// If a `PrePrepare` message is accepted, we update the phase, working block, and sequence number
+/// If a `PrePrepare` message is accepted, we update the phase and working block
 pub fn pre_prepare(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
@@ -343,8 +343,8 @@ mod tests {
     #[test]
     fn test_pre_prepare() {
         let cfg = config::mock_config(4);
-        let mut state0 = PbftState::new(vec![0], &cfg);
-        let mut state1 = PbftState::new(vec![1], &cfg);
+        let mut state0 = PbftState::new(vec![0], 0, &cfg);
+        let mut state1 = PbftState::new(vec![1], 0, &cfg);
         let mut log0 = PbftLog::new(&cfg);
         let mut log1 = PbftLog::new(&cfg);
 
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn test_multicast_hint() {
         let cfg = config::mock_config(4);
-        let mut state = PbftState::new(vec![0], &cfg);
+        let mut state = PbftState::new(vec![0], 0, &cfg);
         state.seq_num = 5;
 
         // Past (past sequence number)

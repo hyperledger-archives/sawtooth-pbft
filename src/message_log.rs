@@ -393,8 +393,10 @@ impl PbftLog {
             .messages
             .iter()
             .filter(|ref msg| {
+                // We need to keep messages from the previous sequence number to build the next
+                // consensus seal
                 let seq_num = msg.info().get_seq_num();
-                seq_num >= self.get_latest_checkpoint() && seq_num > 0
+                seq_num >= self.get_latest_checkpoint() - 1 && seq_num > 0
             })
             .cloned()
             .collect();
@@ -463,7 +465,7 @@ mod tests {
     fn one_message() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
-        let state = PbftState::new(vec![], &cfg);
+        let state = PbftState::new(vec![], 0, &cfg);
 
         let msg = make_msg(
             &PbftMessageType::PrePrepare,
@@ -486,7 +488,7 @@ mod tests {
     fn prepared_committed() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
-        let state = PbftState::new(vec![], &cfg);
+        let state = PbftState::new(vec![], 0, &cfg);
 
         let msg = make_msg(
             &PbftMessageType::BlockNew,
@@ -565,7 +567,7 @@ mod tests {
     fn garbage_collection() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
-        let state = PbftState::new(vec![], &cfg);
+        let state = PbftState::new(vec![], 0, &cfg);
 
         for seq in 1..5 {
             let msg = make_msg(

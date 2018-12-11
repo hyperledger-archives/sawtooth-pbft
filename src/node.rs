@@ -591,12 +591,6 @@ impl PbftNode {
         state.idle_timeout.stop();
         state.commit_timeout.start();
 
-        if state.is_primary() {
-            state.seq_num = head.block_num + 1;
-        } else {
-            state.seq_num = head.block_num;
-        }
-
         Ok(true)
     }
 
@@ -630,14 +624,6 @@ impl PbftNode {
                 block.block_num, head.block_num
             );
             return Ok(());
-        }
-
-        if state.is_primary() {
-            // Ensure that our local state doesn't get out of sync with actual state
-            state.seq_num = head.block_num + 1;
-        } else {
-            // Ensure that our local state doesn't get out of sync with actual state
-            state.seq_num = head.block_num;
         }
 
         let mut msg = PbftMessage::new();
@@ -723,6 +709,7 @@ impl PbftNode {
             }
 
             state.switch_phase(PbftPhase::NotStarted);
+            state.seq_num += 1;
 
             // Start a view change if we need to force one for fairness or if membership changed
             if state.at_forced_view_change() || self.update_membership(block_id, state) {
@@ -797,7 +784,7 @@ impl PbftNode {
         let min_votes = 2 * state.f;
         let messages = self
             .msg_log
-            .get_enough_messages(&PbftMessageType::Commit, state.seq_num, min_votes)
+            .get_enough_messages(&PbftMessageType::Commit, state.seq_num - 1, min_votes)
             .ok_or_else(|| {
                 debug!("{}: {}", state, self.msg_log);
                 PbftError::InternalError(format!(
@@ -1302,12 +1289,7 @@ mod tests {
             node.msg_log.add_message(message, state).unwrap();
         }
 
-        // Do some special jiu-jitsu to generate the seal for the node from itself. Basically,
-        // do a bit of time travel into the future and then reset state.
-        let actual_seq_num = state.seq_num;
-        state.seq_num = num - 1;
         block.payload = node.build_seal(state, vec![1, 2, 3], head).unwrap();
-        state.seq_num = actual_seq_num;
 
         block
     }
@@ -1345,7 +1327,7 @@ mod tests {
         // NOTE: Special case for primary node
         let mut node0 = mock_node(vec![0]);
         let cfg = mock_config(4);
-        let mut state0 = PbftState::new(vec![0], &cfg);
+        let mut state0 = PbftState::new(vec![0], 0, &cfg);
         node0.on_block_new(mock_block(1), &mut state0).unwrap();
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.seq_num, 1);
@@ -1356,7 +1338,7 @@ mod tests {
 
         // Try the next block
         let mut node1 = mock_node(vec![1]);
-        let mut state1 = PbftState::new(vec![], &cfg);
+        let mut state1 = PbftState::new(vec![], 0, &cfg);
         node1
             .on_block_new(mock_block(1), &mut state1)
             .unwrap_or_else(handle_pbft_err);
@@ -1365,14 +1347,13 @@ mod tests {
             state1.working_block,
             WorkingBlockOption::TentativeWorkingBlock(mock_block_id(1))
         );
-        assert_eq!(state1.seq_num, 0);
     }
 
     #[test]
     fn block_new_first_10_blocks() {
         let mut node = mock_node(vec![0]);
         let cfg = mock_config(4);
-        let mut state = PbftState::new(vec![0], &cfg);
+        let mut state = PbftState::new(vec![0], 0, &cfg);
 
         let block_0_id = mock_block_id(0);
         let block_1_id = mock_block_id(1);
@@ -1384,7 +1365,6 @@ mod tests {
         assert_eq!(head.previous_id, block_0_id);
 
         assert_eq!(state.id, vec![0]);
-        assert_eq!(state.seq_num, 0);
         assert_eq!(state.view, 0);
         assert_eq!(state.phase, PbftPhase::NotStarted);
         assert_eq!(state.mode, PbftMode::Normal);
@@ -1418,8 +1398,11 @@ mod tests {
         );
         assert!(state.is_primary());
 
+        state.seq_num += 1;
+
         // Handle the rest of the blocks
         for i in 2..10 {
+            assert_eq!(state.seq_num, i);
             let block_ids = (i - 2..i + 1).map(mock_block_id).collect::<Vec<_>>();
             let block = mock_block_with_seal(i, &mut node, &mut state);
             node.on_block_new(block, &mut state).unwrap();
@@ -1430,7 +1413,6 @@ mod tests {
             assert_eq!(head.previous_id, block_ids[0]);
 
             assert_eq!(state.id, vec![0]);
-            assert_eq!(state.seq_num, i - 1);
             assert_eq!(state.view, 0);
             assert_eq!(state.phase, PbftPhase::PrePreparing);
             assert_eq!(state.mode, PbftMode::Normal);
@@ -1443,6 +1425,8 @@ mod tests {
                 WorkingBlockOption::TentativeWorkingBlock(block_ids[2].clone())
             );
             assert!(state.is_primary());
+
+            state.seq_num += 1;
         }
     }
 
@@ -1451,8 +1435,8 @@ mod tests {
     fn block_new_consensus() {
         let cfg = mock_config(4);
         let mut node = mock_node(vec![1]);
-        let mut state = PbftState::new(vec![], &cfg);
-        state.seq_num = 6;
+        let mut state = PbftState::new(vec![], 0, &cfg);
+        state.seq_num = 7;
         let head = mock_block(6);
         let mut block = mock_block(7);
         block.summary = vec![1, 2, 3];
@@ -1506,7 +1490,7 @@ mod tests {
     fn block_valid() {
         let mut node = mock_node(vec![0]);
         let cfg = mock_config(4);
-        let mut state0 = PbftState::new(vec![0], &cfg);
+        let mut state0 = PbftState::new(vec![0], 0, &cfg);
         state0.phase = PbftPhase::Checking;
         state0.working_block =
             WorkingBlockOption::WorkingBlock(pbft_block_from_block(mock_block(1)));
@@ -1520,11 +1504,13 @@ mod tests {
     fn block_commit() {
         let mut node = mock_node(vec![0]);
         let cfg = mock_config(4);
-        let mut state0 = PbftState::new(vec![0], &cfg);
+        let mut state0 = PbftState::new(vec![0], 0, &cfg);
         state0.phase = PbftPhase::Finished;
+        assert_eq!(state0.seq_num, 1);
         node.on_block_commit(mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
         assert_eq!(state0.phase, PbftPhase::NotStarted);
+        assert_eq!(state0.seq_num, 2);
     }
 
     /// Test the multicast protocol (`PrePrepare` => `Prepare` => `Commit`)
@@ -1534,7 +1520,7 @@ mod tests {
 
         // Make sure BlockNew is in the log
         let mut node1 = mock_node(vec![1]);
-        let mut state1 = PbftState::new(vec![], &cfg);
+        let mut state1 = PbftState::new(vec![], 0, &cfg);
         let block = mock_block(1);
         node1
             .on_block_new(block.clone(), &mut state1)
@@ -1604,7 +1590,7 @@ mod tests {
     fn checkpoint() {
         let mut node1 = mock_node(vec![1]);
         let cfg = mock_config(4);
-        let mut state1 = PbftState::new(vec![], &cfg);
+        let mut state1 = PbftState::new(vec![], 0, &cfg);
         // Pretend that the node just finished block 10
         state1.seq_num = 10;
         let block = mock_block(10);
@@ -1635,7 +1621,7 @@ mod tests {
     fn view_change() {
         let mut node1 = mock_node(vec![1]);
         let cfg = mock_config(4);
-        let mut state1 = PbftState::new(vec![1], &cfg);
+        let mut state1 = PbftState::new(vec![1], 0, &cfg);
 
         assert!(!state1.is_primary());
 
@@ -1667,7 +1653,7 @@ mod tests {
     fn propose_view_change() {
         let mut node1 = mock_node(vec![1]);
         let cfg = mock_config(4);
-        let mut state1 = PbftState::new(vec![], &cfg);
+        let mut state1 = PbftState::new(vec![], 0, &cfg);
         assert_eq!(state1.mode, PbftMode::Normal);
 
         node1
@@ -1682,7 +1668,7 @@ mod tests {
     fn try_publish() {
         let mut node0 = mock_node(vec![0]);
         let cfg = mock_config(4);
-        let mut state0 = PbftState::new(vec![0], &cfg);
+        let mut state0 = PbftState::new(vec![0], 0, &cfg);
         let block0 = mock_block(1);
         let pbft_block0 = pbft_block_from_block(block0);
 

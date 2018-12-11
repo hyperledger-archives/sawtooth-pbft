@@ -167,7 +167,7 @@ impl PbftState {
     /// Panics if the network this node is on does not have enough nodes to be Byzantine fault
     /// tolernant.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn new(id: PeerId, config: &PbftConfig) -> Self {
+    pub fn new(id: PeerId, head_block_num: u64, config: &PbftConfig) -> Self {
         // Maximum number of faulty nodes in this network. Panic if there are not enough nodes.
         let f = ((config.peers.len() - 1) / 3) as u64;
         if f == 0 {
@@ -176,8 +176,8 @@ impl PbftState {
 
         PbftState {
             id: id.clone(),
-            seq_num: 0, // Default to unknown
-            view: 0,    // Node ID 0 is default primary
+            seq_num: head_block_num + 1,
+            view: 0, // Node ID 0 is default primary
             phase: PbftPhase::NotStarted,
             role: if config.peers[0] == id {
                 PbftNodeRole::Primary
@@ -281,7 +281,7 @@ mod tests {
     fn no_fault_tolerance() {
         let config = mock_config(1);
         let caught = ::std::panic::catch_unwind(|| {
-            PbftState::new(vec![0], &config);
+            PbftState::new(vec![0], 0, &config);
         })
         .is_err();
         assert!(caught);
@@ -296,8 +296,8 @@ mod tests {
     #[test]
     fn initial_config() {
         let config = mock_config(4);
-        let state0 = PbftState::new(vec![0], &config);
-        let state1 = PbftState::new(vec![], &config);
+        let state0 = PbftState::new(vec![0], 0, &config);
+        let state1 = PbftState::new(vec![], 0, &config);
 
         assert!(state0.is_primary());
         assert!(!state1.is_primary());
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn role_changes() {
         let config = mock_config(4);
-        let mut state = PbftState::new(vec![0], &config);
+        let mut state = PbftState::new(vec![0], 0, &config);
 
         state.downgrade_role();
         assert!(!state.is_primary());
@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn phase_changes() {
         let config = mock_config(4);
-        let mut state = PbftState::new(vec![0], &config);
+        let mut state = PbftState::new(vec![0], 0, &config);
 
         assert!(state.switch_phase(PbftPhase::PrePreparing).is_some());
         assert!(state.switch_phase(PbftPhase::Preparing).is_some());
