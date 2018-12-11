@@ -22,11 +22,11 @@
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-use crate::hash::verify_sha512;
 use protobuf::Message;
 use sawtooth_sdk::consensus::engine::PeerMessage;
 
 use crate::error::PbftError;
+use crate::hash::verify_sha512;
 use crate::protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
 
 /// Wrapper enum for all of the possible PBFT-related messages
