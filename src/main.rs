@@ -22,14 +22,13 @@
 #![allow(unknown_lints)]
 
 #[macro_use]
-extern crate clap;
-#[macro_use]
 extern crate log;
 #[macro_use]
 extern crate serde_derive;
 
 use std::process;
 
+use clap::{clap_app, crate_version};
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config, Root};
 use log4rs::encode::pattern::PatternEncoder;
