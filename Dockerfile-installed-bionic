@@ -1,0 +1,63 @@
+# Copyright 2018 Intel Corporation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------------------------
+
+# docker build -f Dockerfile-installed-bionic -t sawtooth-pbft-engine .
+
+# -------------=== pbft build ===-------------
+FROM ubuntu:bionic as pbft-builder
+
+ENV VERSION=AUTO_STRICT
+
+RUN apt-get update \
+ && apt-get install -y -q --allow-downgrades \
+    build-essential \
+    curl \
+    libssl-dev \
+    gcc \
+    git \
+    libzmq3-dev \
+    openssl \
+    pkg-config \
+    python3 \
+    unzip \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+
+# For Building Protobufs
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y \
+ && curl -OLsS https://github.com/google/protobuf/releases/download/v3.5.1/protoc-3.5.1-linux-x86_64.zip \
+ && unzip protoc-3.5.1-linux-x86_64.zip -d protoc3 \
+ && rm protoc-3.5.1-linux-x86_64.zip
+
+ENV PATH=$PATH:/protoc3/bin
+RUN /root/.cargo/bin/cargo install cargo-deb
+
+COPY . /project/sawtooth-pbft
+
+WORKDIR /project/sawtooth-pbft
+
+RUN sed -i -e "0,/version.*$/ s/version.*$/version\ =\ \"$(./bin/get_version)\"/" Cargo.toml
+RUN /root/.cargo/bin/cargo deb
+
+# -------------=== pbft docker build ===-------------
+FROM ubuntu:bionic
+
+COPY --from=pbft-builder /project/sawtooth-pbft/target/debian/sawtooth*.deb /tmp
+
+RUN apt-get update \
+ && dpkg -i /tmp/sawtooth*.deb || true \
+ && apt-get -f -y install
+
+CMD pbft-engine
