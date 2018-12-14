@@ -149,7 +149,7 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
     // Get various integer constants
     merge_setting_if_set(
         &settings,
-        &mut config.checkpoint_period,
+        &mut config.forced_view_change_period,
         "sawtooth.consensus.pbft.forced_view_change_period",
     );
     merge_setting_if_set(
