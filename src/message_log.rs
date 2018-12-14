@@ -24,7 +24,6 @@ use std::fmt;
 
 use hex;
 use itertools::Itertools;
-use sawtooth_sdk::consensus::engine::Block;
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
@@ -60,9 +59,6 @@ pub struct PbftLog {
 
     /// Backlog of messages (from peers) with sender's ID
     backlog: VecDeque<ParsedMessage>,
-
-    /// Backlog of blocks (from BlockNews messages)
-    block_backlog: VecDeque<Block>,
 
     /// The most recent checkpoint that contains proof
     pub latest_stable_checkpoint: Option<PbftStableCheckpoint>,
@@ -108,7 +104,6 @@ impl PbftLog {
             high_water_mark: config.max_log_size,
             max_log_size: config.max_log_size,
             backlog: VecDeque::new(),
-            block_backlog: VecDeque::new(),
             latest_stable_checkpoint: None,
         }
     }
@@ -362,14 +357,6 @@ impl PbftLog {
 
     pub fn pop_backlog(&mut self) -> Option<ParsedMessage> {
         self.backlog.pop_front()
-    }
-
-    pub fn push_block_backlog(&mut self, msg: Block) {
-        self.block_backlog.push_back(msg);
-    }
-
-    pub fn pop_block_backlog(&mut self) -> Option<Block> {
-        self.block_backlog.pop_front()
     }
 }
 

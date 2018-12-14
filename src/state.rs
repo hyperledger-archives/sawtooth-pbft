@@ -38,7 +38,6 @@ enum PbftNodeRole {
 /// Phases of the PBFT algorithm, in `Normal` mode
 #[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize)]
 pub enum PbftPhase {
-    NotStarted,
     PrePreparing,
     Preparing,
     Checking,
@@ -64,7 +63,6 @@ impl fmt::Display for PbftState {
         };
 
         let phase = match self.phase {
-            PbftPhase::NotStarted => "NS",
             PbftPhase::PrePreparing => "PP",
             PbftPhase::Preparing => "Pr",
             PbftPhase::Checking => "Ch",
@@ -178,7 +176,7 @@ impl PbftState {
             id: id.clone(),
             seq_num: head_block_num + 1,
             view: 0, // Node ID 0 is default primary
-            phase: PbftPhase::NotStarted,
+            phase: PbftPhase::PrePreparing,
             role: if config.peers[0] == id {
                 PbftNodeRole::Primary
             } else {
@@ -207,7 +205,7 @@ impl PbftState {
             PbftPhase::Preparing => PbftMessageType::Prepare,
             PbftPhase::Checking => PbftMessageType::Prepare,
             PbftPhase::Committing => PbftMessageType::Commit,
-            _ => PbftMessageType::Unset,
+            PbftPhase::Finished => PbftMessageType::Unset,
         }
     }
 
@@ -236,12 +234,11 @@ impl PbftState {
     /// Enforces sequential ordering of PBFT phases in normal mode.
     pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Option<PbftPhase> {
         let next = match self.phase {
-            PbftPhase::NotStarted => PbftPhase::PrePreparing,
             PbftPhase::PrePreparing => PbftPhase::Preparing,
             PbftPhase::Preparing => PbftPhase::Checking,
             PbftPhase::Checking => PbftPhase::Committing,
             PbftPhase::Committing => PbftPhase::Finished,
-            PbftPhase::Finished => PbftPhase::NotStarted,
+            PbftPhase::Finished => PbftPhase::PrePreparing,
         };
         if desired_phase == next {
             debug!("{}: Changing to {:?}", self, desired_phase);
@@ -264,7 +261,7 @@ impl PbftState {
         warn!("PbftState::reset: {}", self);
 
         self.working_block = WorkingBlockOption::NoWorkingBlock;
-        self.phase = PbftPhase::NotStarted;
+        self.phase = PbftPhase::PrePreparing;
         self.mode = PbftMode::Normal;
         self.commit_timeout.stop();
         self.idle_timeout.start();
@@ -305,8 +302,8 @@ mod tests {
         assert_eq!(state0.f, 1);
         assert_eq!(state1.f, 1);
 
-        assert_eq!(state0.check_msg_type(), PbftMessageType::Unset);
-        assert_eq!(state1.check_msg_type(), PbftMessageType::Unset);
+        assert_eq!(state0.check_msg_type(), PbftMessageType::PrePrepare);
+        assert_eq!(state1.check_msg_type(), PbftMessageType::PrePrepare);
 
         assert_eq!(state0.get_primary_id(), state0.peer_ids[0]);
         assert_eq!(state1.get_primary_id(), state1.peer_ids[0]);
@@ -326,22 +323,21 @@ mod tests {
     }
 
     /// Make sure that a normal PBFT cycle works properly
-    /// `NotStarted` => `PrePreparing` => `Preparing` => `Committing` => `Finished` => `NotStarted`
+    /// `PrePreparing` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
     /// Also make sure that no illegal phase changes are allowed to happen
-    /// (e.g. `NotStarted` => `Finished`)
+    /// (e.g. `PrePreparing` => `Finished`)
     #[test]
     fn phase_changes() {
         let config = mock_config(4);
         let mut state = PbftState::new(vec![0], 0, &config);
 
-        assert!(state.switch_phase(PbftPhase::PrePreparing).is_some());
         assert!(state.switch_phase(PbftPhase::Preparing).is_some());
         assert!(state.switch_phase(PbftPhase::Checking).is_some());
         assert!(state.switch_phase(PbftPhase::Committing).is_some());
         assert!(state.switch_phase(PbftPhase::Finished).is_some());
-        assert!(state.switch_phase(PbftPhase::NotStarted).is_some());
+        assert!(state.switch_phase(PbftPhase::PrePreparing).is_some());
 
         assert!(state.switch_phase(PbftPhase::Finished).is_none());
-        assert!(state.switch_phase(PbftPhase::Preparing).is_none());
+        assert!(state.switch_phase(PbftPhase::Checking).is_none());
     }
 }
