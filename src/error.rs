@@ -68,6 +68,9 @@ pub enum PbftError {
 
     /// The message should only come from the primary, but was sent by a secondary node
     NotFromPrimary,
+
+    /// Got a PrePrepare without a matching BlockNew
+    NoBlockNew,
 }
 
 impl Error for PbftError {
@@ -87,6 +90,7 @@ impl Error for PbftError {
             NoWorkingBlock => "NoWorkingBlock",
             NotReadyForMessage => "NotReadyForMessage",
             NotFromPrimary => "NotFromPrimary",
+            NoBlockNew => "NoBlockNew",
         }
     }
 }
@@ -124,6 +128,7 @@ impl fmt::Display for PbftError {
                 f,
                 "Message should be from primary, but was sent by secondary"
             ),
+            PbftError::NoBlockNew => write!(f, "Got a PrePrepare without a matching BlockNew"),
         }
     }
 }

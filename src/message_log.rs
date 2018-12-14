@@ -28,7 +28,7 @@ use sawtooth_sdk::consensus::engine::Block;
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
-use crate::message_type::{ParsedMessage, PbftHint, PbftMessageType};
+use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{PbftMessage, PbftMessageInfo};
 use crate::state::PbftState;
 
@@ -250,32 +250,6 @@ impl PbftLog {
         trace!("{}", self);
 
         Ok(())
-    }
-
-    /// Adds a message the (back)log, based on the given `PbftHint`
-    ///
-    /// Past messages are added to the general message log
-    /// Future messages are added to the backlog of messages to handle at a later time
-    /// Present messages are ignored, as they're generally added immediately after
-    /// this method is called by the calling code, except for `PrePrepare` messages
-    #[allow(clippy::ptr_arg)]
-    pub fn add_message_with_hint(
-        &mut self,
-        msg: ParsedMessage,
-        hint: &PbftHint,
-        state: &PbftState,
-    ) -> Result<(), PbftError> {
-        match hint {
-            PbftHint::FutureMessage => {
-                self.push_backlog(msg);
-                Err(PbftError::NotReadyForMessage)
-            }
-            PbftHint::PastMessage => {
-                self.add_message(msg, state)?;
-                Err(PbftError::NotReadyForMessage)
-            }
-            PbftHint::PresentMessage => Ok(()),
-        }
     }
 
     /// Obtain all messages from the log that match a given type and sequence_number

@@ -33,7 +33,7 @@ use crate::error::PbftError;
 use crate::handlers;
 use crate::hash::verify_sha512;
 use crate::message_log::{PbftLog, PbftStableCheckpoint};
-use crate::message_type::{ParsedMessage, PbftHint, PbftMessageType};
+use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
     PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
 };
@@ -80,45 +80,44 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         info!("{}: Got peer message: {}", state, msg.info());
 
-        let msg_type = PbftMessageType::from(msg.info().msg_type.as_str());
-
-        // Handle a multicast protocol message
-        let multicast_hint = if msg_type.is_multicast() {
-            handlers::multicast_hint(state, &msg)
-        } else {
-            PbftHint::PresentMessage
-        };
-
-        match msg_type {
+        match PbftMessageType::from(msg.info().msg_type.as_str()) {
             PbftMessageType::PrePrepare => {
-                if !ignore_hint_pre_prepare(state, &msg) {
-                    self.msg_log
-                        .add_message_with_hint(msg.clone(), &multicast_hint, state)?;
+                // Message is added to log by handler if it is valid
+                match handlers::pre_prepare(state, &mut self.msg_log, &msg) {
+                    Ok(()) => {}
+                    Err(PbftError::NoBlockNew) => {
+                        // We can't perform consensus until the validator has this block
+                        self.msg_log.push_backlog(msg);
+                        return Ok(());
+                    }
+                    err => {
+                        return err;
+                    }
                 }
-
-                handlers::pre_prepare(state, &mut self.msg_log, &msg)?;
 
                 self.broadcast_pre_prepare(&msg, state)?;
             }
 
             PbftMessageType::Prepare => {
-                self.msg_log
-                    .add_message_with_hint(msg.clone(), &multicast_hint, state)?;
-
                 self.msg_log.add_message(msg.clone(), state)?;
 
-                if self.msg_log.check_prepared(&msg.info(), state.f)? {
+                // We only want to check the block if this message is for the current sequence
+                // number
+                if msg.info().get_seq_num() == state.seq_num
+                    && self.msg_log.check_prepared(&msg.info(), state.f)
+                {
                     self.check_blocks_if_not_checking(&msg, state)?;
                 }
             }
 
             PbftMessageType::Commit => {
-                self.msg_log
-                    .add_message_with_hint(msg.clone(), &multicast_hint, state)?;
-
                 self.msg_log.add_message(msg.clone(), state)?;
 
-                if self.msg_log.check_committable(&msg.info(), state.f)? {
+                // We only want to commit the block if this message is for the current sequence
+                // number
+                if msg.info().get_seq_num() == state.seq_num
+                    && self.msg_log.check_committable(&msg.info(), state.f)
+                {
                     self.commit_block_if_committing(&msg, state)?;
                 }
             }
@@ -1049,29 +1048,6 @@ impl PbftNode {
 
 fn check_if_secondary(state: &PbftState) -> bool {
     !state.is_primary() && state.mode != PbftMode::Checkpointing
-}
-
-fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &ParsedMessage) -> bool {
-    if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = state.working_block {
-        if block_id == &pbft_message.get_block().get_block_id()
-            && pbft_message.info().get_seq_num() == state.seq_num + 1
-        {
-            debug!("{}: Ignoring not ready and starting multicast", state);
-            true
-        } else {
-            debug!(
-                "{}: Not starting multicast; ({} != {} or {} != {} + 1)",
-                state,
-                &hex::encode(block_id.clone())[..6],
-                &hex::encode(pbft_message.get_block().get_block_id())[..6],
-                pbft_message.info().get_seq_num(),
-                state.seq_num,
-            );
-            false
-        }
-    } else {
-        false
-    }
 }
 
 /// Create a Protobuf binary representation of a PbftMessage from its info and corresponding Block
