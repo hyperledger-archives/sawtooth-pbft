@@ -35,6 +35,9 @@ pub enum PbftError {
     /// Too many or too few messages recieved so far (expected, got)
     WrongNumMessages(PbftMessageType, usize, usize),
 
+    /// Too many or too few consenus seals found (expected, got)
+    WrongNumSeals(usize, usize),
+
     /// The block in the message doesn't match the one this node was expecting
     BlockMismatch(PbftBlock, PbftBlock),
 
@@ -75,6 +78,7 @@ impl Error for PbftError {
         match self {
             SerializationError(_) => "SerializationError",
             WrongNumMessages(_, _, _) => "WrongNumMessages",
+            WrongNumSeals(_, _) => "WrongNumSeals",
             BlockMismatch(_, _) => "BlockMismatch",
             MessageMismatch(_) => "MessageMismatch",
             ViewMismatch(_, _) => "ViewMismatch",
@@ -99,6 +103,11 @@ impl fmt::Display for PbftError {
                 f,
                 "Wrong number of {:?} messages in this sequence (expected {}, got {})",
                 t, exp, got
+            ),
+            PbftError::WrongNumSeals(exp, got) => write!(
+                f,
+                "Wrong number of consensus seals found (expected {}, got {})",
+                exp, got
             ),
             PbftError::MessageMismatch(t) => write!(f, "{:?} message mismatch", t),
             PbftError::ViewMismatch(exp, got) => write!(f, "View mismatch: {} != {}", exp, got),

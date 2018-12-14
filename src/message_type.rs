@@ -224,7 +224,6 @@ pub enum PbftMessageType {
 
     /// Auxiliary PBFT messages
     BlockNew,
-    Checkpoint,
     ViewChange,
 
     Unset,
@@ -237,7 +236,6 @@ impl fmt::Display for PbftMessageType {
             PbftMessageType::Prepare => "Pr",
             PbftMessageType::Commit => "Co",
             PbftMessageType::BlockNew => "BN",
-            PbftMessageType::Checkpoint => "CP",
             PbftMessageType::ViewChange => "VC",
             PbftMessageType::Unset => "Un",
         };
@@ -265,7 +263,6 @@ impl<'a> From<&'a str> for PbftMessageType {
             "Commit" => PbftMessageType::Commit,
             "BlockNew" => PbftMessageType::BlockNew,
             "ViewChange" => PbftMessageType::ViewChange,
-            "Checkpoint" => PbftMessageType::Checkpoint,
             _ => {
                 warn!("Unhandled PBFT message type: {}", s);
                 PbftMessageType::Unset

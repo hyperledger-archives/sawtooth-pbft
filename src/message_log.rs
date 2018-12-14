@@ -28,35 +28,31 @@ use itertools::Itertools;
 use crate::config::PbftConfig;
 use crate::error::PbftError;
 use crate::message_type::{ParsedMessage, PbftMessageType};
-use crate::protos::pbft_message::{PbftMessage, PbftMessageInfo};
+use crate::protos::pbft_message::{PbftMessageInfo, PbftSeal};
 use crate::state::PbftState;
+use sawtooth_sdk::consensus::engine::BlockId;
 
-/// The log keeps track of the last stable checkpoint
-#[derive(Clone)]
-pub struct PbftStableCheckpoint {
-    pub seq_num: u64,
-    pub checkpoint_messages: Vec<PbftMessage>,
+/// Stores a consensus seal along with its associated sequence number and block ID
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct PbftSealEntry {
+    block_id: BlockId,
+    seq_num: u64,
+    seal: PbftSeal,
 }
 
 /// Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
-    /// Generic messages (BlockNew, PrePrepare, Prepare, Commit, Checkpoint)
+    /// Generic messages (BlockNew, PrePrepare, Prepare, Commit)
     messages: HashSet<ParsedMessage>,
 
     /// Maximum log size, defined from on-chain settings
-    _max_log_size: u64,
-
-    /// How many cycles through the algorithm we've done (BlockNew messages)
-    cycles: u64,
-
-    /// How many cycles in between checkpoints
-    checkpoint_period: u64,
+    max_log_size: u64,
 
     /// Backlog of messages (from peers) with sender's ID
     backlog: VecDeque<ParsedMessage>,
 
-    /// The most recent checkpoint that contains proof
-    pub latest_stable_checkpoint: Option<PbftStableCheckpoint>,
+    /// PBFT consensus seals that are stored in case a view change is needed
+    seals: HashSet<PbftSealEntry>,
 }
 
 impl fmt::Display for PbftLog {
@@ -87,11 +83,9 @@ impl PbftLog {
     pub fn new(config: &PbftConfig) -> Self {
         PbftLog {
             messages: HashSet::new(),
-            cycles: 0,
-            checkpoint_period: config.checkpoint_period,
-            _max_log_size: config.max_log_size,
+            max_log_size: config.max_log_size,
             backlog: VecDeque::new(),
-            latest_stable_checkpoint: None,
+            seals: HashSet::new(),
         }
     }
 
@@ -168,13 +162,9 @@ impl PbftLog {
 
     /// Add a generic PBFT message to the log
     pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) -> Result<(), PbftError> {
-        // Except for Checkpoints and ViewChanges, the message must be for the current view to be
-        // accepted
+        // Except for ViewChanges, the message must be for the current view to be accepted
         let msg_type = PbftMessageType::from(msg.info().get_msg_type());
-        if msg_type != PbftMessageType::Checkpoint
-            && msg_type != PbftMessageType::ViewChange
-            && msg.info().get_view() != state.view
-        {
+        if msg_type != PbftMessageType::ViewChange && msg.info().get_view() != state.view {
             error!(
                 "Got message with mismatched view number; {} != {}",
                 msg.info().get_view(),
@@ -186,15 +176,38 @@ impl PbftLog {
             ));
         }
 
-        // If the message wasn't already in the log, increment cycles
-        let msg_type = PbftMessageType::from(msg.info().get_msg_type());
-        let inserted = self.messages.insert(msg);
-        if msg_type == PbftMessageType::BlockNew && inserted {
-            self.cycles += 1;
-        }
+        self.messages.insert(msg);
         trace!("{}", self);
 
         Ok(())
+    }
+
+    /// Add a PBFT consensus seal to the log
+    pub fn add_consensus_seal(&mut self, block_id: BlockId, seq_num: u64, seal: PbftSeal) {
+        self.seals.insert(PbftSealEntry {
+            block_id,
+            seq_num,
+            seal,
+        });
+    }
+
+    pub fn get_consensus_seal(&self, seq_num: u64) -> Result<PbftSeal, PbftError> {
+        let possible_seals: Vec<_> = self
+            .seals
+            .iter()
+            .filter(|seal| seal.seq_num == seq_num)
+            .cloned()
+            .collect();
+
+        if possible_seals.len() != 1 {
+            error!(
+                "There should be only one valid consensus seal for seq number {}",
+                seq_num as usize,
+            );
+            return Err(PbftError::WrongNumSeals(1, possible_seals.len()));
+        }
+
+        Ok(possible_seals.first().unwrap().clone().seal)
     }
 
     /// Obtain all messages from the log that match a given type and sequence_number
@@ -274,47 +287,28 @@ impl PbftLog {
             .map(|(_, msgs)| msgs)
     }
 
-    /// Get the latest stable checkpoint
-    pub fn get_latest_checkpoint(&self) -> u64 {
-        if let Some(ref cp) = self.latest_stable_checkpoint {
-            cp.seq_num
-        } else {
-            0
+    /// Garbage collect the log after we've committed a block
+    #[allow(clippy::ptr_arg)]
+    pub fn garbage_collect(&mut self, current_seq_num: u64, block_id: &BlockId) {
+        // If we've reached the max log size, filter out all old messages
+        if self.messages.len() as u64 >= self.max_log_size {
+            self.messages = self
+                .messages
+                .iter()
+                .filter(|ref msg| {
+                    // We need to keep messages from the previous sequence number to build the next
+                    // consensus seal
+                    msg.info().get_seq_num() >= current_seq_num - 1
+                })
+                .cloned()
+                .collect();
         }
-    }
 
-    /// Is this node ready for a checkpoint?
-    pub fn at_checkpoint(&self) -> bool {
-        self.cycles >= self.checkpoint_period
-    }
-
-    /// Garbage collect the log, and create a stable checkpoint
-    pub fn garbage_collect(&mut self, stable_checkpoint: u64, view: u64) {
-        self.cycles = 0;
-
-        // Update the stable checkpoint
-        let cp_msgs: Vec<PbftMessage> = self
-            .get_messages_of_type_seq_view(&PbftMessageType::Checkpoint, stable_checkpoint, view)
+        // Remove all seals except for the one in the block we just committed
+        self.seals = self
+            .seals
             .iter()
-            .map(|&cp| cp.get_pbft_message().clone())
-            .collect();
-        let cp = PbftStableCheckpoint {
-            seq_num: stable_checkpoint,
-            checkpoint_messages: cp_msgs,
-        };
-        self.latest_stable_checkpoint = Some(cp);
-
-        // Garbage collect logs, filter out all old messages (up to but not including the
-        // checkpoint)
-        self.messages = self
-            .messages
-            .iter()
-            .filter(|ref msg| {
-                // We need to keep messages from the previous sequence number to build the next
-                // consensus seal
-                let seq_num = msg.info().get_seq_num();
-                seq_num >= self.get_latest_checkpoint() - 1 && seq_num > 0
-            })
+            .filter(|seal| &seal.block_id == block_id)
             .cloned()
             .collect();
     }
@@ -333,7 +327,7 @@ mod tests {
     use super::*;
     use crate::config;
     use crate::hash::hash_sha256;
-    use crate::protos::pbft_message::PbftBlock;
+    use crate::protos::pbft_message::{PbftBlock, PbftMessage};
     use sawtooth_sdk::consensus::engine::PeerId;
 
     /// Create a PbftMessage, given its type, view, sequence number, and who it's from
@@ -408,7 +402,6 @@ mod tests {
         );
         log.add_message(msg.clone(), &state).unwrap();
 
-        assert_eq!(log.cycles, 1);
         assert!(!log.check_prepared(&msg.info(), 1 as u64));
         assert!(!log.check_committable(&msg.info(), 1 as u64));
 
@@ -460,18 +453,8 @@ mod tests {
         }
     }
 
-    /// Make sure that the log doesn't start out checkpointing
-    #[test]
-    fn checkpoint_basics() {
-        let cfg = config::mock_config(4);
-        let log = PbftLog::new(&cfg);
-
-        assert_eq!(log.get_latest_checkpoint(), 0);
-        assert!(!log.at_checkpoint());
-    }
-
     /// Make sure that log garbage collection works as expected
-    /// (All messages up to, but not including, the checkpoint are deleted)
+    /// (All messages up to, but not including, the previous sequence number are deleted)
     #[test]
     fn garbage_collection() {
         let cfg = config::mock_config(4);
@@ -522,19 +505,8 @@ mod tests {
             }
         }
 
-        for peer in 0..4 {
-            let msg = make_msg(
-                &PbftMessageType::Checkpoint,
-                0,
-                4,
-                get_peer_id(&cfg, peer),
-                get_peer_id(&cfg, 0),
-            );
-
-            log.add_message(msg.clone(), &state).unwrap();
-        }
-
-        log.garbage_collect(4, 0);
+        log.max_log_size = 20;
+        log.garbage_collect(5, &BlockId::new());
 
         for old in 1..3 {
             for msg_type in &[
