@@ -115,6 +115,20 @@ pipeline {
             }
         }
 
+        stage('Run dynamic membership tests') {
+            options {
+                timeout(time: 10, unit: 'MINUTES')
+            }
+            steps {
+                sh 'tests/test_dynamic_membership.sh'
+            }
+            post {
+                always {
+                    sh 'docker run --rm -v $(pwd)/target:/target sawtooth-pbft-engine-local:${ISOLATION_ID} bash -c "chown -R ${JENKINS_UID} /target"'
+                }
+            }
+        }
+
         stage("Archive Build artifacts") {
             steps {
                 sh 'docker-compose -f docker-compose-installed.yaml build'

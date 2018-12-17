@@ -31,7 +31,7 @@ function cleanup {
     docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml down --remove-orphans --volumes
     docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml down --remove-orphans --volumes
     docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml down --remove-orphans --volumes
-    GENESIS=1 docker-compose -p ${ISOLATION_ID}-epsilon -f adhoc/node.yaml down --remove-orphans --volumes
+    GENESIS=1 docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml down --remove-orphans --volumes
     docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml down --remove-orphans --volumes
 }
 
@@ -52,7 +52,7 @@ docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml up -d
 docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml up -d
 docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml up -d
 docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml up -d
-GENESIS=1 docker-compose -p ${ISOLATION_ID}-epsilon -f adhoc/node.yaml up -d
+GENESIS=1 docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml up -d
 
 ADMIN=${ISOLATION_ID}_admin_1
 
@@ -150,7 +150,7 @@ echo "-- Beta --"
 docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml logs
 echo "-- Gamma --"
 docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml logs
-echo "-- Epsilon --"
-GENESIS=1 docker-compose -p ${ISOLATION_ID}-epsilon -f adhoc/node.yaml logs
+echo "-- Delta --"
+GENESIS=1 docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml logs
 echo "-- Admin --"
 docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml logs
