@@ -366,14 +366,10 @@ impl PbftNode {
         state: &mut PbftState,
         block: &Block,
         msg: &PbftMessage,
-        head: &Block,
     ) -> Result<bool, PbftError> {
         info!(
-            "{}: Trying catchup from head #{} to #{}, from BlockNew message #{}",
-            state,
-            head.block_num,
-            head.block_num + 1,
-            block.block_num,
+            "{}: Trying catchup to #{} from BlockNew message #{}",
+            state, state.seq_num, block.block_num,
         );
 
         // Don't catch up from block 0 -> 1, since there's no consensus seal.
@@ -408,10 +404,10 @@ impl PbftNode {
                 // Otherwise, we've fallen behind and need to catch up.
                 let any_messages = self
                     .msg_log
-                    .get_enough_messages(&PbftMessageType::Commit, head.block_num + 1, 2 * state.f)
+                    .get_enough_messages(&PbftMessageType::Commit, state.seq_num, 2 * state.f)
                     .is_some();
 
-                if block.block_num == head.block_num + 2
+                if block.block_num == state.seq_num + 1
                     && !block.payload.is_empty()
                     && !any_messages
                 {
@@ -470,7 +466,7 @@ impl PbftNode {
         // has the right sequence number.
         let mut fixed_msg = msg.clone();
         let mut fixed_info = fixed_msg.take_info();
-        fixed_info.set_seq_num(head.block_num);
+        fixed_info.set_seq_num(state.seq_num - 1);
         fixed_msg.set_info(fixed_info);
 
         self.msg_log
@@ -492,11 +488,6 @@ impl PbftNode {
             return Ok(());
         }
 
-        let head = self
-            .service
-            .get_chain_head()
-            .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
-
         info!(
             "{}: Got BlockNew: {} / {}",
             state,
@@ -504,12 +495,10 @@ impl PbftNode {
             hex::encode(&block.block_id[..3]),
         );
 
-        debug!("Head is currently at {}", head.block_num);
-
-        if block.block_num <= head.block_num {
+        if block.block_num < state.seq_num {
             info!(
-                "Ignoring block ({}) that's older than head ({}).",
-                block.block_num, head.block_num
+                "Ignoring block ({}) that's older than current sequence number ({}).",
+                block.block_num, state.seq_num
             );
             return Ok(());
         }
@@ -547,14 +536,14 @@ impl PbftNode {
             }
         }
 
-        if self.try_catchup(state, &block, &msg, &head)? {
+        if self.try_catchup(state, &block, &msg)? {
             return Ok(());
         }
 
         self.msg_log
             .add_message(ParsedMessage::from_pbft_message(msg), state)?;
 
-        if block.block_num == head.block_num + 1 {
+        if block.block_num == state.seq_num {
             state.working_block = Some(pbft_block.clone());
             state.idle_timeout.stop();
             state.commit_timeout.start();
@@ -649,13 +638,8 @@ impl PbftNode {
 
     // ---------- Methods for periodically checking on and updating the state, called by the engine ----------
 
-    fn build_seal(
-        &mut self,
-        state: &PbftState,
-        summary: Vec<u8>,
-        head: Block,
-    ) -> Result<Vec<u8>, PbftError> {
-        info!("{}: Building seal with head at {}", state, head.block_num);
+    fn build_seal(&mut self, state: &PbftState, summary: Vec<u8>) -> Result<Vec<u8>, PbftError> {
+        info!("{}: Building seal for block {}", state, state.seq_num - 1);
 
         let min_votes = 2 * state.f;
         let messages = self
@@ -672,7 +656,7 @@ impl PbftNode {
         let mut seal = PbftSeal::new();
 
         seal.set_summary(summary);
-        seal.set_previous_id(head.block_id);
+        seal.set_previous_id(BlockId::from(messages[0].get_block().get_block_id()));
         seal.set_previous_commit_votes(RepeatedField::from(
             messages
                 .iter()
@@ -717,17 +701,12 @@ impl PbftNode {
             }
         };
 
-        let head = self
-            .service
-            .get_chain_head()
-            .map_err(|err| PbftError::InternalError(format!("Couldn't get chain head: {}", err)))?;
-
-        // We don't publish a consensus seal until block 1, since we never receive any
+        // We don't publish a consensus seal at block 1, since we never receive any
         // votes on the genesis block. Leave payload blank for the first block.
-        let data = if head.block_num < 1 {
+        let data = if state.seq_num <= 1 {
             vec![]
         } else {
-            self.build_seal(state, summary, head)?
+            self.build_seal(state, summary)?
         };
 
         match self.service.finalize_block(data) {
@@ -1102,7 +1081,7 @@ mod tests {
             node.msg_log.add_message(message, state).unwrap();
         }
 
-        block.payload = node.build_seal(state, vec![1, 2, 3], head).unwrap();
+        block.payload = node.build_seal(state, vec![1, 2, 3]).unwrap();
 
         block
     }
@@ -1144,7 +1123,10 @@ mod tests {
         node0.on_block_new(mock_block(1), &mut state0).unwrap();
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.seq_num, 1);
-        assert_eq!(state0.working_block, Some(pbft_block_from_block(mock_block(1))));
+        assert_eq!(
+            state0.working_block,
+            Some(pbft_block_from_block(mock_block(1)))
+        );
 
         // Try the next block
         let mut node1 = mock_node(vec![1]);
@@ -1153,7 +1135,10 @@ mod tests {
             .on_block_new(mock_block(1), &mut state1)
             .unwrap_or_else(handle_pbft_err);
         assert_eq!(state1.phase, PbftPhase::PrePreparing);
-        assert_eq!(state1.working_block, Some(pbft_block_from_block(mock_block(1))));
+        assert_eq!(
+            state1.working_block,
+            Some(pbft_block_from_block(mock_block(1)))
+        );
     }
 
     #[test]
@@ -1196,7 +1181,10 @@ mod tests {
         assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
         assert_eq!(state.f, 1);
         assert_eq!(state.forced_view_change_period, 30);
-        assert_eq!(state.working_block, Some(pbft_block_from_block(mock_block(1))));
+        assert_eq!(
+            state.working_block,
+            Some(pbft_block_from_block(mock_block(1)))
+        );
         assert!(state.is_primary());
 
         state.seq_num += 1;
@@ -1273,13 +1261,10 @@ mod tests {
             node.msg_log.add_message(message, &state).unwrap();
         }
 
-        let seal = node.build_seal(&state, vec![1, 2, 3], head).unwrap();
+        let seal = node.build_seal(&state, vec![1, 2, 3]).unwrap();
         block.payload = seal;
 
         node.on_block_new(block, &mut state).unwrap();
-
-        assert_eq!(state.phase, PbftPhase::PrePreparing);
-        assert_eq!(state.working_block, None);
     }
 
     /// Make sure that receiving a `BlockValid` update works as expected
