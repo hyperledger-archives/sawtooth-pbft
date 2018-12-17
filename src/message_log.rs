@@ -43,13 +43,8 @@ pub struct PbftLog {
     /// Generic messages (BlockNew, PrePrepare, Prepare, Commit, Checkpoint)
     messages: HashSet<ParsedMessage>,
 
-    /// Watermarks (minimum/maximum sequence numbers)
-    /// Ensure that log does not get too large
-    low_water_mark: u64,
-    high_water_mark: u64,
-
     /// Maximum log size, defined from on-chain settings
-    max_log_size: u64,
+    _max_log_size: u64,
 
     /// How many cycles through the algorithm we've done (BlockNew messages)
     cycles: u64,
@@ -84,13 +79,7 @@ impl fmt::Display for PbftLog {
             })
             .collect();
 
-        write!(
-            f,
-            "\nPbftLog ({}, {}):\n{}",
-            self.low_water_mark,
-            self.high_water_mark,
-            string_infos.join("\n")
-        )
+        write!(f, "\nPbftLog:\n{}", string_infos.join("\n"))
     }
 }
 
@@ -98,11 +87,9 @@ impl PbftLog {
     pub fn new(config: &PbftConfig) -> Self {
         PbftLog {
             messages: HashSet::new(),
-            low_water_mark: 0,
             cycles: 0,
             checkpoint_period: config.checkpoint_period,
-            high_water_mark: config.max_log_size,
-            max_log_size: config.max_log_size,
+            _max_log_size: config.max_log_size,
             backlog: VecDeque::new(),
             latest_stable_checkpoint: None,
         }
@@ -181,23 +168,6 @@ impl PbftLog {
 
     /// Add a generic PBFT message to the log
     pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) -> Result<(), PbftError> {
-        // The sequence number must be between the watermarks
-        if msg.info().get_seq_num() >= self.high_water_mark
-            || msg.info().get_seq_num() < self.low_water_mark
-        {
-            error!(
-                "Got message with invalid sequence number: {} is not in range [{},{})",
-                msg.info().get_seq_num(),
-                self.low_water_mark,
-                self.high_water_mark,
-            );
-            return Err(PbftError::InvalidSequenceNumber(
-                msg.info().get_seq_num() as usize,
-                self.low_water_mark as usize,
-                self.high_water_mark as usize,
-            ));
-        }
-
         // Except for Checkpoints and ViewChanges, the message must be for the current view to be
         // accepted
         let msg_type = PbftMessageType::from(msg.info().get_msg_type());
@@ -320,8 +290,6 @@ impl PbftLog {
 
     /// Garbage collect the log, and create a stable checkpoint
     pub fn garbage_collect(&mut self, stable_checkpoint: u64, view: u64) {
-        self.low_water_mark = stable_checkpoint;
-        self.high_water_mark = self.low_water_mark + self.max_log_size;
         self.cycles = 0;
 
         // Update the stable checkpoint
