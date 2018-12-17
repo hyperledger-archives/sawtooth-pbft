@@ -28,7 +28,7 @@ use crate::message_log::PbftLog;
 use crate::message_type::ParsedMessage;
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{PbftBlock, PbftMessageInfo};
-use crate::state::{PbftPhase, PbftState, WorkingBlockOption};
+use crate::state::{PbftPhase, PbftState};
 
 /// Handle a `PrePrepare` message
 ///
@@ -85,7 +85,7 @@ pub fn pre_prepare(
     // We only switch to Preparing if this is the PrePrepare for the current sequence number
     if message.info().get_seq_num() == state.seq_num {
         state.switch_phase(PbftPhase::Preparing);
-        state.working_block = WorkingBlockOption::WorkingBlock(message.get_block().clone());
+        state.working_block = Some(message.get_block().clone());
     }
 
     Ok(())
@@ -111,7 +111,6 @@ pub fn commit(
         .map_err(|e| PbftError::InternalError(format!("Failed to commit block: {:?}", e)))?;
 
     state.switch_phase(PbftPhase::Finished);
-    state.working_block = WorkingBlockOption::NoWorkingBlock;
 
     Ok(())
 }
@@ -190,7 +189,7 @@ fn become_primary(state: &mut PbftState, service: &mut Service) {
 
     // If we're the new primary, need to clean up the block mess from the view change and
     // initialize a new block.
-    if let WorkingBlockOption::WorkingBlock(ref working_block) = state.working_block {
+    if let Some(ref working_block) = state.working_block {
         info!(
             "{}: Ignoring block {}",
             state,
@@ -198,11 +197,6 @@ fn become_primary(state: &mut PbftState, service: &mut Service) {
         );
         service
             .ignore_block(working_block.get_block_id().to_vec())
-            .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
-    } else if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = state.working_block {
-        info!("{}: Ignoring block {}", state, &hex::encode(block_id));
-        service
-            .ignore_block(block_id.clone())
             .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
     }
     info!("{}: Initializing block", state);
