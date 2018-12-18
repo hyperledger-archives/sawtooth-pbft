@@ -557,47 +557,60 @@ impl PbftNode {
     }
 
     /// Handle a `BlockCommit` update from the Validator
-    /// Since the block was successfully committed, the primary is not faulty and the view change
-    /// timer can be stopped. If this node is a primary, then initialize a new block. Both node
-    /// roles transition back to the `NotStarted` phase.
+    ///
+    /// A block was sucessfully committed; update state to be ready for the next block, make any
+    /// necessary view and membership changes, garbage collect the logs, update the commit & idle
+    /// timers, and start a new block if this node is the primary.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn on_block_commit(
-        &mut self,
-        block_id: BlockId,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
+    pub fn on_block_commit(&mut self, block_id: BlockId, state: &mut PbftState) {
         debug!("{}: <<<<<< BlockCommit: {:?}", state, block_id);
 
-        if state.phase == PbftPhase::Finished {
-            if state.is_primary() {
-                info!(
-                    "{}: Initializing block with previous ID {:?}",
-                    state, block_id
-                );
-                self.service
-                    .initialize_block(Some(block_id.clone()))
-                    .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
-            }
+        let is_working_block = match state.working_block {
+            Some(ref block) => BlockId::from(block.get_block_id()) == block_id,
+            None => false,
+        };
 
-            state.switch_phase(PbftPhase::PrePreparing);
-            state.working_block = None;
-            state.seq_num += 1;
-
-            // Start a view change if we need to force one for fairness or if membership changed
-            if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
-                self.force_view_change(state);
-            }
-
-            self.msg_log.garbage_collect(state.seq_num, &block_id);
-        } else {
-            debug!("{}: Not doing anything with BlockCommit", state);
+        if state.phase != PbftPhase::Finished || !is_working_block {
+            info!(
+                "{}: Got BlockCommit for a block that isn't the working block",
+                state
+            );
+            return;
         }
+
+        // Update state to be ready for next block
+        state.switch_phase(PbftPhase::PrePreparing);
+        state.seq_num += 1;
+
+        // If we already have a BlockNew for the next block, we can make it the working block;
+        // otherwise just set the working block to None
+        state.working_block = self
+            .msg_log
+            .get_messages_of_type_seq(&PbftMessageType::BlockNew, state.seq_num)
+            .first()
+            .map(|msg| msg.get_block().clone());
+
+        // Start a view change if we need to force one for fairness or if membership changed
+        if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
+            self.force_view_change(state);
+        }
+
+        // Tell the log to garbage collect if it needs to
+        self.msg_log.garbage_collect(state.seq_num, &block_id);
 
         // The primary processessed this block in a timely manner, so stop the timeout.
         state.commit_timeout.stop();
         state.idle_timeout.start();
 
-        Ok(())
+        if state.is_primary() && state.working_block.is_none() {
+            info!(
+                "{}: Initializing block with previous ID {:?}",
+                state, block_id
+            );
+            self.service
+                .initialize_block(Some(block_id.clone()))
+                .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+        }
     }
 
     /// Handle a `BlockValid` update
@@ -1287,10 +1300,11 @@ mod tests {
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         state0.phase = PbftPhase::Finished;
+        state0.working_block = Some(pbft_block_from_block(mock_block(1)));
         assert_eq!(state0.seq_num, 1);
-        node.on_block_commit(mock_block_id(1), &mut state0)
-            .unwrap_or_else(handle_pbft_err);
+        node.on_block_commit(mock_block_id(1), &mut state0);
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
+        assert_eq!(state0.working_block, None);
         assert_eq!(state0.seq_num, 2);
     }
 
@@ -1345,7 +1359,7 @@ mod tests {
         assert_eq!(state1.phase, PbftPhase::Finished);
 
         // Spoof the `commit_blocks()` call
-        assert!(node1.on_block_commit(mock_block_id(1), &mut state1).is_ok());
+        node1.on_block_commit(mock_block_id(1), &mut state1);
         assert_eq!(state1.phase, PbftPhase::PrePreparing);
 
         // Make sure the block was actually committed
