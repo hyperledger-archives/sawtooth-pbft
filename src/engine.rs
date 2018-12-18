@@ -52,10 +52,14 @@ impl Engine for PbftEngine {
         } = startup_state;
 
         // Load on-chain settings
-        let config = config::load_pbft_config(chain_head.block_id, &mut *service);
+        let config = config::load_pbft_config(chain_head.block_id.clone(), &mut *service);
 
         let mut pbft_state = get_storage(&config.storage, || {
-            PbftState::new(local_peer_info.peer_id.clone(), &config)
+            PbftState::new(
+                local_peer_info.peer_id.clone(),
+                chain_head.block_num,
+                &config,
+            )
         })
         .expect("Couldn't load state!");
 

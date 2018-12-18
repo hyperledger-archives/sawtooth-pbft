@@ -18,10 +18,9 @@
 //! Handlers for individual message types
 
 use std::convert::From;
-use std::error::Error;
 
 use hex;
-use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId};
+use sawtooth_sdk::consensus::engine::{Block, PeerId};
 use sawtooth_sdk::consensus::service::Service;
 
 use error::PbftError;
@@ -32,193 +31,86 @@ use protos::pbft_message::{PbftBlock, PbftMessageInfo};
 use state::{PbftPhase, PbftState, WorkingBlockOption};
 
 /// Handle a `PrePrepare` message
-/// A `PrePrepare` message with this view and sequence number must not already exist in the log.
-/// Make sure there's a corresponding BlockNew message.
+///
+/// A `PrePrepare` message is accepted and added to the log if the following are true:
+/// - The message signature is valid (already verified by validator)
+/// - The message is from the primary
+/// - There is a matching BlockNew message
+/// - A `PrePrepare` message does not already exist at this view and sequence number with a
+///   different block
+/// - The message's view matches the node's current view (handled by message log)
+/// - The sequence number is between the low and high watermarks (handled by message log)
+///
+/// If a `PrePrepare` message is accepted, we update the phase and working block
 pub fn pre_prepare(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
     message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    let info = message.info();
-
-    check_view_mismatch(state, info)?;
-
-    check_pre_prepare_does_not_exist(msg_log, info)?;
-
-    check_pre_prepare_matches_original_block_new(msg_log, message)?;
-
-    set_current_working_block(state, message);
-
-    state.seq_num = info.get_seq_num();
-
-    Ok(())
-}
-
-fn check_view_mismatch(state: &PbftState, info: &PbftMessageInfo) -> Result<(), PbftError> {
-    if info.get_view() != state.view {
-        Err(PbftError::ViewMismatch(
-            info.get_view() as usize,
-            state.view as usize,
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn check_pre_prepare_does_not_exist(
-    msg_log: &PbftLog,
-    info: &PbftMessageInfo,
-) -> Result<(), PbftError> {
-    // Check that this PrePrepare doesn't already exist
-    let existing_pre_prep_msgs = msg_log.get_messages_of_type_seq_view(
-        &PbftMessageType::PrePrepare,
-        info.get_seq_num(),
-        info.get_view(),
-    );
-
-    if !existing_pre_prep_msgs.is_empty() {
-        return Err(PbftError::MessageExists(PbftMessageType::PrePrepare));
+    // Check that message is from the current primary
+    if PeerId::from(message.info().get_signer_id()) != state.get_primary_id() {
+        error!(
+            "Got PrePrepare from a secondary node {:?}; ignoring message",
+            message.info().get_signer_id()
+        );
+        return Err(PbftError::NotFromPrimary);
     }
 
-    Ok(())
-}
-
-fn check_pre_prepare_matches_original_block_new(
-    msg_log: &PbftLog,
-    message: &ParsedMessage,
-) -> Result<(), PbftError> {
-    let block_new_msgs =
-        msg_log.get_messages_of_type_seq(&PbftMessageType::BlockNew, message.info().get_seq_num());
-
-    if block_new_msgs.len() != 1 {
-        return Err(PbftError::WrongNumMessages(
-            PbftMessageType::BlockNew,
-            1,
-            block_new_msgs.len(),
-        ));
+    // Check that there is a matching BlockNew message
+    let block_new_exists = msg_log
+        .get_messages_of_type_seq(&PbftMessageType::BlockNew, message.info().get_seq_num())
+        .iter()
+        .any(|block_new_msg| block_new_msg.get_block() == message.get_block());
+    if !block_new_exists {
+        error!("No matching BlockNew found for PrePrepare {:?}", message);
+        return Err(PbftError::WrongNumMessages(PbftMessageType::BlockNew, 1, 0));
     }
 
-    if block_new_msgs[0].get_block() != message.get_block() {
-        return Err(PbftError::BlockMismatch(
-            block_new_msgs[0].get_block().clone(),
-            message.get_block().clone(),
-        ));
+    // Check that a `PrePrepare` doesn't already exist with this view and sequence number but a
+    // different block
+    if let Some(existing_msg) = msg_log.get_one_msg(message.info(), &PbftMessageType::PrePrepare) {
+        if existing_msg.get_block() != message.get_block() {
+            // If the blocks don't match between two PrePrepares with the same view and
+            // sequence number, the primary is faulty
+            error!("Found two PrePrepares at view {} and seq num {} with different blocks: {:?} and {:?}", message.info().get_view(), message.info().get_seq_num(), existing_msg.get_block(), message.get_block());
+            return Err(PbftError::BlockMismatch(
+                existing_msg.get_block().clone(),
+                message.get_block().clone(),
+            ));
+        }
     }
 
-    Ok(())
-}
+    msg_log.add_message(message.clone(), state)?;
 
-fn set_current_working_block(state: &mut PbftState, message: &ParsedMessage) {
+    state.switch_phase(PbftPhase::Preparing);
     state.working_block = WorkingBlockOption::WorkingBlock(message.get_block().clone());
+
+    Ok(())
 }
 
 /// Handle a `Commit` message
-/// Once a `2f + 1` `Commit` messages are received, the primary node can commit the block to the
-/// chain. If the block in the message isn't the one that belongs on top of the current chain head,
-/// then the message gets pushed to the backlog.
+///
+/// We have received `2f + 1` `Commit` messages so we are ready to commit the block to the chain.
 #[allow(clippy::ptr_arg)]
 pub fn commit(
     state: &mut PbftState,
-    msg_log: &mut PbftLog,
     service: &mut Service,
     message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    let working_block = clone_working_block(state)?;
-
-    state.switch_phase(PbftPhase::Finished);
-
-    check_if_block_already_seen(state, &working_block, message)?;
-
-    check_if_commiting_with_current_chain_head(state, msg_log, service, message, &working_block)?;
-
     info!(
         "{}: Committing block {:?}",
         state,
         message.get_block().block_id.clone()
     );
 
-    commit_block_from_message(service, message)?;
-
-    reset_working_block(state);
-
-    Ok(())
-}
-
-fn clone_working_block(state: &PbftState) -> Result<PbftBlock, PbftError> {
-    if let WorkingBlockOption::WorkingBlock(ref wb) = state.working_block {
-        Ok(wb.clone())
-    } else {
-        Err(PbftError::NoWorkingBlock)
-    }
-}
-
-fn check_if_block_already_seen(
-    state: &PbftState,
-    working_block: &PbftBlock,
-    message: &ParsedMessage,
-) -> Result<(), PbftError> {
-    let block = message.get_block();
-    let block_id = &block.block_id;
-    // Don't commit if we've seen this block already, but go ahead if we somehow
-    // skipped a block.
-    if block_id != &working_block.get_block_id()
-        && block.get_block_num() >= working_block.get_block_num()
-    {
-        warn!("{}: Not committing block {:?}", state, block_id);
-        Err(PbftError::BlockMismatch(
-            block.clone(),
-            working_block.clone(),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-#[allow(clippy::ptr_arg)]
-fn check_if_commiting_with_current_chain_head(
-    state: &mut PbftState,
-    msg_log: &mut PbftLog,
-    service: &mut Service,
-    message: &ParsedMessage,
-    working_block: &PbftBlock,
-) -> Result<(), PbftError> {
-    let block = message.get_block();
-    let block_id = block.get_block_id().to_vec();
-
-    let head = service
-        .get_chain_head()
-        .map_err(|e| PbftError::InternalError(e.description().to_string()))?;
-
-    let cur_block = get_block_by_id(&mut *service, &block_id.to_vec())
-        .ok_or_else(|| PbftError::WrongNumBlocks)?;
-
-    if cur_block.previous_id != head.block_id {
-        warn!(
-            "{}: Not committing block {:?} but pushing to backlog",
-            state,
-            block_id.clone()
-        );
-        msg_log.push_backlog(message.clone());
-        Err(PbftError::BlockMismatch(
-            block.clone(),
-            working_block.clone(),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn commit_block_from_message(
-    service: &mut Service,
-    message: &ParsedMessage,
-) -> Result<(), PbftError> {
     service
         .commit_block(message.get_block().block_id.clone())
-        .map_err(|_| PbftError::InternalError(String::from("Failed to commit block")))
-}
+        .map_err(|e| PbftError::InternalError(format!("Failed to commit block: {:?}", e)))?;
 
-fn reset_working_block(state: &mut PbftState) {
+    state.switch_phase(PbftPhase::Finished);
     state.working_block = WorkingBlockOption::NoWorkingBlock;
+
+    Ok(())
 }
 
 /// Decide if this message is a future message, past message, or current message.
@@ -383,22 +275,6 @@ fn become_secondary(state: &mut PbftState) {
     state.downgrade_role();
 }
 
-#[allow(clippy::ptr_arg)]
-// There should only be one block with a matching ID
-fn get_block_by_id(service: &mut Service, block_id: &BlockId) -> Option<Block> {
-    let blocks: Vec<Block> = service
-        .get_blocks(vec![block_id.clone()])
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(_block_id, block)| block)
-        .collect();
-    if blocks.is_empty() {
-        None
-    } else {
-        Some(blocks[0].clone())
-    }
-}
-
 /// Create a PbftMessageInfo struct with the desired type, view, sequence number, and signer ID
 pub fn make_msg_info(
     msg_type: &PbftMessageType,
@@ -431,6 +307,7 @@ mod tests {
     use config;
     use hash::hash_sha256;
     use protos::pbft_message::PbftMessage;
+    use sawtooth_sdk::consensus::engine::BlockId;
 
     fn mock_block_id(num: u64) -> BlockId {
         BlockId::from(hash_sha256(
@@ -466,8 +343,8 @@ mod tests {
     #[test]
     fn test_pre_prepare() {
         let cfg = config::mock_config(4);
-        let mut state0 = PbftState::new(vec![0], &cfg);
-        let mut state1 = PbftState::new(vec![1], &cfg);
+        let mut state0 = PbftState::new(vec![0], 0, &cfg);
+        let mut state1 = PbftState::new(vec![1], 0, &cfg);
         let mut log0 = PbftLog::new(&cfg);
         let mut log1 = PbftLog::new(&cfg);
 
@@ -478,11 +355,11 @@ mod tests {
 
         // Put the block new in the log
         let block_new0 = mock_msg(&PbftMessageType::BlockNew, 0, 1, mock_block(1), vec![0]);
-        log0.add_message(block_new0, &state0);
+        log0.add_message(block_new0, &state0).unwrap();
         state0.seq_num = 1;
 
         let block_new1 = mock_msg(&PbftMessageType::BlockNew, 0, 1, mock_block(1), vec![0]);
-        log1.add_message(block_new1, &state1);
+        log1.add_message(block_new1, &state1).unwrap();
 
         assert!(pre_prepare(&mut state0, &mut log0, &pre_prep_msg).is_ok());
         assert!(pre_prepare(&mut state1, &mut log1, &pre_prep_msg).is_ok());
@@ -494,7 +371,7 @@ mod tests {
     #[test]
     fn test_multicast_hint() {
         let cfg = config::mock_config(4);
-        let mut state = PbftState::new(vec![0], &cfg);
+        let mut state = PbftState::new(vec![0], 0, &cfg);
         state.seq_num = 5;
 
         // Past (past sequence number)
