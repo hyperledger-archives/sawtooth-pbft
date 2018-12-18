@@ -41,7 +41,7 @@ use crate::state::{PbftPhase, PbftState};
 /// - The message's view matches the node's current view (handled by message log)
 /// - The sequence number is between the low and high watermarks (handled by message log)
 ///
-/// If a `PrePrepare` message is accepted, we update the phase and working block
+/// If a `PrePrepare` message is accepted, we update the phase
 pub fn pre_prepare(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
@@ -85,7 +85,6 @@ pub fn pre_prepare(
     // We only switch to Preparing if this is the PrePrepare for the current sequence number
     if message.info().get_seq_num() == state.seq_num {
         state.switch_phase(PbftPhase::Preparing);
-        state.working_block = Some(message.get_block().clone());
     }
 
     Ok(())
