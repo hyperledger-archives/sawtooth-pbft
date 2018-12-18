@@ -129,6 +129,13 @@ pipeline {
             }
         }
 
+        stage("Build Docs") {
+            steps {
+                sh 'docker build . -f docs/Dockerfile -t sawtooth-pbft-docs:$ISOLATION_ID'
+                sh 'docker run --rm -v $(pwd):/project/sawtooth-pbft sawtooth-pbft-docs:$ISOLATION_ID'
+            }
+        }
+
         stage("Archive Build artifacts") {
             steps {
                 sh 'docker-compose -f docker-compose-installed.yaml build'
@@ -142,7 +149,7 @@ pipeline {
             sh 'docker-compose down'
         }
         success {
-            archiveArtifacts 'build/*.deb'
+            archiveArtifacts 'build/*.deb, docs/build/html/**, docs/build/latex/*.pdf'
         }
     }
 }

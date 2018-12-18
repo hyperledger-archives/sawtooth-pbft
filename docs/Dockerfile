@@ -59,3 +59,4 @@ ENV PATH=$PATH:/protoc3/bin:/root/.cargo/bin:/project/cli/target/debug \
     CARGO_INCREMENTAL=0
 
 WORKDIR /project/sawtooth-pbft/docs
+CMD make html latexpdf
