@@ -28,16 +28,16 @@ use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
 
-use config::{get_peers_from_settings, PbftConfig};
-use error::PbftError;
-use handlers;
-use hash::verify_sha512;
-use message_log::{PbftLog, PbftStableCheckpoint};
-use message_type::{ParsedMessage, PbftHint, PbftMessageType};
-use protos::pbft_message::{
+use crate::config::{get_peers_from_settings, PbftConfig};
+use crate::error::PbftError;
+use crate::handlers;
+use crate::hash::verify_sha512;
+use crate::message_log::{PbftLog, PbftStableCheckpoint};
+use crate::message_type::{ParsedMessage, PbftHint, PbftMessageType};
+use crate::protos::pbft_message::{
     PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
 };
-use state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
+use crate::state::{PbftMode, PbftPhase, PbftState, WorkingBlockOption};
 
 /// Contains all of the components for operating a PBFT node.
 pub struct PbftNode {
@@ -1100,9 +1100,9 @@ fn pbft_block_from_block(block: Block) -> PbftBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::mock_config;
-    use handlers::make_msg_info;
-    use hash::{hash_sha256, hash_sha512};
+    use crate::config::mock_config;
+    use crate::handlers::make_msg_info;
+    use crate::hash::{hash_sha256, hash_sha512};
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
     use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
     use serde_json;

@@ -21,6 +21,7 @@ description = "PBFT consensus algorithm for Hyperledger Sawtooth"
 license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/hyperledger/sawtooth-pbft"
+edition = "2018"
 
 [package.metadata.deb]
 maintainer = "sawtooth"

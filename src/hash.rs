@@ -1,7 +1,7 @@
 /// Contains common hashing functions
 use openssl::sha::{Sha256, Sha512};
 
-use error::PbftError;
+use crate::error::PbftError;
 
 /// Hashes the given bytes with SHA-256
 pub fn hash_sha256(bytes: &[u8]) -> Vec<u8> {

@@ -22,10 +22,10 @@ use std::fmt;
 use hex;
 use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
 
-use config::PbftConfig;
-use message_type::PbftMessageType;
-use protos::pbft_message::PbftBlock;
-use timing::Timeout;
+use crate::config::PbftConfig;
+use crate::message_type::PbftMessageType;
+use crate::protos::pbft_message::PbftBlock;
+use crate::timing::Timeout;
 
 // Possible roles for a node
 // Primary is in charge of making consensus decisions
@@ -274,7 +274,7 @@ impl PbftState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::mock_config;
+    use crate::config::mock_config;
 
     /// Check that state responds to having an inadequately sized network
     #[test]
