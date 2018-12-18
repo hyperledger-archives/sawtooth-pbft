@@ -358,71 +358,39 @@ impl PbftNode {
         Ok(Some(seal))
     }
 
-    /// Attempts to catch this node up with its peers, if necessary
-    ///
-    /// Returns true if catching up was required, and false otherwise
-    fn try_catchup(
-        &mut self,
-        state: &mut PbftState,
-        block: &Block,
-        msg: &PbftMessage,
-    ) -> Result<bool, PbftError> {
+    /// Use the given block's consensus seal to verify and commit the block this node is working on
+    fn catchup(&mut self, state: &mut PbftState, block: &Block) -> Result<(), PbftError> {
         info!(
             "{}: Trying catchup to #{} from BlockNew message #{}",
             state, state.seq_num, block.block_num,
         );
 
-        // Don't catch up from block 0 -> 1, since there's no consensus seal.
-        if block.block_num < 2 {
-            return Ok(false);
-        }
-
-        // If we've got a working block, and the new block is immediately subsequent to it, then
-        // we're able to catch up. Otherwise, return false to signify that no catching up occurred.
-        match state.working_block.clone() {
-            Some(working_block) => {
+        match state.working_block {
+            Some(ref working_block) => {
                 let block_num_matches = block.block_num == working_block.get_block_num() + 1;
                 let block_id_matches = block.previous_id == working_block.get_block_id();
 
                 if !block_num_matches || !block_id_matches {
-                    debug!(
-                        "Block didn't match for catchup, skipping: {} {}",
-                        block_num_matches, block_id_matches
+                    error!(
+                        "Block didn't match for catchup: {:?} {:?}",
+                        block, working_block
                     );
-                    return Ok(false);
-                } else {
-                    debug!("Catching up from working block");
+                    return Err(PbftError::BlockMismatch(
+                        pbft_block_from_block(block.clone()),
+                        working_block.clone(),
+                    ));
                 }
             }
             None => {
-                // If we've crashed and don't have persistent logs, we'll end up getting a
-                // new block with no working block. Or if the timing is right during regular
-                // catchup, we could end up with no working block during a BlockNew. However,
-                // we also have no working block here in the normal course of operations. So,
-                // we check to see if there's any logs for the new block. If there are, then
-                // we skip catchup since the node will process this new block normally.
-                // Otherwise, we've fallen behind and need to catch up.
-                let any_messages = self
-                    .msg_log
-                    .get_enough_messages(&PbftMessageType::Commit, state.seq_num, 2 * state.f)
-                    .is_some();
-
-                if block.block_num == state.seq_num + 1
-                    && !block.payload.is_empty()
-                    && !any_messages
-                {
-                    debug!("{}: Catching up from no working block", state);
-                    state.working_block = Some(msg.get_block().clone());
-                } else {
-                    debug!("{}: Skipping catchup due to no working block", state);
-                    return Ok(false);
-                }
+                error!(
+                    "Trying to catch up, but node does not have block #{} yet",
+                    state.seq_num
+                );
+                return Err(PbftError::NoWorkingBlock);
             }
-        };
+        }
 
-        info!("{}: Catching up to block #{}", state, block.block_num - 1);
-
-        // Parse messages from seal, and add them to the backlog
+        // Parse messages from the seal
         let seal: PbftSeal =
             protobuf::parse_from_bytes(&block.payload).map_err(PbftError::SerializationError)?;
 
@@ -437,57 +405,40 @@ impl PbftNode {
                     Ok(msgs)
                 })?;
 
+        // Update our view if necessary
         let view = messages[0].info().get_view();
-        if state.view != view {
+        if view > state.view {
             info!("Updating view from {} to {}.", state.view, view);
             state.view = view;
         }
 
-        // Add messages to backlog so that `handlers::commit` can process a commit
-        // message normally
+        // Add messages to the log
         for message in &messages {
             self.msg_log.add_message(message.clone(), state)?;
         }
 
-        // Commit the new block, using one of the parsed messages to simulate
-        // having received a regular commit message.
+        // Skip straight to the Committing phase and Commit the new block using one of the parsed
+        // messages to simulate having received a regular commit message
+        state.phase = PbftPhase::Committing;
         handlers::commit(
             state,
             &mut *self.service,
             &messages[0].as_msg_type(PbftMessageType::Commit),
         )?;
 
-        // Start a view change if we need to force one for fairness
-        if state.at_forced_view_change() {
-            self.force_view_change(state);
-        }
+        // Call on_block_commit right away so we're ready to catch up again if necessary
+        self.on_block_commit(BlockId::from(messages[0].get_block().get_block_id()), state);
 
-        // Ensure that the message that we generated from the BlockNew message
-        // has the right sequence number.
-        let mut fixed_msg = msg.clone();
-        let mut fixed_info = fixed_msg.take_info();
-        fixed_info.set_seq_num(state.seq_num - 1);
-        fixed_msg.set_info(fixed_info);
-
-        self.msg_log
-            .add_message(ParsedMessage::from_pbft_message(fixed_msg), state)?;
-        state.working_block = Some(pbft_block_from_block(block.clone()));
-        state.idle_timeout.stop();
-        state.commit_timeout.start();
-
-        Ok(true)
+        Ok(())
     }
 
-    /// Creates a new working block on the working block queue and kicks off the consensus algorithm
-    /// by broadcasting a `PrePrepare` message to peers. Starts a view change timer, just in case
-    /// the primary decides not to commit this block. If a `BlockCommit` update doesn't happen in a
-    /// timely fashion, then the primary can be considered faulty and a view change should happen.
+    /// Handle a `BlockNew` update from the Validator
+    ///
+    /// The validator has received a new block; verify the block's consensus seal and add the
+    /// BlockNew to the message log. If this is the block we are waiting for: set it as the working
+    /// block, update the idle & commit timers, and broadcast a PrePrepare if this node is the
+    /// primary. If this is the block after the one this node is working on, use it to catch up.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
-        if block.block_num == 0 {
-            info!("Got genesis block as BlockNew; skipping");
-            return Ok(());
-        }
-
         info!(
             "{}: Got BlockNew: {} / {}",
             state,
@@ -502,19 +453,6 @@ impl PbftNode {
             );
             return Ok(());
         }
-
-        let mut msg = PbftMessage::new();
-
-        msg.set_info(handlers::make_msg_info(
-            &PbftMessageType::BlockNew,
-            state.view,
-            block.block_num,
-            state.id.clone(),
-        ));
-
-        let pbft_block = pbft_block_from_block(block.clone());
-
-        msg.set_block(pbft_block.clone());
 
         match self.verify_consensus_seal(&block, state) {
             Ok(Some(seal)) => {
@@ -536,23 +474,39 @@ impl PbftNode {
             }
         }
 
-        if self.try_catchup(state, &block, &msg)? {
-            return Ok(());
-        }
+        // Create PBFT message for BlockNew and add it to the log
+        let mut msg = PbftMessage::new();
+        msg.set_info(handlers::make_msg_info(
+            &PbftMessageType::BlockNew,
+            state.view,
+            block.block_num,
+            state.id.clone(),
+        ));
+
+        let pbft_block = pbft_block_from_block(block.clone());
+        msg.set_block(pbft_block.clone());
 
         self.msg_log
-            .add_message(ParsedMessage::from_pbft_message(msg), state)?;
+            .add_message(ParsedMessage::from_pbft_message(msg.clone()), state)?;
 
-        if block.block_num == state.seq_num {
-            state.working_block = Some(pbft_block.clone());
+        // We can use this block's seal to commit the next block (i.e. catch-up) if it's the block
+        // after the one we're waiting for and we haven't already told the validator to commit the
+        // block we're waiting for
+        if block.block_num == state.seq_num + 1 && state.phase != PbftPhase::Finished {
+            self.catchup(state, &block)?;
+        } else if block.block_num == state.seq_num {
+            // This is the block we're waiting for, so we update state
+            state.working_block = Some(msg.get_block().clone());
             state.idle_timeout.stop();
             state.commit_timeout.start();
+
+            // Send PrePrepare messages if we're the primary
+            if state.is_primary() {
+                let s = state.seq_num;
+                self._broadcast_pbft_message(s, &PbftMessageType::PrePrepare, pbft_block, state)?;
+            }
         }
 
-        if state.is_primary() {
-            let s = state.seq_num;
-            self._broadcast_pbft_message(s, &PbftMessageType::PrePrepare, pbft_block, state)?;
-        }
         Ok(())
     }
 
@@ -1205,14 +1159,8 @@ mod tests {
         // Handle the rest of the blocks
         for i in 2..10 {
             assert_eq!(state.seq_num, i);
-            let block_ids = (i - 2..i + 1).map(mock_block_id).collect::<Vec<_>>();
             let block = mock_block_with_seal(i, &mut node, &mut state);
             node.on_block_new(block.clone(), &mut state).unwrap();
-
-            let head = node.service.get_chain_head().unwrap();
-            assert_eq!(head.block_num, i - 1);
-            assert_eq!(head.block_id, block_ids[1]);
-            assert_eq!(head.previous_id, block_ids[0]);
 
             assert_eq!(state.id, vec![0]);
             assert_eq!(state.view, 0);
