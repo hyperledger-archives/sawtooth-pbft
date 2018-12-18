@@ -152,8 +152,6 @@ pub fn force_view_change(state: &mut PbftState, service: &mut Service) {
     } else {
         become_secondary(state)
     }
-
-    state.discard_current_block();
 }
 
 fn check_received_enough_view_changes(
