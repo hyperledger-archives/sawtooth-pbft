@@ -123,22 +123,30 @@ impl PbftNode {
             }
 
             PbftMessageType::ViewChange => {
-                let info = msg.info();
-                debug!(
-                    "{}: Received ViewChange message from Node {:?} (v {}, seq {})",
-                    state,
-                    PeerId::from(info.get_signer_id()),
-                    info.get_view(),
-                    info.get_seq_num(),
-                );
-
-                self.msg_log.add_message(msg.clone(), state)?;
-
-                if self.propose_view_change_if_enough_messages(&msg, state)? {
+                // Ignore old view change messages
+                if msg.info().get_view() <= state.view {
                     return Ok(());
                 }
 
-                handlers::view_change(state, &mut self.msg_log, &mut *self.service, &msg)?;
+                self.msg_log.add_message(msg.clone(), state)?;
+
+                if state.mode == PbftMode::ViewChanging {
+                    handlers::view_change(state, &mut self.msg_log, &mut *self.service, &msg)?
+                } else {
+                    // Even if we haven't detected a faulty primary yet, start view changing if
+                    // we've received f + 1 ViewChange messages for the next view; this will
+                    // prevent starting the view change too late
+                    if msg.info().get_view() == state.view + 1
+                        && self.msg_log.log_has_required_msgs(
+                            &PbftMessageType::ViewChange,
+                            &msg,
+                            false,
+                            state.f + 1,
+                        )
+                    {
+                        self.propose_view_change(state)?;
+                    }
+                }
             }
 
             _ => warn!("Message type not implemented"),
@@ -195,32 +203,6 @@ impl PbftNode {
                 msg.get_block().block_id
             );
             Ok(())
-        }
-    }
-
-    fn propose_view_change_if_enough_messages(
-        &mut self,
-        message: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<bool, PbftError> {
-        if state.mode != PbftMode::ViewChanging {
-            // Even if our own timer hasn't expired, still do a ViewChange if we've received
-            // f + 1 VC messages to prevent being late to the new view party
-            if self.msg_log.log_has_required_msgs(
-                &PbftMessageType::ViewChange,
-                message,
-                false,
-                state.f + 1,
-            ) && message.info().get_view() > state.view
-            {
-                warn!("{}: Starting ViewChange from a ViewChange message", state);
-                self.propose_view_change(state)?;
-                Ok(false)
-            } else {
-                Ok(true)
-            }
-        } else {
-            Ok(false)
         }
     }
 
@@ -542,9 +524,10 @@ impl PbftNode {
             .first()
             .map(|msg| msg.get_block().clone());
 
-        // Start a view change if we need to force one for fairness or if membership changed
+        // Increment the view if we need to force a view change for fairness or if membership
+        // has changed
         if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
-            self.force_view_change(state);
+            state.view += 1;
         }
 
         // Tell the log to garbage collect if it needs to
@@ -708,18 +691,13 @@ impl PbftNode {
         peer_res
     }
 
-    pub fn force_view_change(&mut self, state: &mut PbftState) {
-        info!("{}: Forcing view change", state);
-        handlers::force_view_change(state, &mut *self.service)
-    }
-
-    /// Initiate a view change (this node suspects that the primary is faulty)
-    /// Nodes drop everything when they're doing a view change - will not process any peer messages
-    /// other than `ViewChanges` until the view change is complete.
+    /// Initiate a view change when this node suspects that the primary is faulty
     pub fn propose_view_change(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
+        // Do not send messages again if we are already in the midst of a view change
         if state.mode == PbftMode::ViewChanging {
             return Ok(());
         }
+
         warn!("{}: Starting view change", state);
         state.mode = PbftMode::ViewChanging;
 

@@ -27,14 +27,6 @@ use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::PbftBlock;
 use crate::timing::Timeout;
 
-// Possible roles for a node
-// Primary is in charge of making consensus decisions
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-enum PbftNodeRole {
-    Primary,
-    Secondary,
-}
-
 /// Phases of the PBFT algorithm, in `Normal` mode
 #[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize)]
 pub enum PbftPhase {
@@ -107,9 +99,6 @@ pub struct PbftState {
     /// Current phase of the algorithm
     pub phase: PbftPhase,
 
-    /// Is this node primary or secondary?
-    role: PbftNodeRole,
-
     /// Normal operation or view changing
     pub mode: PbftMode,
 
@@ -143,15 +132,10 @@ impl PbftState {
         }
 
         PbftState {
-            id: id.clone(),
+            id,
             seq_num: head_block_num + 1,
             view: 0, // Node ID 0 is default primary
             phase: PbftPhase::PrePreparing,
-            role: if config.peers[0] == id {
-                PbftNodeRole::Primary
-            } else {
-                PbftNodeRole::Secondary
-            },
             mode: PbftMode::Normal,
             f,
             peer_ids: config.peers.clone(),
@@ -185,17 +169,7 @@ impl PbftState {
 
     /// Tell if this node is currently the primary
     pub fn is_primary(&self) -> bool {
-        self.role == PbftNodeRole::Primary
-    }
-
-    /// Upgrade this node to primary
-    pub fn upgrade_role(&mut self) {
-        self.role = PbftNodeRole::Primary;
-    }
-
-    /// Downgrade this node to secondary
-    pub fn downgrade_role(&mut self) {
-        self.role = PbftNodeRole::Secondary;
+        self.id == self.get_primary_id()
     }
 
     /// Go to a phase and return new phase, if successfully changed
@@ -222,13 +196,9 @@ impl PbftState {
         self.seq_num > 0 && self.seq_num % self.forced_view_change_period == 0
     }
 
-    /// Discard the current working block, and reset phase/mode
-    ///
-    /// Used after a view change has occured
-    pub fn discard_current_block(&mut self) {
-        warn!("PbftState::reset: {}", self);
-
-        self.working_block = None;
+    /// Reset the phase and mode, restart the timers; used after a view change has occured
+    pub fn reset_to_start(&mut self) {
+        info!("Resetting state: {}", self);
         self.phase = PbftPhase::PrePreparing;
         self.mode = PbftMode::Normal;
         self.faulty_primary_timeout.start();
@@ -274,19 +244,6 @@ mod tests {
 
         assert_eq!(state0.get_primary_id(), state0.peer_ids[0]);
         assert_eq!(state1.get_primary_id(), state1.peer_ids[0]);
-    }
-
-    /// Make sure that nodes transition from primary to secondary and back smoothly
-    #[test]
-    fn role_changes() {
-        let config = mock_config(4);
-        let mut state = PbftState::new(vec![0], 0, &config);
-
-        state.downgrade_role();
-        assert!(!state.is_primary());
-
-        state.upgrade_role();
-        assert!(state.is_primary());
     }
 
     /// Make sure that a normal PBFT cycle works properly

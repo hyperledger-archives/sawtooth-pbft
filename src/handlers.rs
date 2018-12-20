@@ -117,6 +117,7 @@ pub fn commit(
 }
 
 /// Handle a `ViewChange` message
+///
 /// Once a node receives `2f + 1` `ViewChange` messages, the node enters view `v + 1` and changes
 /// itself into the appropriate role for that view (i.e. if `v = 1` and this is node 1, then this
 /// node is now the primary).
@@ -126,87 +127,29 @@ pub fn view_change(
     service: &mut Service,
     vc_message: &ParsedMessage,
 ) -> Result<(), PbftError> {
-    if !check_received_enough_view_changes(state, msg_log, vc_message) {
-        return Ok(());
-    }
-
-    set_current_view_from_msg(state, vc_message);
-
-    // Upgrade this node to primary, if its ID is correct
-    if check_is_primary(state) {
-        become_primary(state, service)
-    } else {
-        become_secondary(state)
-    }
-
-    state.discard_current_block();
-
-    Ok(())
-}
-
-pub fn force_view_change(state: &mut PbftState, service: &mut Service) {
-    let next_view = state.view + 1;
-    set_current_view(state, next_view);
-
-    // Upgrade this node to primary, if its ID is correct
-    if check_is_primary(state) {
-        become_primary(state, service)
-    } else {
-        become_secondary(state)
-    }
-}
-
-fn check_received_enough_view_changes(
-    state: &PbftState,
-    msg_log: &PbftLog,
-    vc_message: &ParsedMessage,
-) -> bool {
-    msg_log.log_has_required_msgs(
+    let ready_to_change = msg_log.log_has_required_msgs(
         &PbftMessageType::ViewChange,
         vc_message,
         false,
         2 * state.f + 1,
-    )
-}
+    );
 
-fn set_current_view_from_msg(state: &mut PbftState, vc_message: &ParsedMessage) {
-    set_current_view(state, vc_message.info().get_view())
-}
-
-fn set_current_view(state: &mut PbftState, view: u64) {
-    state.view = view;
-    warn!("{}: Updating to view {}", state, state.view);
-}
-
-fn check_is_primary(state: &PbftState) -> bool {
-    state.id == state.get_primary_id()
-}
-
-fn become_primary(state: &mut PbftState, service: &mut Service) {
-    state.upgrade_role();
-    warn!("{}: I'm now a primary", state);
-
-    // If we're the new primary, need to clean up the block mess from the view change and
-    // initialize a new block.
-    if let Some(ref working_block) = state.working_block {
-        info!(
-            "{}: Ignoring block {}",
-            state,
-            &hex::encode(working_block.get_block_id())
-        );
-        service
-            .ignore_block(working_block.get_block_id().to_vec())
-            .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
+    if !ready_to_change {
+        return Ok(());
     }
-    info!("{}: Initializing block", state);
-    service
-        .initialize_block(None)
-        .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
-}
 
-fn become_secondary(state: &mut PbftState) {
-    warn!("{}: I'm now a secondary", state);
-    state.downgrade_role();
+    state.view = vc_message.info().get_view();
+
+    // Initialize a new block if necessary
+    if state.is_primary() && state.working_block.is_none() {
+        service
+            .initialize_block(None)
+            .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+    }
+
+    state.reset_to_start();
+
+    Ok(())
 }
 
 /// Create a PbftMessageInfo struct with the desired type, view, sequence number, and signer ID
