@@ -78,9 +78,9 @@ message PbftSeal {
   // ID of the previous block
   bytes previous_id = 1;
 
-  // Summary of the previous block
+  // Summary of the current block
   bytes summary = 2;
 
-  // 2f + 1 votes
+  // 2f votes
   repeated PbftSignedCommitVote previous_commit_votes = 3;
 }
