@@ -38,25 +38,25 @@ pub enum PbftMessageWrapper {
 
 /// Container for a received PeerMessage and the PBFT message parsed from it
 ///
-/// The bits of the `PeerMessage` struct that this carries around are used in
-/// constructing the consensus seal.
+/// The bits of the `PeerMessage` struct that this carries around are used in constructing signed
+/// votes.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ParsedMessage {
-    /// Serialized ConsensusPeerMessageHeader. Inserted into the consensus seal.
+    /// Serialized ConsensusPeerMessageHeader. Inserted into a signed vote.
     pub header_bytes: Vec<u8>,
 
-    /// Signature for `header_bytes`. Inserted into the consensus seal.
+    /// Signature for `header_bytes`. Inserted into a signed vote.
     pub header_signature: Vec<u8>,
 
     /// The parsed PBFT message.
     pub message: PbftMessageWrapper,
 
-    /// The serialized PBFT message. Inserted into the consensus seal.
+    /// The serialized PBFT message. Inserted into a signed vote.
     pub message_bytes: Vec<u8>,
 
-    /// Whether or not this message was self-constructed. Self-constructed messages
-    /// are skipped during creationg of the consensus seal, since PBFT doesn't have
-    /// access to the validator key necessary to create valid signed messages.
+    /// Whether or not this message was self-constructed. Self-constructed messages are skipped
+    /// during creationg of a signed vote, since PBFT doesn't have access to the validator key
+    /// necessary to create valid signed messages.
     pub from_self: bool,
 }
 
@@ -72,7 +72,7 @@ impl Hash for ParsedMessage {
 impl ParsedMessage {
     /// Constructs a `ParsedMessage` from the given `PbftMessage`.
     ///
-    /// Does not add metadata necessary for adding this message to the consensus seal.
+    /// Does not add metadata necessary for creating a signed vote from this message.
     pub fn from_pbft_message(message: PbftMessage) -> Self {
         Self {
             from_self: false,
@@ -85,7 +85,7 @@ impl ParsedMessage {
 
     /// Constructs a `ParsedMessage` from the given `PbftViewChange`.
     ///
-    /// Does not add metadata necessary for adding this message to the consensus seal.
+    /// Does not add metadata necessary for creating a signed vote from this message.
     pub fn from_view_change_message(message: PbftViewChange) -> Self {
         Self {
             from_self: false,

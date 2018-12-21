@@ -28,7 +28,7 @@ use hex;
 
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
+    PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedVote, PbftViewChange,
 };
 
 impl Eq for PbftMessage {}
@@ -70,7 +70,7 @@ impl Hash for PbftSeal {
     }
 }
 
-impl Hash for PbftSignedCommitVote {
+impl Hash for PbftSignedVote {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.get_header_bytes().hash(state);
         self.get_header_signature().hash(state);

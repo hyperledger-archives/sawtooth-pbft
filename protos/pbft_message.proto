@@ -63,14 +63,14 @@ message PbftViewChange {
   PbftSeal seal = 2;
 }
 
-message PbftSignedCommitVote {
+message PbftSignedVote {
   // Serialized ConsensusPeerMessage header
   bytes header_bytes = 1;
 
   // Signature of the serialized ConsensusPeerMessageHeader
   bytes header_signature = 2;
 
-  // Serialized PBFT Message
+  // Serialized PBFT message
   bytes message_bytes = 3;
 }
 
@@ -81,6 +81,7 @@ message PbftSeal {
   // Summary of the current block
   bytes summary = 2;
 
-  // 2f votes
-  repeated PbftSignedCommitVote previous_commit_votes = 3;
+  // A list of Commit votes to prove the previous block commit (must contain at
+  // least 2f votes)
+  repeated PbftSignedVote previous_commit_votes = 3;
 }

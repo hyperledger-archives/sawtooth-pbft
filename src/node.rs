@@ -35,7 +35,7 @@ use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
+    PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedVote, PbftViewChange,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
 
@@ -209,10 +209,7 @@ impl PbftNode {
     /// Verifies an individual consensus vote
     ///
     /// Returns the signer ID of the wrapped PbftMessage, for use in further verification
-    fn verify_consensus_vote(
-        vote: &PbftSignedCommitVote,
-        seal: &PbftSeal,
-    ) -> Result<Vec<u8>, PbftError> {
+    fn verify_consensus_vote(vote: &PbftSignedVote, seal: &PbftSeal) -> Result<Vec<u8>, PbftError> {
         let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
             .map_err(PbftError::SerializationError)?;
 
@@ -608,7 +605,7 @@ impl PbftNode {
             messages
                 .iter()
                 .map(|m| {
-                    let mut vote = PbftSignedCommitVote::new();
+                    let mut vote = PbftSignedVote::new();
 
                     vote.set_header_bytes(m.header_bytes.clone());
                     vote.set_header_signature(m.header_signature.clone());
