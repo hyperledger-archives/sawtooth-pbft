@@ -19,7 +19,7 @@ services:
   pbft-engine:
     build:
       context: .
-      dockerfile: Dockerfile-installed
+      dockerfile: Dockerfile-installed-${DISTRO}
       args:
         - http_proxy
         - https_proxy
