@@ -497,8 +497,6 @@ impl PbftNode {
         } else if block.block_num == state.seq_num {
             // This is the block we're waiting for, so we update state
             state.working_block = Some(msg.get_block().clone());
-            state.idle_timeout.stop();
-            state.commit_timeout.start();
 
             // Send PrePrepare messages if we're the primary
             if state.is_primary() {
@@ -552,9 +550,8 @@ impl PbftNode {
         // Tell the log to garbage collect if it needs to
         self.msg_log.garbage_collect(state.seq_num, &block_id);
 
-        // The primary processessed this block in a timely manner, so stop the timeout.
-        state.commit_timeout.stop();
-        state.idle_timeout.start();
+        // Restart the faulty primary timeout for the next block
+        state.faulty_primary_timeout.start();
 
         if state.is_primary() && state.working_block.is_none() {
             info!(
@@ -692,18 +689,13 @@ impl PbftNode {
         }
     }
 
-    /// Check to see if the view change timeout has expired
-    pub fn check_commit_timeout_expired(&mut self, state: &mut PbftState) -> bool {
-        state.commit_timeout.check_expired()
+    /// Check to see if the faulty primary timeout has expired
+    pub fn check_faulty_primary_timeout_expired(&mut self, state: &mut PbftState) -> bool {
+        state.faulty_primary_timeout.check_expired()
     }
 
-    /// Check to see if the idle timeout has expired
-    pub fn check_idle_timeout_expired(&mut self, state: &mut PbftState) -> bool {
-        state.idle_timeout.check_expired()
-    }
-
-    pub fn start_idle_timeout(&self, state: &mut PbftState) {
-        state.idle_timeout.start();
+    pub fn start_faulty_primary_timeout(&self, state: &mut PbftState) {
+        state.faulty_primary_timeout.start();
     }
 
     /// Retry messages from the backlog queue
