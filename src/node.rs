@@ -95,18 +95,41 @@ impl PbftNode {
                     }
                 }
 
-                self.broadcast_pre_prepare(&msg, state)?;
+                // We only want to check the block if this message is for the current sequence
+                // number and we're in the PrePreparing phase
+                if msg.info().get_seq_num() == state.seq_num
+                    && state.phase == PbftPhase::PrePreparing
+                {
+                    state.switch_phase(PbftPhase::Checking);
+
+                    // We can also stop the view change timer, since we received a new block and a
+                    // valid PrePrepare in time
+                    state.faulty_primary_timeout.stop();
+
+                    self.service
+                        .check_blocks(vec![msg.get_block().clone().block_id])
+                        .map_err(|_| {
+                            PbftError::InternalError(String::from("Failed to check blocks"))
+                        })?
+                }
             }
 
             PbftMessageType::Prepare => {
                 self.msg_log.add_message(msg.clone(), state)?;
 
-                // We only want to check the block if this message is for the current sequence
-                // number
+                // We only want to switch to committing if this message is for the current sequence
+                // number, we're in the Preparing phase, and the `Prepared` predicate is true
                 if msg.info().get_seq_num() == state.seq_num
+                    && state.phase == PbftPhase::Preparing
                     && self.msg_log.check_prepared(&msg.info(), state.f)
                 {
-                    self.check_blocks_if_not_checking(&msg, state)?;
+                    state.switch_phase(PbftPhase::Committing);
+                    self._broadcast_pbft_message(
+                        state.seq_num,
+                        &PbftMessageType::Commit,
+                        msg.get_block().clone(),
+                        state,
+                    )?;
                 }
             }
 
@@ -114,11 +137,12 @@ impl PbftNode {
                 self.msg_log.add_message(msg.clone(), state)?;
 
                 // We only want to commit the block if this message is for the current sequence
-                // number
+                // number, we're in the Committing phase, and the `Committable` predicate is true
                 if msg.info().get_seq_num() == state.seq_num
+                    && state.phase == PbftPhase::Committing
                     && self.msg_log.check_committable(&msg.info(), state.f)
                 {
-                    self.commit_block_if_committing(&msg, state)?;
+                    handlers::commit(state, &mut *self.service, &msg)?;
                 }
             }
 
@@ -237,58 +261,6 @@ impl PbftNode {
             _ => warn!("Message type not implemented"),
         }
         Ok(())
-    }
-
-    fn broadcast_pre_prepare(
-        &mut self,
-        pbft_message: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        info!(
-            "{}: PrePrepare, sequence number {}",
-            state,
-            pbft_message.info().get_seq_num()
-        );
-
-        self._broadcast_pbft_message(
-            pbft_message.info().get_seq_num(),
-            &PbftMessageType::Prepare,
-            (*pbft_message.get_block()).clone(),
-            state,
-        )
-    }
-
-    fn check_blocks_if_not_checking(
-        &mut self,
-        pbft_message: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        if state.phase != PbftPhase::Checking {
-            state.switch_phase(PbftPhase::Checking);
-            debug!("{}: Checking blocks", state);
-            self.service
-                .check_blocks(vec![pbft_message.get_block().clone().block_id])
-                .map_err(|_| PbftError::InternalError(String::from("Failed to check blocks")))?
-        }
-        Ok(())
-    }
-
-    #[allow(clippy::ptr_arg)]
-    fn commit_block_if_committing(
-        &mut self,
-        msg: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        if state.phase == PbftPhase::Committing {
-            handlers::commit(state, &mut *self.service, msg)
-        } else {
-            debug!(
-                "{}: Already committed block {:?}",
-                state,
-                msg.get_block().block_id
-            );
-            Ok(())
-        }
     }
 
     /// Verify that the vote is properly signed
@@ -659,7 +631,7 @@ impl PbftNode {
     /// Handle a `BlockValid` update
     /// This message arrives after `check_blocks` is called, signifying that the validator has
     /// successfully checked a block with this `BlockId`.
-    /// Once a `BlockValid` is received, transition to committing blocks.
+    /// Once a `BlockValid` is received, transition to the Preparing phase.
     #[allow(clippy::ptr_arg)]
     pub fn on_block_valid(
         &mut self,
@@ -682,10 +654,10 @@ impl PbftNode {
             }
         }?;
 
-        state.switch_phase(PbftPhase::Committing);
+        state.switch_phase(PbftPhase::Preparing);
         self._broadcast_pbft_message(
             state.seq_num,
-            &PbftMessageType::Commit,
+            &PbftMessageType::Prepare,
             block.clone(),
             state,
         )?;
@@ -1346,7 +1318,7 @@ mod tests {
         state0.working_block = Some(pbft_block_from_block(mock_block(1)));
         node.on_block_valid(&mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
-        assert_eq!(state0.phase, PbftPhase::Committing);
+        assert_eq!(state0.phase, PbftPhase::Preparing);
     }
 
     /// Make sure that receiving a `BlockCommit` update works as expected
@@ -1383,13 +1355,16 @@ mod tests {
             .on_peer_message(msg, &mut state1)
             .unwrap_or_else(handle_pbft_err);
 
-        assert_eq!(state1.phase, PbftPhase::Preparing);
+        assert_eq!(state1.phase, PbftPhase::Checking);
         assert_eq!(state1.seq_num, 1);
         if let Some(ref blk) = state1.working_block {
             assert_eq!(BlockId::from(blk.clone().block_id), mock_block_id(1));
         } else {
             panic!("Wrong WorkingBlockOption");
         }
+
+        // Spoof the `check_blocks()` call
+        assert!(node1.on_block_valid(&mock_block_id(1), &mut state1).is_ok());
 
         // Receive 3 `Prepare` messages
         for peer in 0..3 {
@@ -1399,10 +1374,6 @@ mod tests {
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
         }
-        assert_eq!(state1.phase, PbftPhase::Checking);
-
-        // Spoof the `check_blocks()` call
-        assert!(node1.on_block_valid(&mock_block_id(1), &mut state1).is_ok());
 
         // Receive 3 `Commit` messages
         for peer in 0..3 {

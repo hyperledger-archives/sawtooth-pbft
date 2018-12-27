@@ -31,8 +31,8 @@ use crate::timing::Timeout;
 #[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize)]
 pub enum PbftPhase {
     PrePreparing,
-    Preparing,
     Checking,
+    Preparing,
     Committing,
     Finished,
 }
@@ -54,8 +54,8 @@ impl fmt::Display for PbftState {
 
         let phase = match self.phase {
             PbftPhase::PrePreparing => "PP",
-            PbftPhase::Preparing => "Pr",
             PbftPhase::Checking => "Ch",
+            PbftPhase::Preparing => "Pr",
             PbftPhase::Committing => "Co",
             PbftPhase::Finished => "Fi",
         };
@@ -154,8 +154,8 @@ impl PbftState {
     pub fn check_msg_type(&self) -> PbftMessageType {
         match self.phase {
             PbftPhase::PrePreparing => PbftMessageType::PrePrepare,
-            PbftPhase::Preparing => PbftMessageType::Prepare,
             PbftPhase::Checking => PbftMessageType::Prepare,
+            PbftPhase::Preparing => PbftMessageType::Prepare,
             PbftPhase::Committing => PbftMessageType::Commit,
             PbftPhase::Finished => PbftMessageType::Unset,
         }
@@ -187,9 +187,9 @@ impl PbftState {
     /// Enforces sequential ordering of PBFT phases in normal mode.
     pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Option<PbftPhase> {
         let next = match self.phase {
-            PbftPhase::PrePreparing => PbftPhase::Preparing,
-            PbftPhase::Preparing => PbftPhase::Checking,
-            PbftPhase::Checking => PbftPhase::Committing,
+            PbftPhase::PrePreparing => PbftPhase::Checking,
+            PbftPhase::Checking => PbftPhase::Preparing,
+            PbftPhase::Preparing => PbftPhase::Committing,
             PbftPhase::Committing => PbftPhase::Finished,
             PbftPhase::Finished => PbftPhase::PrePreparing,
         };
@@ -258,7 +258,7 @@ mod tests {
     }
 
     /// Make sure that a normal PBFT cycle works properly
-    /// `PrePreparing` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
+    /// `PrePreparing` => `Checking` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
     /// Also make sure that no illegal phase changes are allowed to happen
     /// (e.g. `PrePreparing` => `Finished`)
     #[test]
@@ -266,13 +266,13 @@ mod tests {
         let config = mock_config(4);
         let mut state = PbftState::new(vec![0], 0, &config);
 
-        assert!(state.switch_phase(PbftPhase::Preparing).is_some());
         assert!(state.switch_phase(PbftPhase::Checking).is_some());
+        assert!(state.switch_phase(PbftPhase::Preparing).is_some());
         assert!(state.switch_phase(PbftPhase::Committing).is_some());
         assert!(state.switch_phase(PbftPhase::Finished).is_some());
         assert!(state.switch_phase(PbftPhase::PrePreparing).is_some());
 
         assert!(state.switch_phase(PbftPhase::Finished).is_none());
-        assert!(state.switch_phase(PbftPhase::Checking).is_none());
+        assert!(state.switch_phase(PbftPhase::Preparing).is_none());
     }
 }
