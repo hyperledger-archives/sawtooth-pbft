@@ -226,6 +226,21 @@ impl PbftLog {
             .collect()
     }
 
+    /// Obtain all messages from the log that match a given type and view
+    pub fn get_messages_of_type_view(
+        &self,
+        msg_type: &PbftMessageType,
+        view: u64,
+    ) -> Vec<&ParsedMessage> {
+        self.messages
+            .iter()
+            .filter(|&msg| {
+                let info = (*msg).info();
+                info.get_msg_type() == String::from(msg_type) && info.get_view() == view
+            })
+            .collect()
+    }
+
     /// Obtain messages from the log that match a given type, sequence number, and view
     pub fn get_messages_of_type_seq_view(
         &self,

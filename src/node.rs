@@ -35,7 +35,7 @@ use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedVote, PbftViewChange,
+    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote, PbftViewChange,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
 
@@ -130,23 +130,108 @@ impl PbftNode {
 
                 self.msg_log.add_message(msg.clone(), state)?;
 
-                if state.mode == PbftMode::ViewChanging {
-                    handlers::view_change(state, &mut self.msg_log, &mut *self.service, &msg)?
-                } else {
-                    // Even if we haven't detected a faulty primary yet, start view changing if
-                    // we've received f + 1 ViewChange messages for the next view; this will
-                    // prevent starting the view change too late
-                    if msg.info().get_view() == state.view + 1
-                        && self.msg_log.log_has_required_msgs(
-                            &PbftMessageType::ViewChange,
-                            &msg,
-                            false,
-                            state.f + 1,
-                        )
-                    {
-                        self.propose_view_change(state)?;
-                    }
+                // Even if we haven't detected a faulty primary yet, start view changing if we've
+                // received f + 1 ViewChange messages for the next view; this will prevent starting
+                // the view change too late
+                if state.mode != PbftMode::ViewChanging
+                    && msg.info().get_view() == state.view + 1
+                    && self.msg_log.log_has_required_msgs(
+                        &PbftMessageType::ViewChange,
+                        &msg,
+                        false,
+                        state.f + 1,
+                    )
+                {
+                    self.propose_view_change(state)?;
+                    return Ok(());
                 }
+
+                // If we're the new primary and we have the required 2f ViewChange messages (not
+                // including our own), broadcast the NewView message
+                let messages = self
+                    .msg_log
+                    .get_messages_of_type_view(&PbftMessageType::ViewChange, msg.info().get_view())
+                    .iter()
+                    .cloned()
+                    .filter(|msg| !msg.from_self)
+                    .collect::<Vec<_>>();
+
+                if state.is_primary_at_view(msg.info().get_view())
+                    && messages.len() >= 2 * state.f as usize
+                {
+                    let mut new_view = PbftNewView::new();
+
+                    new_view.set_info(handlers::make_msg_info(
+                        &PbftMessageType::NewView,
+                        state.view + 1,
+                        state.seq_num - 1,
+                        state.id.clone(),
+                    ));
+
+                    new_view.set_view_changes(Self::signed_votes_from_messages(messages));
+
+                    let msg_bytes = new_view
+                        .write_to_bytes()
+                        .map_err(PbftError::SerializationError)?;
+
+                    self._broadcast_message(&PbftMessageType::NewView, msg_bytes, state)?;
+                }
+            }
+
+            PbftMessageType::NewView => {
+                let new_view = msg.get_new_view_message();
+
+                // Make sure this is from the new primary
+                if PeerId::from(new_view.get_info().get_signer_id())
+                    != state.get_primary_id_at_view(new_view.get_info().get_view())
+                {
+                    return Err(PbftError::InternalError(format!(
+                        "Got NewView message ({:?}) from node ({:?}) that is not primary for new view",
+                        msg,
+                        new_view.get_info().get_signer_id(),
+                    )));
+                }
+
+                // Verify each individual vote, and extract the signer ID from each PbftViewChange
+                // that it contains so we can verify the IDs themselves
+                let voter_ids =
+                    new_view
+                        .get_view_changes()
+                        .iter()
+                        .try_fold(HashSet::new(), |mut ids, v| {
+                            Self::verify_view_change_vote(v, new_view.get_info().get_view())
+                                .and_then(|vid| Ok(ids.insert(vid)))?;
+                            Ok(ids)
+                        })?;
+
+                // All of the votes must come from known peers, and the new primary can't
+                // explicitly vote itself, since broacasting the NewView is an implicit vote. Check
+                // that the votes we've received are a subset of "peers - primary".
+                let peer_ids: HashSet<_> = state
+                    .peer_ids
+                    .iter()
+                    .cloned()
+                    .filter(|pid| pid != &PeerId::from(new_view.get_info().get_signer_id()))
+                    .collect();
+
+                if !voter_ids.is_subset(&peer_ids) {
+                    return Err(PbftError::InternalError(format!(
+                        "Got unexpected vote IDs when verifying NewView: {:?}",
+                        voter_ids.difference(&peer_ids).collect::<Vec<_>>()
+                    )));
+                }
+
+                // Check that we've received 2f votes, since the primary vote is implicit
+                if voter_ids.len() < 2 * state.f as usize {
+                    return Err(PbftError::InternalError(format!(
+                        "Need {} votes, only found {}!",
+                        2 * state.f,
+                        voter_ids.len()
+                    )));
+                }
+
+                // Update view
+                handlers::update_view(state, &mut *self.service, new_view.get_info().get_view())?
             }
 
             _ => warn!("Message type not implemented"),
@@ -239,6 +324,26 @@ impl PbftNode {
         verify_sha512(vote.get_message_bytes(), header.get_content_sha512())?;
 
         Ok(())
+    }
+
+    /// Verify an individual view change vote
+    ///
+    /// Return the signer ID of the wrapped PbftMessage for use in further verification
+    fn verify_view_change_vote(vote: &PbftSignedVote, view: u64) -> Result<PeerId, PbftError> {
+        let message: PbftViewChange = protobuf::parse_from_bytes(&vote.get_message_bytes())
+            .map_err(PbftError::SerializationError)?;
+
+        if message.get_info().get_view() != view {
+            return Err(PbftError::InternalError(format!(
+                "PbftViewChange's view ({:?}) does not match NewView's view ({:?})",
+                message.get_info().get_view(),
+                view,
+            )));
+        }
+
+        Self::verify_vote_signer(vote)?;
+
+        Ok(PeerId::from(message.get_info().get_signer_id()))
     }
 
     /// Verifies an individual consensus vote
@@ -1032,6 +1137,30 @@ mod tests {
         block
     }
 
+    /// Create a signed ViewChange message
+    fn mock_view_change(view: u64, seq_num: u64, peer: PeerId, from_self: bool) -> ParsedMessage {
+        let context = create_context("secp256k1").unwrap();
+        let key = context.new_random_private_key().unwrap();
+        let pub_key = context.get_public_key(&*key).unwrap();
+
+        let mut vc_msg = PbftViewChange::new();
+        let info = make_msg_info(&PbftMessageType::ViewChange, view, seq_num, peer);
+        vc_msg.set_info(info);
+        vc_msg.set_seal(PbftSeal::new());
+
+        let mut message = ParsedMessage::from_view_change_message(vc_msg);
+        let mut header = ConsensusPeerMessageHeader::new();
+        header.set_signer_id(pub_key.as_slice().to_vec());
+        header.set_content_sha512(hash_sha512(&message.message_bytes));
+        let header_bytes = header.write_to_bytes().unwrap();
+        let header_signature = hex::decode(context.sign(&header_bytes, &*key).unwrap()).unwrap();
+        message.from_self = from_self;
+        message.header_bytes = header_bytes;
+        message.header_signature = header_signature;
+
+        message
+    }
+
     /// Create a mock serialized PbftMessage
     fn mock_msg(
         msg_type: &PbftMessageType,
@@ -1328,15 +1457,27 @@ mod tests {
             } else {
                 assert_eq!(state1.mode, PbftMode::ViewChanging);
             }
-            let info = make_msg_info(&PbftMessageType::ViewChange, 1, 0, vec![peer]);
-            let mut vc_msg = PbftViewChange::new();
-            vc_msg.set_info(info);
-            vc_msg.set_seal(PbftSeal::new());
 
             node1
-                .on_peer_message(ParsedMessage::from_view_change_message(vc_msg), &mut state1)
+                .on_peer_message(mock_view_change(1, 0, vec![peer], peer == 1), &mut state1)
                 .unwrap_or_else(handle_pbft_err);
         }
+
+        // Receive `NewView` message
+        let msgs: Vec<&ParsedMessage> = node1
+            .msg_log
+            .get_messages_of_type_view(&PbftMessageType::ViewChange, 1)
+            .iter()
+            .cloned()
+            .filter(|msg| !msg.from_self)
+            .collect::<Vec<_>>();
+        let mut new_view = PbftNewView::new();
+        new_view.set_info(make_msg_info(&PbftMessageType::NewView, 1, 0, vec![1]));
+        new_view.set_view_changes(PbftNode::signed_votes_from_messages(msgs));
+
+        node1
+            .on_peer_message(ParsedMessage::from_new_view_message(new_view), &mut state1)
+            .unwrap_or_else(handle_pbft_err);
 
         assert!(state1.is_primary());
         assert_eq!(state1.view, 1);

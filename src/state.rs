@@ -167,9 +167,20 @@ impl PbftState {
         self.peer_ids[primary_index].clone()
     }
 
+    /// Obtain the ID for the primary node at the specified view
+    pub fn get_primary_id_at_view(&self, view: u64) -> PeerId {
+        let primary_index = (view % (self.peer_ids.len() as u64)) as usize;
+        self.peer_ids[primary_index].clone()
+    }
+
     /// Tell if this node is currently the primary
     pub fn is_primary(&self) -> bool {
         self.id == self.get_primary_id()
+    }
+
+    /// Tell if this node is the primary at the specified view
+    pub fn is_primary_at_view(&self, view: u64) -> bool {
+        self.id == self.get_primary_id_at_view(view)
     }
 
     /// Go to a phase and return new phase, if successfully changed

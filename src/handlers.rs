@@ -116,29 +116,13 @@ pub fn commit(
     Ok(())
 }
 
-/// Handle a `ViewChange` message
-///
-/// Once a node receives `2f + 1` `ViewChange` messages, the node enters view `v + 1` and changes
-/// itself into the appropriate role for that view (i.e. if `v = 1` and this is node 1, then this
-/// node is now the primary).
-pub fn view_change(
+/// Once the node receives a valid `NewView` message from the new primary, update the view.
+pub fn update_view(
     state: &mut PbftState,
-    msg_log: &mut PbftLog,
     service: &mut Service,
-    vc_message: &ParsedMessage,
+    view: u64,
 ) -> Result<(), PbftError> {
-    let ready_to_change = msg_log.log_has_required_msgs(
-        &PbftMessageType::ViewChange,
-        vc_message,
-        false,
-        2 * state.f + 1,
-    );
-
-    if !ready_to_change {
-        return Ok(());
-    }
-
-    state.view = vc_message.info().get_view();
+    state.view = view;
 
     // Initialize a new block if necessary
     if state.is_primary() && state.working_block.is_none() {

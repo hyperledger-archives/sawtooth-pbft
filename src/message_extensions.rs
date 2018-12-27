@@ -28,11 +28,12 @@ use hex;
 
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedVote, PbftViewChange,
+    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote, PbftViewChange,
 };
 
 impl Eq for PbftMessage {}
 impl Eq for PbftSeal {}
+impl Eq for PbftNewView {}
 impl Eq for PbftViewChange {}
 
 impl Hash for PbftMessageInfo {
@@ -82,6 +83,13 @@ impl Hash for PbftViewChange {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.get_info().hash(state);
         self.get_seal().hash(state);
+    }
+}
+
+impl Hash for PbftNewView {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_info().hash(state);
+        self.get_view_changes().hash(state);
     }
 }
 
