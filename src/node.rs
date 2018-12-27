@@ -206,21 +206,8 @@ impl PbftNode {
         }
     }
 
-    /// Verifies an individual consensus vote
-    ///
-    /// Returns the signer ID of the wrapped PbftMessage, for use in further verification
-    fn verify_consensus_vote(vote: &PbftSignedVote, seal: &PbftSeal) -> Result<Vec<u8>, PbftError> {
-        let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
-            .map_err(PbftError::SerializationError)?;
-
-        if message.get_block().block_id != seal.previous_id {
-            return Err(PbftError::InternalError(format!(
-                "PbftMessage block ID ({:?}) doesn't match seal's previous id ({:?})!",
-                message.get_block().get_block_id(),
-                seal.previous_id
-            )));
-        }
-
+    /// Verify that the vote is properly signed
+    fn verify_vote_signer(vote: &PbftSignedVote) -> Result<(), PbftError> {
         let header: ConsensusPeerMessageHeader =
             protobuf::parse_from_bytes(&vote.get_header_bytes())
                 .map_err(PbftError::SerializationError)?;
@@ -250,6 +237,26 @@ impl PbftNode {
         }
 
         verify_sha512(vote.get_message_bytes(), header.get_content_sha512())?;
+
+        Ok(())
+    }
+
+    /// Verifies an individual consensus vote
+    ///
+    /// Returns the signer ID of the wrapped PbftMessage, for use in further verification
+    fn verify_consensus_vote(vote: &PbftSignedVote, seal: &PbftSeal) -> Result<Vec<u8>, PbftError> {
+        let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
+            .map_err(PbftError::SerializationError)?;
+
+        if message.get_block().block_id != seal.previous_id {
+            return Err(PbftError::InternalError(format!(
+                "PbftMessage block ID ({:?}) doesn't match seal's previous id ({:?})!",
+                message.get_block().get_block_id(),
+                seal.previous_id
+            )));
+        }
+
+        Self::verify_vote_signer(vote)?;
 
         Ok(message.get_info().get_signer_id().to_vec())
     }
@@ -582,6 +589,24 @@ impl PbftNode {
 
     // ---------- Methods for periodically checking on and updating the state, called by the engine ----------
 
+    /// Generate a `protobuf::RepeatedField` of signed votes from a list of parsed messages
+    #[allow(clippy::needless_pass_by_value)]
+    fn signed_votes_from_messages(msgs: Vec<&ParsedMessage>) -> RepeatedField<PbftSignedVote> {
+        RepeatedField::from(
+            msgs.iter()
+                .map(|m| {
+                    let mut vote = PbftSignedVote::new();
+
+                    vote.set_header_bytes(m.header_bytes.clone());
+                    vote.set_header_signature(m.header_signature.clone());
+                    vote.set_message_bytes(m.message_bytes.clone());
+
+                    vote
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
     fn build_seal(&mut self, state: &PbftState, summary: Vec<u8>) -> Result<Vec<u8>, PbftError> {
         info!("{}: Building seal for block {}", state, state.seq_num - 1);
 
@@ -601,20 +626,7 @@ impl PbftNode {
 
         seal.set_summary(summary);
         seal.set_previous_id(BlockId::from(messages[0].get_block().get_block_id()));
-        seal.set_previous_commit_votes(RepeatedField::from(
-            messages
-                .iter()
-                .map(|m| {
-                    let mut vote = PbftSignedVote::new();
-
-                    vote.set_header_bytes(m.header_bytes.clone());
-                    vote.set_header_signature(m.header_signature.clone());
-                    vote.set_message_bytes(m.message_bytes.clone());
-
-                    vote
-                })
-                .collect::<Vec<_>>(),
-        ));
+        seal.set_previous_commit_votes(Self::signed_votes_from_messages(messages));
 
         seal.write_to_bytes().map_err(PbftError::SerializationError)
     }
