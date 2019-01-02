@@ -27,16 +27,13 @@ use sawtooth_sdk::consensus::engine::PeerMessage;
 
 use crate::error::PbftError;
 use crate::hash::verify_sha512;
-use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftViewChange,
-};
+use crate::protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView};
 
 /// Wrapper enum for all of the possible PBFT-related messages
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PbftMessageWrapper {
     Message(PbftMessage),
     NewView(PbftNewView),
-    ViewChange(PbftViewChange),
 }
 
 /// Container for a received PeerMessage and the PBFT message parsed from it
@@ -68,7 +65,6 @@ impl Hash for ParsedMessage {
         match &self.message {
             PbftMessageWrapper::Message(m) => m.hash(state),
             PbftMessageWrapper::NewView(m) => m.hash(state),
-            PbftMessageWrapper::ViewChange(m) => m.hash(state),
         }
     }
 }
@@ -100,24 +96,10 @@ impl ParsedMessage {
         }
     }
 
-    /// Constructs a `ParsedMessage` from the given `PbftViewChange`.
-    ///
-    /// Does not add metadata necessary for creating a signed vote from this message.
-    pub fn from_view_change_message(message: PbftViewChange) -> Self {
-        Self {
-            from_self: false,
-            header_bytes: vec![],
-            header_signature: vec![],
-            message_bytes: message.write_to_bytes().unwrap(),
-            message: PbftMessageWrapper::ViewChange(message),
-        }
-    }
-
     pub fn info(&self) -> &PbftMessageInfo {
         match &self.message {
             PbftMessageWrapper::Message(m) => &m.get_info(),
             PbftMessageWrapper::NewView(m) => &m.get_info(),
-            PbftMessageWrapper::ViewChange(m) => &m.get_info(),
         }
     }
 
@@ -125,74 +107,49 @@ impl ParsedMessage {
         match self.message {
             PbftMessageWrapper::Message(ref mut m) => m.mut_info(),
             PbftMessageWrapper::NewView(ref mut m) => m.mut_info(),
-            PbftMessageWrapper::ViewChange(ref mut m) => m.mut_info(),
         }
     }
 
     /// Returns the `PbftBlock` for this message's wrapped `PbftMessage`.
     ///
-    /// Panics if it encounters a new view or view change message, as that should never happen.
+    /// Panics if it encounters a new view message, as that should never happen.
     pub fn get_block(&self) -> &PbftBlock {
         match &self.message {
             PbftMessageWrapper::Message(m) => m.get_block(),
             PbftMessageWrapper::NewView(_) => {
                 panic!("ParsedPeerMessage.get_block found a new view message!")
             }
-            PbftMessageWrapper::ViewChange(_) => {
-                panic!("ParsedPeerMessage.get_block found a view change message!")
-            }
         }
     }
 
     /// Returns the wrapped `PbftMessage`.
     ///
-    /// Panics if it encounters a new view or view change message, as that should never happen.
+    /// Panics if it encounters a new view message, as that should never happen.
     pub fn get_pbft_message(&self) -> &PbftMessage {
         match &self.message {
             PbftMessageWrapper::Message(m) => m,
             PbftMessageWrapper::NewView(_) => {
                 panic!("ParsedPeerMessage.get_pbft_message found a new view message!")
             }
-            PbftMessageWrapper::ViewChange(_) => {
-                panic!("ParsedPeerMessage.get_pbft_message found a view change message!")
-            }
         }
     }
 
     /// Returns the wrapped `PbftNewView`.
     ///
-    /// Panics if it encounters a regular or a view change message, as that should never happen.
+    /// Panics if it encounters a regular message, as that should never happen.
     pub fn get_new_view_message(&self) -> &PbftNewView {
         match &self.message {
             PbftMessageWrapper::Message(_) => {
                 panic!("ParsedPeerMessage.get_view_change_message found a pbft message!")
             }
             PbftMessageWrapper::NewView(m) => m,
-            PbftMessageWrapper::ViewChange(_) => {
-                panic!("ParsedPeerMessage.get_pbft_message found a view change message!")
-            }
-        }
-    }
-
-    /// Returns the wrapped `PbftViewChange`.
-    ///
-    /// Panics if it encounters a new view or regular message, as that should never happen.
-    pub fn get_view_change_message(&self) -> &PbftViewChange {
-        match &self.message {
-            PbftMessageWrapper::Message(_) => {
-                panic!("ParsedPeerMessage.get_view_change_message found a pbft message!")
-            }
-            PbftMessageWrapper::NewView(_) => {
-                panic!("ParsedPeerMessage.get_view_change_message found a new view message!")
-            }
-            PbftMessageWrapper::ViewChange(m) => m,
         }
     }
 
     /// Constructs a `ParsedMessage` from the given `PeerMessage`.
     ///
-    /// Attempts to parse the message contents as either a `PbftMessage`, `PbftNewView`, or
-    /// `PbftViewChange`, and wraps that in an internal enum.
+    /// Attempts to parse the message contents as either a `PbftMessage` or `PbftNewView` and wraps
+    /// that in an internal enum.
     pub fn from_peer_message(message: PeerMessage, from_self: bool) -> Result<Self, PbftError> {
         // Self-constructed messages aren't signed, since we don't have access to
         // the validator key necessary for signing them.
@@ -200,15 +157,15 @@ impl ParsedMessage {
             verify_sha512(&message.content, &message.header.content_sha512)?;
         }
         // This complex parsing is due to the fact that proto3 doesn't have any way of requiring
-        // fields, so a `PbftViewChange` can get parsed as a `PbftMessage` that doesn't have
-        // the `block` field defined. So, we try parsing a PbftMessage first, and if that fails
-        // or has a NewView message type, then try parsing it as a new view message, etc. If all
-        // fails, then it's probably a bad message.
+        // fields, so a `PbftNewView` can get parsed as a `PbftMessage` that doesn't have the
+        // `block` field defined. So, we try parsing a PbftMessage first, and if that fails or has
+        // a NewView message type, then try parsing it as a new view messag; if that fails, then
+        // it's probably a bad message.
         let parsed_message = protobuf::parse_from_bytes::<PbftMessage>(&message.content)
             .ok()
             .and_then(|m| {
                 let msg_type = m.get_info().get_msg_type();
-                if msg_type == "NewView" || msg_type == "ViewChange" {
+                if msg_type == "NewView" {
                     None
                 } else {
                     Some(PbftMessageWrapper::Message(m))
@@ -217,19 +174,7 @@ impl ParsedMessage {
             .or_else(|| {
                 protobuf::parse_from_bytes::<PbftNewView>(&message.content)
                     .ok()
-                    .and_then(|m| {
-                        let msg_type = m.get_info().get_msg_type();
-                        if msg_type == "ViewChange" {
-                            None
-                        } else {
-                            Some(PbftMessageWrapper::NewView(m))
-                        }
-                    })
-                    .or_else(|| {
-                        protobuf::parse_from_bytes::<PbftViewChange>(&message.content)
-                            .ok()
-                            .and_then(|m| Some(PbftMessageWrapper::ViewChange(m)))
-                    })
+                    .and_then(|m| Some(PbftMessageWrapper::NewView(m)))
             })
             .ok_or_else(|| PbftError::InternalError("Couldn't parse message!".into()))?;
 

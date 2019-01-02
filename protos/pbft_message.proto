@@ -63,16 +63,6 @@ message PbftNewView {
   repeated PbftSignedVote view_changes = 2;
 }
 
-// View change message, for when a node suspects the primary node is faulty
-message PbftViewChange {
-  // Message information
-  PbftMessageInfo info = 1;
-
-  // Consensus seal proving the correctness of the block committed at the
-  // sequence number specified in the message info
-  PbftSeal seal = 2;
-}
-
 message PbftSignedVote {
   // Serialized ConsensusPeerMessage header
   bytes header_bytes = 1;

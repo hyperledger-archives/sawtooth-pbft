@@ -50,9 +50,6 @@ pub struct PbftLog {
 
     /// Backlog of messages (from peers) with sender's ID
     backlog: VecDeque<ParsedMessage>,
-
-    /// PBFT consensus seals that are stored in case a view change is needed
-    seals: HashSet<PbftSealEntry>,
 }
 
 impl fmt::Display for PbftLog {
@@ -85,7 +82,6 @@ impl PbftLog {
             messages: HashSet::new(),
             max_log_size: config.max_log_size,
             backlog: VecDeque::new(),
-            seals: HashSet::new(),
         }
     }
 
@@ -182,34 +178,6 @@ impl PbftLog {
         Ok(())
     }
 
-    /// Add a PBFT consensus seal to the log
-    pub fn add_consensus_seal(&mut self, block_id: BlockId, seq_num: u64, seal: PbftSeal) {
-        self.seals.insert(PbftSealEntry {
-            block_id,
-            seq_num,
-            seal,
-        });
-    }
-
-    pub fn get_consensus_seal(&self, seq_num: u64) -> Result<PbftSeal, PbftError> {
-        let possible_seals: Vec<_> = self
-            .seals
-            .iter()
-            .filter(|seal| seal.seq_num == seq_num)
-            .cloned()
-            .collect();
-
-        if possible_seals.len() != 1 {
-            error!(
-                "There should be only one valid consensus seal for seq number {}",
-                seq_num as usize,
-            );
-            return Err(PbftError::WrongNumSeals(1, possible_seals.len()));
-        }
-
-        Ok(possible_seals.first().unwrap().clone().seal)
-    }
-
     /// Obtain all messages from the log that match a given type and sequence_number
     pub fn get_messages_of_type_seq(
         &self,
@@ -304,7 +272,7 @@ impl PbftLog {
 
     /// Garbage collect the log after we've committed a block
     #[allow(clippy::ptr_arg)]
-    pub fn garbage_collect(&mut self, current_seq_num: u64, block_id: &BlockId) {
+    pub fn garbage_collect(&mut self, current_seq_num: u64) {
         // If we've reached the max log size, filter out all old messages
         if self.messages.len() as u64 >= self.max_log_size {
             self.messages = self
@@ -318,14 +286,6 @@ impl PbftLog {
                 .cloned()
                 .collect();
         }
-
-        // Remove all seals except for the one in the block we just committed
-        self.seals = self
-            .seals
-            .iter()
-            .filter(|seal| &seal.block_id == block_id)
-            .cloned()
-            .collect();
     }
 
     pub fn push_backlog(&mut self, msg: ParsedMessage) {
@@ -521,7 +481,7 @@ mod tests {
         }
 
         log.max_log_size = 20;
-        log.garbage_collect(5, &BlockId::new());
+        log.garbage_collect(5);
 
         for old in 1..3 {
             for msg_type in &[

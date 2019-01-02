@@ -35,7 +35,7 @@ use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote, PbftViewChange,
+    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
 
@@ -216,8 +216,8 @@ impl PbftNode {
                     )));
                 }
 
-                // Verify each individual vote, and extract the signer ID from each PbftViewChange
-                // that it contains so we can verify the IDs themselves
+                // Verify each individual vote, and extract the signer ID from each ViewChange that
+                // it contains so we can verify the IDs themselves
                 let voter_ids =
                     new_view
                         .get_view_changes()
@@ -302,12 +302,19 @@ impl PbftNode {
     ///
     /// Return the signer ID of the wrapped PbftMessage for use in further verification
     fn verify_view_change_vote(vote: &PbftSignedVote, view: u64) -> Result<PeerId, PbftError> {
-        let message: PbftViewChange = protobuf::parse_from_bytes(&vote.get_message_bytes())
+        let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
             .map_err(PbftError::SerializationError)?;
+
+        if PbftMessageType::from(message.get_info().get_msg_type()) != PbftMessageType::ViewChange {
+            return Err(PbftError::InternalError(format!(
+                "Received view change vote that is not a ViewChange: {:?}",
+                message
+            )));
+        }
 
         if message.get_info().get_view() != view {
             return Err(PbftError::InternalError(format!(
-                "PbftViewChange's view ({:?}) does not match NewView's view ({:?})",
+                "ViewChange's view ({:?}) does not match NewView's view ({:?})",
                 message.get_info().get_view(),
                 view,
             )));
@@ -324,6 +331,13 @@ impl PbftNode {
     fn verify_consensus_vote(vote: &PbftSignedVote, seal: &PbftSeal) -> Result<Vec<u8>, PbftError> {
         let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
             .map_err(PbftError::SerializationError)?;
+
+        if PbftMessageType::from(message.get_info().get_msg_type()) != PbftMessageType::Commit {
+            return Err(PbftError::InternalError(format!(
+                "Received consensus vote that is not a Commit: {:?}",
+                message
+            )));
+        }
 
         if message.get_block().block_id != seal.previous_id {
             return Err(PbftError::InternalError(format!(
@@ -343,11 +357,11 @@ impl PbftNode {
         &mut self,
         block: &Block,
         state: &mut PbftState,
-    ) -> Result<Option<PbftSeal>, PbftError> {
+    ) -> Result<(), PbftError> {
         // We don't publish a consensus seal until block 1, so we don't verify it
         // until block 2
         if block.block_num < 2 {
-            return Ok(None);
+            return Ok(());
         }
 
         if block.payload.is_empty() {
@@ -418,7 +432,7 @@ impl PbftNode {
             )));
         }
 
-        Ok(Some(seal))
+        Ok(())
     }
 
     /// Use the given block's consensus seal to verify and commit the block this node is working on
@@ -518,11 +532,7 @@ impl PbftNode {
         }
 
         match self.verify_consensus_seal(&block, state) {
-            Ok(Some(seal)) => {
-                self.msg_log
-                    .add_consensus_seal(block.block_id.clone(), state.seq_num, seal);
-            }
-            Ok(None) => {}
+            Ok(_) => {}
             Err(err) => {
                 warn!(
                     "Failing block due to failed consensus seal verification and \
@@ -612,7 +622,7 @@ impl PbftNode {
         }
 
         // Tell the log to garbage collect if it needs to
-        self.msg_log.garbage_collect(state.seq_num, &block_id);
+        self.msg_log.garbage_collect(state.seq_num);
 
         // Restart the faulty primary timeout for the next block
         state.faulty_primary_timeout.start();
@@ -787,16 +797,14 @@ impl PbftNode {
         warn!("{}: Starting view change", state);
         state.mode = PbftMode::ViewChanging;
 
-        let info = handlers::make_msg_info(
+        let mut vc_msg = PbftMessage::new();
+        vc_msg.set_info(handlers::make_msg_info(
             &PbftMessageType::ViewChange,
             state.view + 1,
             state.seq_num - 1,
             state.id.clone(),
-        );
+        ));
 
-        let mut vc_msg = PbftViewChange::new();
-        vc_msg.set_info(info);
-        vc_msg.set_seal(self.msg_log.get_consensus_seal(state.seq_num - 1)?);
         let msg_bytes = vc_msg
             .write_to_bytes()
             .map_err(PbftError::SerializationError)?;
@@ -1115,12 +1123,11 @@ mod tests {
         let key = context.new_random_private_key().unwrap();
         let pub_key = context.get_public_key(&*key).unwrap();
 
-        let mut vc_msg = PbftViewChange::new();
+        let mut vc_msg = PbftMessage::new();
         let info = make_msg_info(&PbftMessageType::ViewChange, view, seq_num, peer);
         vc_msg.set_info(info);
-        vc_msg.set_seal(PbftSeal::new());
 
-        let mut message = ParsedMessage::from_view_change_message(vc_msg);
+        let mut message = ParsedMessage::from_pbft_message(vc_msg);
         let mut header = ConsensusPeerMessageHeader::new();
         header.set_signer_id(pub_key.as_slice().to_vec());
         header.set_content_sha512(hash_sha512(&message.message_bytes));
@@ -1415,10 +1422,6 @@ mod tests {
 
         assert!(!state1.is_primary());
 
-        node1
-            .msg_log
-            .add_consensus_seal(mock_block_id(0), 0, PbftSeal::new());
-
         // Receive 3 `ViewChange` messages
         for peer in 0..3 {
             // It takes f + 1 `ViewChange` messages to trigger a view change, if it wasn't started
@@ -1461,10 +1464,6 @@ mod tests {
         let cfg = mock_config(4);
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         assert_eq!(state1.mode, PbftMode::Normal);
-
-        node1
-            .msg_log
-            .add_consensus_seal(mock_block_id(0), 0, PbftSeal::new());
 
         node1
             .propose_view_change(&mut state1)
