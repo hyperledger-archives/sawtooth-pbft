@@ -80,7 +80,22 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         info!("{}: Got peer message: {}", state, msg.info());
 
-        match PbftMessageType::from(msg.info().msg_type.as_str()) {
+        let msg_type = PbftMessageType::from(msg.info().msg_type.as_str());
+
+        // If this node is in the process of a view change, ignore all messages except ViewChanges
+        // and NewViews
+        if state.mode == PbftMode::ViewChanging
+            && msg_type != PbftMessageType::ViewChange
+            && msg_type != PbftMessageType::NewView
+        {
+            warn!(
+                "{}: Node is view changing; ignoring {} message",
+                state, msg_type
+            );
+            return Ok(());
+        }
+
+        match msg_type {
             PbftMessageType::PrePrepare => {
                 // Message is added to log by handler if it is valid
                 match handlers::pre_prepare(state, &mut self.msg_log, &msg) {
