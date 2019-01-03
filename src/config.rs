@@ -60,7 +60,7 @@ impl PbftConfig {
             peers: Vec::new(),
             block_duration: Duration::from_millis(200),
             message_timeout: Duration::from_millis(10),
-            faulty_primary_timeout: Duration::from_millis(30_000),
+            faulty_primary_timeout: Duration::from_secs(30),
             forced_view_change_period: 30,
             max_log_size: 1000,
             storage: "memory".into(),
@@ -117,7 +117,7 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
         &mut config.message_timeout,
         "sawtooth.consensus.pbft.message_timeout",
     );
-    merge_millis_setting_if_set(
+    merge_secs_setting_if_set(
         &settings,
         &mut config.faulty_primary_timeout,
         "sawtooth.consensus.pbft.faulty_primary_timeout",
@@ -165,6 +165,19 @@ fn merge_setting_if_set_and_map<U, F, T>(
             *setting_field = map(setting_value);
         }
     }
+}
+
+fn merge_secs_setting_if_set(
+    settings_map: &HashMap<String, String>,
+    setting_field: &mut Duration,
+    setting_key: &str,
+) {
+    merge_setting_if_set_and_map(
+        settings_map,
+        setting_field,
+        setting_key,
+        Duration::from_secs,
+    )
 }
 
 fn merge_millis_setting_if_set(
