@@ -270,7 +270,16 @@ impl PbftNode {
                 }
 
                 // Update view
-                handlers::update_view(state, &mut *self.service, new_view.get_info().get_view())?
+                state.view = new_view.get_info().get_view();
+
+                // Initialize a new block if necessary
+                if state.is_primary() && state.working_block.is_none() {
+                    self.service
+                        .initialize_block(None)
+                        .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+                }
+
+                state.reset_to_start();
             }
 
             _ => warn!("Message type not implemented"),

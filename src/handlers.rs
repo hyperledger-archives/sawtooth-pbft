@@ -107,26 +107,6 @@ pub fn commit(
     Ok(())
 }
 
-/// Once the node receives a valid `NewView` message from the new primary, update the view.
-pub fn update_view(
-    state: &mut PbftState,
-    service: &mut Service,
-    view: u64,
-) -> Result<(), PbftError> {
-    state.view = view;
-
-    // Initialize a new block if necessary
-    if state.is_primary() && state.working_block.is_none() {
-        service
-            .initialize_block(None)
-            .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
-    }
-
-    state.reset_to_start();
-
-    Ok(())
-}
-
 /// Create a PbftMessageInfo struct with the desired type, view, sequence number, and signer ID
 pub fn make_msg_info(
     msg_type: &PbftMessageType,
