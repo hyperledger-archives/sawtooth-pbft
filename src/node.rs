@@ -108,6 +108,22 @@ impl PbftNode {
                         self.msg_log.push_backlog(msg);
                         return Ok(());
                     }
+                    Err(PbftError::MismatchedBlocks(blocks)) => {
+                        // Got PrePrepare(s) for the same sequence number and view, but they had
+                        // different block(s); primary is faulty
+                        for block in blocks {
+                            self.service
+                                .fail_block(block.get_block_id().to_vec())
+                                .map_err(|err| {
+                                    PbftError::InternalError(format!(
+                                        "Couldn't fail block: {}",
+                                        err
+                                    ))
+                                })?;
+                        }
+                        self.propose_view_change(state, state.view + 1)?;
+                        return Ok(());
+                    }
                     err => {
                         return err;
                     }
@@ -228,7 +244,21 @@ impl PbftNode {
             PbftMessageType::NewView => {
                 let new_view = msg.get_new_view_message();
 
-                self.verify_new_view(new_view, state)?;
+                match self.verify_new_view(new_view, state) {
+                    Err(PbftError::NotFromPrimary) => {
+                        // Not the new primary that's faulty, so no need to do a new view change,
+                        // just don't proceed any further
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        if let PbftMode::ViewChanging(v) = state.mode {
+                            warn!("NewView message is invalid, got error: {:?}, Starting new view change to view {}", e, v + 1);
+                            self.propose_view_change(state, v + 1)?;
+                            return Ok(());
+                        }
+                    }
+                    Ok(_) => {}
+                }
 
                 // Update view
                 state.view = new_view.get_info().get_view();

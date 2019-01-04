@@ -64,18 +64,29 @@ pub fn pre_prepare(
         return Err(PbftError::NoBlockNew);
     }
 
-    // Check that a `PrePrepare` doesn't already exist with this view and sequence number but a
-    // different block
-    if let Some(existing_msg) = msg_log.get_one_msg(message.info(), &PbftMessageType::PrePrepare) {
-        if existing_msg.get_block() != message.get_block() {
-            // If the blocks don't match between two PrePrepares with the same view and
-            // sequence number, the primary is faulty
-            error!("Found two PrePrepares at view {} and seq num {} with different blocks: {:?} and {:?}", message.info().get_view(), message.info().get_seq_num(), existing_msg.get_block(), message.get_block());
-            return Err(PbftError::MismatchedBlocks(vec![
-                existing_msg.get_block().clone(),
-                message.get_block().clone(),
-            ]));
-        }
+    // Check that no `PrePrepare`s already exist with this view and sequence number but a different
+    // block
+    let mut mismatched_blocks = msg_log
+        .get_messages_of_type_seq_view(
+            &PbftMessageType::PrePrepare,
+            message.info().get_seq_num(),
+            message.info().get_view(),
+        )
+        .iter()
+        .filter_map(|existing_msg| {
+            let block = existing_msg.get_block().clone();
+            if &block != message.get_block() {
+                Some(block)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if !mismatched_blocks.is_empty() {
+        error!("When checking PrePrepare {:?}, found PrePrepare(s) with same view and seq num but mismatched block(s): {:?}", message, mismatched_blocks);
+        mismatched_blocks.push(message.get_block().clone());
+        return Err(PbftError::MismatchedBlocks(mismatched_blocks));
     }
 
     msg_log.add_message(message.clone(), state)?;
