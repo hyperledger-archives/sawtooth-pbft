@@ -228,54 +228,7 @@ impl PbftNode {
             PbftMessageType::NewView => {
                 let new_view = msg.get_new_view_message();
 
-                // Make sure this is from the new primary
-                if PeerId::from(new_view.get_info().get_signer_id())
-                    != state.get_primary_id_at_view(new_view.get_info().get_view())
-                {
-                    return Err(PbftError::InternalError(format!(
-                        "Got NewView message ({:?}) from node ({:?}) that is not primary for new view",
-                        msg,
-                        new_view.get_info().get_signer_id(),
-                    )));
-                }
-
-                // Verify each individual vote, and extract the signer ID from each ViewChange that
-                // it contains so we can verify the IDs themselves
-                let voter_ids =
-                    new_view
-                        .get_view_changes()
-                        .iter()
-                        .try_fold(HashSet::new(), |mut ids, v| {
-                            Self::verify_view_change_vote(v, new_view.get_info().get_view())
-                                .and_then(|vid| Ok(ids.insert(vid)))?;
-                            Ok(ids)
-                        })?;
-
-                // All of the votes must come from known peers, and the new primary can't
-                // explicitly vote itself, since broacasting the NewView is an implicit vote. Check
-                // that the votes we've received are a subset of "peers - primary".
-                let peer_ids: HashSet<_> = state
-                    .peer_ids
-                    .iter()
-                    .cloned()
-                    .filter(|pid| pid != &PeerId::from(new_view.get_info().get_signer_id()))
-                    .collect();
-
-                if !voter_ids.is_subset(&peer_ids) {
-                    return Err(PbftError::InternalError(format!(
-                        "Got unexpected vote IDs when verifying NewView: {:?}",
-                        voter_ids.difference(&peer_ids).collect::<Vec<_>>()
-                    )));
-                }
-
-                // Check that we've received 2f votes, since the primary vote is implicit
-                if voter_ids.len() < 2 * state.f as usize {
-                    return Err(PbftError::InternalError(format!(
-                        "Need {} votes, only found {}!",
-                        2 * state.f,
-                        voter_ids.len()
-                    )));
-                }
+                self.verify_new_view(new_view, state)?;
 
                 // Update view
                 state.view = new_view.get_info().get_view();
@@ -356,6 +309,64 @@ impl PbftNode {
         Self::verify_vote_signer(vote)?;
 
         Ok(PeerId::from(message.get_info().get_signer_id()))
+    }
+
+    /// Verifies that the NewView messsage is valid
+    fn verify_new_view(
+        &mut self,
+        new_view: &PbftNewView,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        // Make sure this is from the new primary
+        if PeerId::from(new_view.get_info().get_signer_id())
+            != state.get_primary_id_at_view(new_view.get_info().get_view())
+        {
+            error!(
+                "Got NewView message ({:?}) from node that is not primary for new view",
+                new_view,
+            );
+            return Err(PbftError::NotFromPrimary);
+        }
+
+        // Verify each individual vote, and extract the signer ID from each ViewChange that
+        // it contains so we can verify the IDs themselves
+        let voter_ids =
+            new_view
+                .get_view_changes()
+                .iter()
+                .try_fold(HashSet::new(), |mut ids, v| {
+                    Self::verify_view_change_vote(v, new_view.get_info().get_view())
+                        .and_then(|vid| Ok(ids.insert(vid)))?;
+                    Ok(ids)
+                })?;
+
+        // All of the votes must come from known peers, and the new primary can't
+        // explicitly vote itself, since broacasting the NewView is an implicit vote. Check
+        // that the votes we've received are a subset of "peers - primary".
+        let peer_ids: HashSet<_> = state
+            .peer_ids
+            .iter()
+            .cloned()
+            .filter(|pid| pid != &PeerId::from(new_view.get_info().get_signer_id()))
+            .collect();
+
+        if !voter_ids.is_subset(&peer_ids) {
+            return Err(PbftError::InternalError(format!(
+                "Got unexpected vote IDs when verifying NewView: {:?}",
+                voter_ids.difference(&peer_ids).collect::<Vec<_>>()
+            )));
+        }
+
+        // Check that we've received 2f votes, since the primary vote is implicit
+        if voter_ids.len() < 2 * state.f as usize {
+            return Err(PbftError::InternalError(format!(
+                "Need {} votes, only found {}!",
+                2 * state.f,
+                voter_ids.len()
+            )));
+        }
+
+        Ok(())
     }
 
     /// Verifies an individual consensus vote
