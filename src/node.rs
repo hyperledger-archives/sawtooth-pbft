@@ -100,25 +100,7 @@ impl PbftNode {
 
         match msg_type {
             PbftMessageType::PrePrepare => self.handle_pre_prepare(msg, state)?,
-
-            PbftMessageType::Prepare => {
-                self.msg_log.add_message(msg.clone(), state)?;
-
-                // We only want to switch to committing if this message is for the current sequence
-                // number, we're in the Preparing phase, and the `Prepared` predicate is true
-                if msg.info().get_seq_num() == state.seq_num
-                    && state.phase == PbftPhase::Preparing
-                    && self.msg_log.check_prepared(&msg.info(), state.f)
-                {
-                    state.switch_phase(PbftPhase::Committing);
-                    self._broadcast_pbft_message(
-                        state.seq_num,
-                        &PbftMessageType::Commit,
-                        msg.get_block().clone(),
-                        state,
-                    )?;
-                }
-            }
+            PbftMessageType::Prepare => self.handle_prepare(msg, state)?,
 
             PbftMessageType::Commit => {
                 self.msg_log.add_message(msg.clone(), state)?;
@@ -266,7 +248,10 @@ impl PbftNode {
             .iter()
             .any(|block_new_msg| block_new_msg.get_block() == msg.get_block());
         if !block_new_exists {
-            warn!("No matching BlockNew found for PrePrepare {:?}; pushing to backlog", msg);
+            warn!(
+                "No matching BlockNew found for PrePrepare {:?}; pushing to backlog",
+                msg
+            );
             self.msg_log.push_backlog(msg);
             return Ok(());
         }
@@ -320,6 +305,51 @@ impl PbftNode {
             self.service
                 .check_blocks(vec![msg.get_block().clone().block_id])
                 .map_err(|_| PbftError::InternalError(String::from("Failed to check blocks")))?
+        }
+
+        Ok(())
+    }
+
+    /// Handle a `Prepare` message
+    ///
+    /// Once a `Prepare` for the current sequence number is accepted and added to the log, the node
+    /// will check if it has the required 2f + 1 `Prepared` messages to move on to the Committing
+    /// phase
+    fn handle_prepare(
+        &mut self,
+        msg: ParsedMessage,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        let info = msg.info().clone();
+        let block = msg.get_block().clone();
+
+        self.msg_log.add_message(msg, state)?;
+
+        // If this message is for the current sequence number and the node is in the Preparing
+        // phase, check if the node is ready to move on to the Committing phase
+        if info.get_seq_num() == state.seq_num && state.phase == PbftPhase::Preparing {
+            // The node is ready to move on to the Committing phase (i.e. the predicate `prepared`
+            // is true) when its log has 2f + 1 Prepare messages from different nodes that match
+            // the PrePrepare message received earlier (same view, sequence number, and block)
+            if let Some(pre_prep) = self
+                .msg_log
+                .get_one_msg(&info, &PbftMessageType::PrePrepare)
+            {
+                if self.msg_log.log_has_required_msgs(
+                    &PbftMessageType::Prepare,
+                    &pre_prep,
+                    true,
+                    2 * state.f + 1,
+                ) {
+                    state.switch_phase(PbftPhase::Committing);
+                    self._broadcast_pbft_message(
+                        state.seq_num,
+                        &PbftMessageType::Commit,
+                        block,
+                        state,
+                    )?;
+                }
+            }
         }
 
         Ok(())
