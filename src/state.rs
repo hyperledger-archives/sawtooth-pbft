@@ -18,6 +18,7 @@
 //! Information about a PBFT node's state
 
 use std::fmt;
+use std::time::Duration;
 
 use hex;
 use sawtooth_sdk::consensus::engine::PeerId;
@@ -41,15 +42,16 @@ pub enum PbftPhase {
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum PbftMode {
     Normal,
-    ViewChanging,
+    // Contains the view number of the view this node is attempting to change to
+    ViewChanging(u64),
 }
 
 impl fmt::Display for PbftState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let ast = if self.is_primary() { "*" } else { " " };
         let mode = match self.mode {
-            PbftMode::Normal => "N",
-            PbftMode::ViewChanging => "V",
+            PbftMode::Normal => String::from("N"),
+            PbftMode::ViewChanging(v) => format!("V{}", v),
         };
 
         let phase = match self.phase {
@@ -112,6 +114,15 @@ pub struct PbftState {
     /// node will initiate a view change.
     pub faulty_primary_timeout: Timeout,
 
+    /// When view changing, timer is used to make sure a valid NewView message is sent by the new
+    /// primary in a timely manner. If not, this node will start a different view change
+    pub view_change_timeout: Timeout,
+
+    /// The duration of the view change timeout; when a view change is initiated for view v + 1,
+    /// the timeout will be equal to the `view_change_duration`; if the timeout expires and the
+    /// node starts a change to view v + 2, the timeout will be `2 * view_change_duration`; etc.
+    pub view_change_duration: Duration,
+
     pub forced_view_change_period: u64,
 
     /// The current block this node is working on
@@ -140,6 +151,8 @@ impl PbftState {
             f,
             peer_ids: config.peers.clone(),
             faulty_primary_timeout: Timeout::new(config.faulty_primary_timeout),
+            view_change_timeout: Timeout::new(config.view_change_duration),
+            view_change_duration: config.view_change_duration,
             forced_view_change_period: config.forced_view_change_period,
             working_block: None,
         }

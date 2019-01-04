@@ -38,6 +38,7 @@ use crate::protos::pbft_message::{
     PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
+use crate::timing::Timeout;
 
 /// Contains all of the components for operating a PBFT node.
 pub struct PbftNode {
@@ -84,8 +85,10 @@ impl PbftNode {
 
         // If this node is in the process of a view change, ignore all messages except ViewChanges
         // and NewViews
-        if state.mode == PbftMode::ViewChanging
-            && msg_type != PbftMessageType::ViewChange
+        if match state.mode {
+            PbftMode::ViewChanging(_) => true,
+            _ => false,
+        } && msg_type != PbftMessageType::ViewChange
             && msg_type != PbftMessageType::NewView
         {
             warn!(
@@ -162,47 +165,52 @@ impl PbftNode {
             }
 
             PbftMessageType::ViewChange => {
-                // Ignore old view change messages
-                if msg.info().get_view() <= state.view {
+                // Ignore old view change messages (already on a view >= the one this message is
+                // for or already trying to change to a later view)
+                let msg_view = msg.info().get_view();
+                if msg_view <= state.view
+                    || match state.mode {
+                        PbftMode::ViewChanging(v) => msg_view < v,
+                        _ => false,
+                    }
+                {
                     return Ok(());
                 }
 
                 self.msg_log.add_message(msg.clone(), state)?;
 
                 // Even if we haven't detected a faulty primary yet, start view changing if we've
-                // received f + 1 ViewChange messages for the next view; this will prevent starting
-                // the view change too late
-                if state.mode != PbftMode::ViewChanging
-                    && msg.info().get_view() == state.view + 1
-                    && self.msg_log.log_has_required_msgs(
-                        &PbftMessageType::ViewChange,
-                        &msg,
-                        false,
-                        state.f + 1,
-                    )
-                {
-                    self.propose_view_change(state)?;
-                    return Ok(());
+                // received f + 1 ViewChange messages for this proposed view (but if we're already
+                // view changing, only do this for a later view); this will prevent starting the
+                // view change too late
+                if match state.mode {
+                    PbftMode::ViewChanging(v) => msg_view > v,
+                    PbftMode::Normal => true,
+                } && self.msg_log.log_has_required_msgs(
+                    &PbftMessageType::ViewChange,
+                    &msg,
+                    false,
+                    state.f + 1,
+                ) {
+                    self.propose_view_change(state, msg_view)?;
                 }
 
                 // If we're the new primary and we have the required 2f ViewChange messages (not
                 // including our own), broadcast the NewView message
                 let messages = self
                     .msg_log
-                    .get_messages_of_type_view(&PbftMessageType::ViewChange, msg.info().get_view())
+                    .get_messages_of_type_view(&PbftMessageType::ViewChange, msg_view)
                     .iter()
                     .cloned()
                     .filter(|msg| !msg.from_self)
                     .collect::<Vec<_>>();
 
-                if state.is_primary_at_view(msg.info().get_view())
-                    && messages.len() >= 2 * state.f as usize
-                {
+                if state.is_primary_at_view(msg_view) && messages.len() >= 2 * state.f as usize {
                     let mut new_view = PbftNewView::new();
 
                     new_view.set_info(handlers::make_msg_info(
                         &PbftMessageType::NewView,
-                        state.view + 1,
+                        msg_view,
                         state.seq_num - 1,
                         state.id.clone(),
                     ));
@@ -271,6 +279,7 @@ impl PbftNode {
 
                 // Update view
                 state.view = new_view.get_info().get_view();
+                state.view_change_timeout.stop();
 
                 // Initialize a new block if necessary
                 if state.is_primary() && state.working_block.is_none() {
@@ -566,7 +575,7 @@ impl PbftNode {
                 self.service.fail_block(block.block_id).map_err(|err| {
                     PbftError::InternalError(format!("Couldn't fail block: {}", err))
                 })?;
-                self.propose_view_change(state)?;
+                self.propose_view_change(state, state.view + 1)?;
                 return Err(err);
             }
         }
@@ -801,6 +810,11 @@ impl PbftNode {
         state.faulty_primary_timeout.start();
     }
 
+    /// Check to see if the view change timeout has expired
+    pub fn check_view_change_timeout_expired(&mut self, state: &mut PbftState) -> bool {
+        state.view_change_timeout.check_expired()
+    }
+
     /// Retry messages from the backlog queue
     pub fn retry_backlog(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
         let mut peer_res = Ok(());
@@ -812,19 +826,35 @@ impl PbftNode {
     }
 
     /// Initiate a view change when this node suspects that the primary is faulty
-    pub fn propose_view_change(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
-        // Do not send messages again if we are already in the midst of a view change
-        if state.mode == PbftMode::ViewChanging {
+    pub fn propose_view_change(
+        &mut self,
+        state: &mut PbftState,
+        view: u64,
+    ) -> Result<(), PbftError> {
+        // Do not send messages again if we are already in the midst of this or a later view change
+        if match state.mode {
+            PbftMode::ViewChanging(v) => view <= v,
+            _ => false,
+        } {
             return Ok(());
         }
 
         warn!("{}: Starting view change", state);
-        state.mode = PbftMode::ViewChanging;
+        state.mode = PbftMode::ViewChanging(view);
+
+        // Update the view change timeout and start it
+        state.view_change_timeout = Timeout::new(
+            state
+                .view_change_duration
+                .checked_mul((view - state.view) as u32)
+                .expect("View change timeout has overflowed."),
+        );
+        state.view_change_timeout.start();
 
         let mut vc_msg = PbftMessage::new();
         vc_msg.set_info(handlers::make_msg_info(
             &PbftMessageType::ViewChange,
-            state.view + 1,
+            view,
             state.seq_num - 1,
             state.id.clone(),
         ));
@@ -1453,7 +1483,7 @@ mod tests {
             if peer < 2 {
                 assert_eq!(state1.mode, PbftMode::Normal);
             } else {
-                assert_eq!(state1.mode, PbftMode::ViewChanging);
+                assert_eq!(state1.mode, PbftMode::ViewChanging(1));
             }
 
             node1
@@ -1489,11 +1519,12 @@ mod tests {
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         assert_eq!(state1.mode, PbftMode::Normal);
 
+        let new_view = state1.view + 1;
         node1
-            .propose_view_change(&mut state1)
+            .propose_view_change(&mut state1, new_view)
             .unwrap_or_else(handle_pbft_err);
 
-        assert_eq!(state1.mode, PbftMode::ViewChanging);
+        assert_eq!(state1.mode, PbftMode::ViewChanging(1));
     }
 
     /// Test that try_publish adds in the consensus seal
