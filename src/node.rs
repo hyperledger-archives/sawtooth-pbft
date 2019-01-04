@@ -33,7 +33,7 @@ use crate::error::PbftError;
 use crate::handlers;
 use crate::hash::verify_sha512;
 use crate::message_log::{PbftLog, PbftStableCheckpoint};
-use crate::message_type::{ParsedMessage, PbftHint, PbftMessageType};
+use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
     PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
 };
@@ -80,45 +80,44 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         info!("{}: Got peer message: {}", state, msg.info());
 
-        let msg_type = PbftMessageType::from(msg.info().msg_type.as_str());
-
-        // Handle a multicast protocol message
-        let multicast_hint = if msg_type.is_multicast() {
-            handlers::multicast_hint(state, &msg)
-        } else {
-            PbftHint::PresentMessage
-        };
-
-        match msg_type {
+        match PbftMessageType::from(msg.info().msg_type.as_str()) {
             PbftMessageType::PrePrepare => {
-                if !ignore_hint_pre_prepare(state, &msg) {
-                    self.msg_log
-                        .add_message_with_hint(msg.clone(), &multicast_hint, state)?;
+                // Message is added to log by handler if it is valid
+                match handlers::pre_prepare(state, &mut self.msg_log, &msg) {
+                    Ok(()) => {}
+                    Err(PbftError::NoBlockNew) => {
+                        // We can't perform consensus until the validator has this block
+                        self.msg_log.push_backlog(msg);
+                        return Ok(());
+                    }
+                    err => {
+                        return err;
+                    }
                 }
-
-                handlers::pre_prepare(state, &mut self.msg_log, &msg)?;
 
                 self.broadcast_pre_prepare(&msg, state)?;
             }
 
             PbftMessageType::Prepare => {
-                self.msg_log
-                    .add_message_with_hint(msg.clone(), &multicast_hint, state)?;
-
                 self.msg_log.add_message(msg.clone(), state)?;
 
-                if self.msg_log.check_prepared(&msg.info(), state.f)? {
+                // We only want to check the block if this message is for the current sequence
+                // number
+                if msg.info().get_seq_num() == state.seq_num
+                    && self.msg_log.check_prepared(&msg.info(), state.f)
+                {
                     self.check_blocks_if_not_checking(&msg, state)?;
                 }
             }
 
             PbftMessageType::Commit => {
-                self.msg_log
-                    .add_message_with_hint(msg.clone(), &multicast_hint, state)?;
-
                 self.msg_log.add_message(msg.clone(), state)?;
 
-                if self.msg_log.check_committable(&msg.info(), state.f)? {
+                // We only want to commit the block if this message is for the current sequence
+                // number
+                if msg.info().get_seq_num() == state.seq_num
+                    && self.msg_log.check_committable(&msg.info(), state.f)
+                {
                     self.commit_block_if_committing(&msg, state)?;
                 }
             }
@@ -242,10 +241,13 @@ impl PbftNode {
 
     #[allow(clippy::ptr_arg)]
     fn check_if_checkpoint_started(&mut self, msg: &ParsedMessage, state: &mut PbftState) -> bool {
-        // Not ready to receive checkpoint yet; only acceptable in NotStarted
-        if state.phase != PbftPhase::NotStarted {
+        // Not ready to receive checkpoint yet; only acceptable in PrePreparing
+        if state.phase != PbftPhase::PrePreparing {
             self.msg_log.push_backlog(msg.clone());
-            debug!("{}: Not in NotStarted; not handling checkpoint yet", state);
+            debug!(
+                "{}: Not in PrePreparing; not handling checkpoint yet",
+                state
+            );
             false
         } else {
             true
@@ -659,23 +661,14 @@ impl PbftNode {
             return Ok(());
         }
 
-        if block.block_num > head.block_num + 1
-            || state.switch_phase(PbftPhase::PrePreparing).is_none()
-        {
-            debug!(
-                "{}: Not ready for block {}, pushing to backlog",
-                state,
-                &hex::encode(block.block_id.clone())[..6]
-            );
-            self.msg_log.push_block_backlog(block.clone());
-            return Ok(());
-        }
-
         self.msg_log
             .add_message(ParsedMessage::from_pbft_message(msg), state)?;
-        state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id);
-        state.idle_timeout.stop();
-        state.commit_timeout.start();
+
+        if block.block_num == head.block_num + 1 {
+            state.working_block = WorkingBlockOption::TentativeWorkingBlock(block.block_id);
+            state.idle_timeout.stop();
+            state.commit_timeout.start();
+        }
 
         if state.is_primary() {
             let s = state.seq_num;
@@ -687,9 +680,9 @@ impl PbftNode {
     /// Handle a `BlockCommit` update from the Validator
     /// Since the block was successfully committed, the primary is not faulty and the view change
     /// timer can be stopped. If this node is a primary, then initialize a new block. Both node
-    /// roles transition back to the `NotStarted` phase. If this node is at a checkpoint after the
-    /// previously committed block (`checkpoint_period` blocks have been committed since the last
-    /// checkpoint), then start a checkpoint.
+    /// roles transition back to the `PrePreparing` phase. If this node is at a checkpoint after
+    /// the previously committed block (`checkpoint_period` blocks have been committed since the
+    /// last checkpoint), then start a checkpoint.
     pub fn on_block_commit(
         &mut self,
         block_id: BlockId,
@@ -708,7 +701,7 @@ impl PbftNode {
                     .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
             }
 
-            state.switch_phase(PbftPhase::NotStarted);
+            state.switch_phase(PbftPhase::PrePreparing);
             state.seq_num += 1;
 
             // Start a view change if we need to force one for fairness or if membership changed
@@ -716,7 +709,7 @@ impl PbftNode {
                 self.force_view_change(state);
             }
 
-            // Start a checkpoint in NotStarted, if we're at one
+            // Start a checkpoint in PrePreparing, if we're at one
             if self.msg_log.at_checkpoint() {
                 self.start_checkpoint(state)?;
             }
@@ -823,7 +816,7 @@ impl PbftNode {
         // Only the primary takes care of this, and we try publishing a block
         // on every engine loop, even if it's not yet ready. This isn't an error,
         // so just return Ok(()).
-        if !state.is_primary() || state.phase != PbftPhase::NotStarted {
+        if !state.is_primary() || state.phase != PbftPhase::PrePreparing {
             return Ok(());
         }
 
@@ -907,12 +900,6 @@ impl PbftNode {
         if let Some(msg) = self.msg_log.pop_backlog() {
             debug!("{}: Popping message from backlog", state);
             peer_res = self.on_peer_message(msg, state);
-        }
-        if state.mode == PbftMode::Normal && state.phase == PbftPhase::NotStarted {
-            if let Some(msg) = self.msg_log.pop_block_backlog() {
-                debug!("{}: Popping BlockNew from backlog", state);
-                self.on_block_new(msg, state)?;
-            }
         }
         peer_res
     }
@@ -1049,29 +1036,6 @@ impl PbftNode {
 
 fn check_if_secondary(state: &PbftState) -> bool {
     !state.is_primary() && state.mode != PbftMode::Checkpointing
-}
-
-fn ignore_hint_pre_prepare(state: &PbftState, pbft_message: &ParsedMessage) -> bool {
-    if let WorkingBlockOption::TentativeWorkingBlock(ref block_id) = state.working_block {
-        if block_id == &pbft_message.get_block().get_block_id()
-            && pbft_message.info().get_seq_num() == state.seq_num + 1
-        {
-            debug!("{}: Ignoring not ready and starting multicast", state);
-            true
-        } else {
-            debug!(
-                "{}: Not starting multicast; ({} != {} or {} != {} + 1)",
-                state,
-                &hex::encode(block_id.clone())[..6],
-                &hex::encode(pbft_message.get_block().get_block_id())[..6],
-                pbft_message.info().get_seq_num(),
-                state.seq_num,
-            );
-            false
-        }
-    } else {
-        false
-    }
 }
 
 /// Create a Protobuf binary representation of a PbftMessage from its info and corresponding Block
@@ -1366,7 +1330,7 @@ mod tests {
 
         assert_eq!(state.id, vec![0]);
         assert_eq!(state.view, 0);
-        assert_eq!(state.phase, PbftPhase::NotStarted);
+        assert_eq!(state.phase, PbftPhase::PrePreparing);
         assert_eq!(state.mode, PbftMode::Normal);
         assert_eq!(state.pre_checkpoint_mode, PbftMode::Normal);
         assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
@@ -1481,7 +1445,7 @@ mod tests {
 
         node.on_block_new(block, &mut state).unwrap();
 
-        assert_eq!(state.phase, PbftPhase::NotStarted);
+        assert_eq!(state.phase, PbftPhase::PrePreparing);
         assert_eq!(state.working_block, WorkingBlockOption::NoWorkingBlock);
     }
 
@@ -1509,7 +1473,7 @@ mod tests {
         assert_eq!(state0.seq_num, 1);
         node.on_block_commit(mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
-        assert_eq!(state0.phase, PbftPhase::NotStarted);
+        assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.seq_num, 2);
     }
 
@@ -1565,7 +1529,7 @@ mod tests {
 
         // Spoof the `commit_blocks()` call
         assert!(node1.on_block_commit(mock_block_id(1), &mut state1).is_ok());
-        assert_eq!(state1.phase, PbftPhase::NotStarted);
+        assert_eq!(state1.phase, PbftPhase::PrePreparing);
 
         // Make sure the block was actually committed
         let mut f = File::open(BLOCK_FILE).unwrap();
@@ -1687,7 +1651,7 @@ mod tests {
                 .unwrap();
         }
 
-        state0.phase = PbftPhase::NotStarted;
+        state0.phase = PbftPhase::PrePreparing;
         state0.working_block = WorkingBlockOption::WorkingBlock(pbft_block0.clone());
 
         node0.try_publish(&mut state0).unwrap();

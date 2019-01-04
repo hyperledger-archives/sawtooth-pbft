@@ -44,10 +44,6 @@ pub enum PbftError {
     /// The message is in a different view than this node is
     ViewMismatch(usize, usize),
 
-    /// The message has a sequence number that is not between watermarks
-    /// (message's sequence number, low watermark, high watermark)
-    InvalidSequenceNumber(usize, usize, usize),
-
     /// Internal PBFT error (description)
     InternalError(String),
 
@@ -68,6 +64,9 @@ pub enum PbftError {
 
     /// The message should only come from the primary, but was sent by a secondary node
     NotFromPrimary,
+
+    /// Got a PrePrepare without a matching BlockNew
+    NoBlockNew,
 }
 
 impl Error for PbftError {
@@ -79,7 +78,6 @@ impl Error for PbftError {
             BlockMismatch(_, _) => "BlockMismatch",
             MessageMismatch(_) => "MessageMismatch",
             ViewMismatch(_, _) => "ViewMismatch",
-            InvalidSequenceNumber(_, _, _) => "InvalidSequenceNumber",
             InternalError(_) => "InternalError",
             NodeNotFound => "NodeNotFound",
             WrongNumBlocks => "WrongNumBlocks",
@@ -87,6 +85,7 @@ impl Error for PbftError {
             NoWorkingBlock => "NoWorkingBlock",
             NotReadyForMessage => "NotReadyForMessage",
             NotFromPrimary => "NotFromPrimary",
+            NoBlockNew => "NoBlockNew",
         }
     }
 }
@@ -103,11 +102,6 @@ impl fmt::Display for PbftError {
             ),
             PbftError::MessageMismatch(t) => write!(f, "{:?} message mismatch", t),
             PbftError::ViewMismatch(exp, got) => write!(f, "View mismatch: {} != {}", exp, got),
-            PbftError::InvalidSequenceNumber(got, low, high) => write!(
-                f,
-                "Invalid sequence number: {} is not in range [{},{})",
-                got, low, high
-            ),
             PbftError::BlockMismatch(exp, got) => write!(
                 f,
                 "{:?} != {:?}",
@@ -124,6 +118,7 @@ impl fmt::Display for PbftError {
                 f,
                 "Message should be from primary, but was sent by secondary"
             ),
+            PbftError::NoBlockNew => write!(f, "Got a PrePrepare without a matching BlockNew"),
         }
     }
 }

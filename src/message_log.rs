@@ -24,11 +24,10 @@ use std::fmt;
 
 use hex;
 use itertools::Itertools;
-use sawtooth_sdk::consensus::engine::Block;
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
-use crate::message_type::{ParsedMessage, PbftHint, PbftMessageType};
+use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{PbftMessage, PbftMessageInfo};
 use crate::state::PbftState;
 
@@ -44,13 +43,8 @@ pub struct PbftLog {
     /// Generic messages (BlockNew, PrePrepare, Prepare, Commit, Checkpoint)
     messages: HashSet<ParsedMessage>,
 
-    /// Watermarks (minimum/maximum sequence numbers)
-    /// Ensure that log does not get too large
-    low_water_mark: u64,
-    high_water_mark: u64,
-
     /// Maximum log size, defined from on-chain settings
-    max_log_size: u64,
+    _max_log_size: u64,
 
     /// How many cycles through the algorithm we've done (BlockNew messages)
     cycles: u64,
@@ -60,9 +54,6 @@ pub struct PbftLog {
 
     /// Backlog of messages (from peers) with sender's ID
     backlog: VecDeque<ParsedMessage>,
-
-    /// Backlog of blocks (from BlockNews messages)
-    block_backlog: VecDeque<Block>,
 
     /// The most recent checkpoint that contains proof
     pub latest_stable_checkpoint: Option<PbftStableCheckpoint>,
@@ -88,13 +79,7 @@ impl fmt::Display for PbftLog {
             })
             .collect();
 
-        write!(
-            f,
-            "\nPbftLog ({}, {}):\n{}",
-            self.low_water_mark,
-            self.high_water_mark,
-            string_infos.join("\n")
-        )
+        write!(f, "\nPbftLog:\n{}", string_infos.join("\n"))
     }
 }
 
@@ -102,49 +87,26 @@ impl PbftLog {
     pub fn new(config: &PbftConfig) -> Self {
         PbftLog {
             messages: HashSet::new(),
-            low_water_mark: 0,
             cycles: 0,
             checkpoint_period: config.checkpoint_period,
-            high_water_mark: config.max_log_size,
-            max_log_size: config.max_log_size,
+            _max_log_size: config.max_log_size,
             backlog: VecDeque::new(),
-            block_backlog: VecDeque::new(),
             latest_stable_checkpoint: None,
         }
     }
 
     /// `check_prepared` predicate
     /// `check_prepared` is true for this node if the following messages are present in its log:
-    ///  + The original `BlockNew` message
     ///  + A `PrePrepare` message matching the original message (in the current view)
     ///  + `2f + 1` matching `Prepare` messages from different nodes that match
     ///    `PrePrepare` message above (including its own)
-    pub fn check_prepared(&self, info: &PbftMessageInfo, f: u64) -> Result<bool, PbftError> {
-        // Check if we have both BlockNew and PrePrepare
-        let block_new_msg = self.get_one_msg(info, &PbftMessageType::BlockNew);
-        let preprep_msg = self.get_one_msg(info, &PbftMessageType::PrePrepare);
-
-        if block_new_msg.is_none() || preprep_msg.is_none() {
-            return Ok(false);
+    pub fn check_prepared(&self, info: &PbftMessageInfo, f: u64) -> bool {
+        match self.get_one_msg(info, &PbftMessageType::PrePrepare) {
+            Some(msg) => {
+                self.log_has_required_msgs(&PbftMessageType::Prepare, &msg, true, 2 * f + 1)
+            }
+            None => false,
         }
-
-        let block_new_msg = block_new_msg.unwrap();
-        let preprep_msg = preprep_msg.unwrap();
-
-        // Ensure BlockNew and PrePrepare match
-        if block_new_msg.get_block() != preprep_msg.get_block() {
-            error!(
-                "BlockNew {:?} does not match PrePrepare {:?}",
-                block_new_msg, preprep_msg
-            );
-            return Err(PbftError::BlockMismatch(
-                block_new_msg.get_block().clone(),
-                preprep_msg.get_block().clone(),
-            ));
-        }
-
-        // Check if we have 2f + 1 matching Prepares
-        Ok(self.log_has_required_msgs(&PbftMessageType::Prepare, &preprep_msg, true, 2 * f + 1))
     }
 
     /// Checks if the node is ready to enter the `Committing` phase based on the `PbftMessage` received
@@ -153,17 +115,17 @@ impl PbftLog {
     ///   + `check_prepared` is true
     ///   + This node has accepted `2f + 1` `Commit` messages, including its own, that match the
     ///     corresponding `PrePrepare` message
-    pub fn check_committable(&self, info: &PbftMessageInfo, f: u64) -> Result<bool, PbftError> {
+    pub fn check_committable(&self, info: &PbftMessageInfo, f: u64) -> bool {
         // Check if Prepared predicate is true
-        if !self.check_prepared(info, f)? {
-            return Ok(false);
-        }
-
-        // Check if we have 2f + 1 matching Commits
-        let preprep_msg = self
-            .get_one_msg(info, &PbftMessageType::PrePrepare)
-            .unwrap();
-        Ok(self.log_has_required_msgs(&PbftMessageType::Commit, &preprep_msg, true, 2 * f + 1))
+        self.check_prepared(info, f)
+            && self.log_has_required_msgs(
+                &PbftMessageType::Commit,
+                &self
+                    .get_one_msg(info, &PbftMessageType::PrePrepare)
+                    .unwrap(),
+                true,
+                2 * f + 1,
+            )
     }
 
     /// Get one message matching the type, view number, and sequence number
@@ -206,23 +168,6 @@ impl PbftLog {
 
     /// Add a generic PBFT message to the log
     pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) -> Result<(), PbftError> {
-        // The sequence number must be between the watermarks
-        if msg.info().get_seq_num() >= self.high_water_mark
-            || msg.info().get_seq_num() < self.low_water_mark
-        {
-            error!(
-                "Got message with invalid sequence number: {} is not in range [{},{})",
-                msg.info().get_seq_num(),
-                self.low_water_mark,
-                self.high_water_mark,
-            );
-            return Err(PbftError::InvalidSequenceNumber(
-                msg.info().get_seq_num() as usize,
-                self.low_water_mark as usize,
-                self.high_water_mark as usize,
-            ));
-        }
-
         // Except for Checkpoints and ViewChanges, the message must be for the current view to be
         // accepted
         let msg_type = PbftMessageType::from(msg.info().get_msg_type());
@@ -250,32 +195,6 @@ impl PbftLog {
         trace!("{}", self);
 
         Ok(())
-    }
-
-    /// Adds a message the (back)log, based on the given `PbftHint`
-    ///
-    /// Past messages are added to the general message log
-    /// Future messages are added to the backlog of messages to handle at a later time
-    /// Present messages are ignored, as they're generally added immediately after
-    /// this method is called by the calling code, except for `PrePrepare` messages
-    #[allow(clippy::ptr_arg)]
-    pub fn add_message_with_hint(
-        &mut self,
-        msg: ParsedMessage,
-        hint: &PbftHint,
-        state: &PbftState,
-    ) -> Result<(), PbftError> {
-        match hint {
-            PbftHint::FutureMessage => {
-                self.push_backlog(msg);
-                Err(PbftError::NotReadyForMessage)
-            }
-            PbftHint::PastMessage => {
-                self.add_message(msg, state)?;
-                Err(PbftError::NotReadyForMessage)
-            }
-            PbftHint::PresentMessage => Ok(()),
-        }
     }
 
     /// Obtain all messages from the log that match a given type and sequence_number
@@ -371,8 +290,6 @@ impl PbftLog {
 
     /// Garbage collect the log, and create a stable checkpoint
     pub fn garbage_collect(&mut self, stable_checkpoint: u64, view: u64) {
-        self.low_water_mark = stable_checkpoint;
-        self.high_water_mark = self.low_water_mark + self.max_log_size;
         self.cycles = 0;
 
         // Update the stable checkpoint
@@ -408,14 +325,6 @@ impl PbftLog {
 
     pub fn pop_backlog(&mut self) -> Option<ParsedMessage> {
         self.backlog.pop_front()
-    }
-
-    pub fn push_block_backlog(&mut self, msg: Block) {
-        self.block_backlog.push_back(msg);
-    }
-
-    pub fn pop_block_backlog(&mut self) -> Option<Block> {
-        self.block_backlog.pop_front()
     }
 }
 
@@ -500,8 +409,8 @@ mod tests {
         log.add_message(msg.clone(), &state).unwrap();
 
         assert_eq!(log.cycles, 1);
-        assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
-        assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
+        assert!(!log.check_prepared(&msg.info(), 1 as u64));
+        assert!(!log.check_committable(&msg.info(), 1 as u64));
 
         let msg = make_msg(
             &PbftMessageType::PrePrepare,
@@ -511,8 +420,8 @@ mod tests {
             get_peer_id(&cfg, 0),
         );
         log.add_message(msg.clone(), &state).unwrap();
-        assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
-        assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
+        assert!(!log.check_prepared(&msg.info(), 1 as u64));
+        assert!(!log.check_committable(&msg.info(), 1 as u64));
 
         for peer in 0..4 {
             let msg = make_msg(
@@ -525,11 +434,11 @@ mod tests {
 
             log.add_message(msg.clone(), &state).unwrap();
             if peer < 2 {
-                assert!(!log.check_prepared(&msg.info(), 1 as u64).unwrap());
-                assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
+                assert!(!log.check_prepared(&msg.info(), 1 as u64));
+                assert!(!log.check_committable(&msg.info(), 1 as u64));
             } else {
-                assert!(log.check_prepared(&msg.info(), 1 as u64).unwrap());
-                assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
+                assert!(log.check_prepared(&msg.info(), 1 as u64));
+                assert!(!log.check_committable(&msg.info(), 1 as u64));
             }
         }
 
@@ -544,9 +453,9 @@ mod tests {
 
             log.add_message(msg.clone(), &state).unwrap();
             if peer < 2 {
-                assert!(!log.check_committable(&msg.info(), 1 as u64).unwrap());
+                assert!(!log.check_committable(&msg.info(), 1 as u64));
             } else {
-                assert!(log.check_committable(&msg.info(), 1 as u64).unwrap());
+                assert!(log.check_committable(&msg.info(), 1 as u64));
             }
         }
     }

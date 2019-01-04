@@ -26,7 +26,7 @@ use sawtooth_sdk::consensus::service::Service;
 use crate::error::PbftError;
 use crate::message_log::PbftLog;
 use crate::message_type::ParsedMessage;
-use crate::message_type::{PbftHint, PbftMessageType};
+use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{PbftBlock, PbftMessageInfo};
 use crate::state::{PbftPhase, PbftState, WorkingBlockOption};
 
@@ -63,7 +63,7 @@ pub fn pre_prepare(
         .any(|block_new_msg| block_new_msg.get_block() == message.get_block());
     if !block_new_exists {
         error!("No matching BlockNew found for PrePrepare {:?}", message);
-        return Err(PbftError::WrongNumMessages(PbftMessageType::BlockNew, 1, 0));
+        return Err(PbftError::NoBlockNew);
     }
 
     // Check that a `PrePrepare` doesn't already exist with this view and sequence number but a
@@ -82,8 +82,11 @@ pub fn pre_prepare(
 
     msg_log.add_message(message.clone(), state)?;
 
-    state.switch_phase(PbftPhase::Preparing);
-    state.working_block = WorkingBlockOption::WorkingBlock(message.get_block().clone());
+    // We only switch to Preparing if this is the PrePrepare for the current sequence number
+    if message.info().get_seq_num() == state.seq_num {
+        state.switch_phase(PbftPhase::Preparing);
+        state.working_block = WorkingBlockOption::WorkingBlock(message.get_block().clone());
+    }
 
     Ok(())
 }
@@ -111,68 +114,6 @@ pub fn commit(
     state.working_block = WorkingBlockOption::NoWorkingBlock;
 
     Ok(())
-}
-
-/// Decide if this message is a future message, past message, or current message.
-/// This function defers action on future and past messages to the individual message handlers,
-/// which in turn call `action_from_hint()`, and either push to backlog for future messages, or add
-/// to message log for past messages. This usually only makes sense for regular multicast messages
-/// (`PrePrepare`, `Prepare`, and `Commit`)
-pub fn multicast_hint(state: &PbftState, message: &ParsedMessage) -> PbftHint {
-    let msg_info = message.info();
-    let msg_type = PbftMessageType::from(msg_info.get_msg_type());
-
-    if msg_info.get_seq_num() > state.seq_num {
-        debug!(
-            "{}: seq {} > {}, accept all.",
-            state,
-            msg_info.get_seq_num(),
-            state.seq_num
-        );
-        return PbftHint::FutureMessage;
-    } else if msg_info.get_seq_num() == state.seq_num {
-        if state.working_block.is_none() {
-            debug!(
-                "{}: seq {} == {}, in limbo",
-                state,
-                msg_info.get_seq_num(),
-                state.seq_num,
-            );
-            return PbftHint::PastMessage;
-        }
-        let expecting_type = state.check_msg_type();
-        if msg_type < expecting_type {
-            debug!(
-                "{}: seq {} == {}, {} < {}, only add to log",
-                state, state.seq_num, state.seq_num, msg_type, expecting_type,
-            );
-            return PbftHint::PastMessage;
-        } else if msg_type > expecting_type {
-            debug!(
-                "{}: seq {} == {}, {} > {}, push to backlog.",
-                state, state.seq_num, state.seq_num, msg_type, expecting_type,
-            );
-            return PbftHint::FutureMessage;
-        }
-    } else {
-        if state.working_block.is_none() {
-            debug!(
-                "{}: seq {} == {}, in limbo",
-                state,
-                msg_info.get_seq_num(),
-                state.seq_num,
-            );
-            return PbftHint::PastMessage;
-        }
-        debug!(
-            "{}: seq {} < {}, skip but add to log.",
-            state,
-            msg_info.get_seq_num(),
-            state.seq_num
-        );
-        return PbftHint::PastMessage;
-    }
-    PbftHint::PresentMessage
 }
 
 /// Handle a `ViewChange` message
@@ -366,40 +307,5 @@ mod tests {
 
         assert_eq!(state0.seq_num, 1);
         assert_eq!(state1.seq_num, 1);
-    }
-
-    #[test]
-    fn test_multicast_hint() {
-        let cfg = config::mock_config(4);
-        let mut state = PbftState::new(vec![0], 0, &cfg);
-        state.seq_num = 5;
-
-        // Past (past sequence number)
-        let past_msg = mock_msg(&PbftMessageType::Prepare, 0, 1, mock_block(1), vec![0]);
-        assert_eq!(multicast_hint(&state, &past_msg), PbftHint::PastMessage);
-
-        // Past (current sequence number, past phase)
-        state.phase = PbftPhase::Committing;
-        state.working_block =
-            WorkingBlockOption::WorkingBlock(pbft_block_from_block(mock_block(5)));
-        let past_msg = mock_msg(&PbftMessageType::Prepare, 0, 5, mock_block(5), vec![0]);
-        assert_eq!(multicast_hint(&state, &past_msg), PbftHint::PastMessage);
-
-        // Present
-        let present_msg = mock_msg(&PbftMessageType::Commit, 0, 5, mock_block(5), vec![0]);
-        assert_eq!(
-            multicast_hint(&state, &present_msg),
-            PbftHint::PresentMessage
-        );
-
-        // Future (current sequence number, future phase)
-        state.phase = PbftPhase::Preparing;
-        let future_msg = mock_msg(&PbftMessageType::Commit, 0, 5, mock_block(5), vec![0]);
-        assert_eq!(multicast_hint(&state, &future_msg), PbftHint::FutureMessage);
-
-        // Future (future sequence number)
-        state.phase = PbftPhase::NotStarted;
-        let future_msg = mock_msg(&PbftMessageType::Commit, 0, 15, mock_block(15), vec![0]);
-        assert_eq!(multicast_hint(&state, &future_msg), PbftHint::FutureMessage);
     }
 }
