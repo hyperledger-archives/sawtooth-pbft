@@ -71,10 +71,10 @@ pub fn pre_prepare(
             // If the blocks don't match between two PrePrepares with the same view and
             // sequence number, the primary is faulty
             error!("Found two PrePrepares at view {} and seq num {} with different blocks: {:?} and {:?}", message.info().get_view(), message.info().get_seq_num(), existing_msg.get_block(), message.get_block());
-            return Err(PbftError::BlockMismatch(
+            return Err(PbftError::MismatchedBlocks(vec![
                 existing_msg.get_block().clone(),
                 message.get_block().clone(),
-            ));
+            ]));
         }
     }
 

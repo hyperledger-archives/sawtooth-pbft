@@ -38,8 +38,8 @@ pub enum PbftError {
     /// Too many or too few consenus seals found (expected, got)
     WrongNumSeals(usize, usize),
 
-    /// The block in the message doesn't match the one this node was expecting
-    BlockMismatch(PbftBlock, PbftBlock),
+    /// The blocks don't match but should
+    MismatchedBlocks(Vec<PbftBlock>),
 
     /// The message information doesn't match the one this node was expecting
     MessageMismatch(PbftMessageType),
@@ -79,7 +79,7 @@ impl Error for PbftError {
             SerializationError(_) => "SerializationError",
             WrongNumMessages(_, _, _) => "WrongNumMessages",
             WrongNumSeals(_, _) => "WrongNumSeals",
-            BlockMismatch(_, _) => "BlockMismatch",
+            MismatchedBlocks(_) => "MismatchedBlocks",
             MessageMismatch(_) => "MessageMismatch",
             ViewMismatch(_, _) => "ViewMismatch",
             InternalError(_) => "InternalError",
@@ -111,11 +111,10 @@ impl fmt::Display for PbftError {
             ),
             PbftError::MessageMismatch(t) => write!(f, "{:?} message mismatch", t),
             PbftError::ViewMismatch(exp, got) => write!(f, "View mismatch: {} != {}", exp, got),
-            PbftError::BlockMismatch(exp, got) => write!(
+            PbftError::MismatchedBlocks(blocks) => write!(
                 f,
-                "{:?} != {:?}",
-                &hex::encode(exp.get_block_id())[..6],
-                &hex::encode(got.get_block_id())[..6]
+                "Mismatched blocks: {:?}",
+                blocks.iter().map(|block| hex::encode(block.get_block_id()))
             ),
             PbftError::NodeNotFound => write!(f, "Couldn't find node in the network"),
             PbftError::WrongNumBlocks => write!(f, "Incorrect number of blocks"),

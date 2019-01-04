@@ -485,10 +485,10 @@ impl PbftNode {
                         "Block didn't match for catchup: {:?} {:?}",
                         block, working_block
                     );
-                    return Err(PbftError::BlockMismatch(
+                    return Err(PbftError::MismatchedBlocks(vec![
                         pbft_block_from_block(block.clone()),
                         working_block.clone(),
-                    ));
+                    ]));
                 }
             }
             None => {
