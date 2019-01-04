@@ -99,54 +99,7 @@ impl PbftNode {
         }
 
         match msg_type {
-            PbftMessageType::PrePrepare => {
-                // Message is added to log by handler if it is valid
-                match handlers::pre_prepare(state, &mut self.msg_log, &msg) {
-                    Ok(()) => {}
-                    Err(PbftError::NoBlockNew) => {
-                        // We can't perform consensus until the validator has this block
-                        self.msg_log.push_backlog(msg);
-                        return Ok(());
-                    }
-                    Err(PbftError::MismatchedBlocks(blocks)) => {
-                        // Got PrePrepare(s) for the same sequence number and view, but they had
-                        // different block(s); primary is faulty
-                        for block in blocks {
-                            self.service
-                                .fail_block(block.get_block_id().to_vec())
-                                .map_err(|err| {
-                                    PbftError::InternalError(format!(
-                                        "Couldn't fail block: {}",
-                                        err
-                                    ))
-                                })?;
-                        }
-                        self.propose_view_change(state, state.view + 1)?;
-                        return Ok(());
-                    }
-                    err => {
-                        return err;
-                    }
-                }
-
-                // We only want to check the block if this message is for the current sequence
-                // number and we're in the PrePreparing phase
-                if msg.info().get_seq_num() == state.seq_num
-                    && state.phase == PbftPhase::PrePreparing
-                {
-                    state.switch_phase(PbftPhase::Checking);
-
-                    // We can also stop the view change timer, since we received a new block and a
-                    // valid PrePrepare in time
-                    state.faulty_primary_timeout.stop();
-
-                    self.service
-                        .check_blocks(vec![msg.get_block().clone().block_id])
-                        .map_err(|_| {
-                            PbftError::InternalError(String::from("Failed to check blocks"))
-                        })?
-                }
-            }
+            PbftMessageType::PrePrepare => self.handle_pre_prepare(msg, state)?,
 
             PbftMessageType::Prepare => {
                 self.msg_log.add_message(msg.clone(), state)?;
@@ -276,6 +229,99 @@ impl PbftNode {
 
             _ => warn!("Message type not implemented"),
         }
+        Ok(())
+    }
+
+    /// Handle a `PrePrepare` message
+    ///
+    /// A `PrePrepare` message is accepted and added to the log if the following are true:
+    /// - The message signature is valid (already verified by validator)
+    /// - The message is from the primary
+    /// - There is a matching BlockNew message
+    /// - A `PrePrepare` message does not already exist at this view and sequence number with a
+    ///   different block
+    /// - The message's view matches the node's current view (handled by message log)
+    ///
+    /// Once a `PrePrepare` for the current sequence number is accepted and added to the log, the
+    /// node node will instruct the validator to validate the block
+    fn handle_pre_prepare(
+        &mut self,
+        msg: ParsedMessage,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        // Check that the message is from the current primary
+        if PeerId::from(msg.info().get_signer_id()) != state.get_primary_id() {
+            warn!(
+                "Got PrePrepare from a secondary node {:?}; ignoring message",
+                msg.info().get_signer_id()
+            );
+            return Ok(());
+        }
+
+        // Check that there is a matching BlockNew message; if not, add the PrePrepare to the
+        // backlog because we can't perform consensus until the validator has this block
+        let block_new_exists = self
+            .msg_log
+            .get_messages_of_type_seq(&PbftMessageType::BlockNew, msg.info().get_seq_num())
+            .iter()
+            .any(|block_new_msg| block_new_msg.get_block() == msg.get_block());
+        if !block_new_exists {
+            warn!("No matching BlockNew found for PrePrepare {:?}; pushing to backlog", msg);
+            self.msg_log.push_backlog(msg);
+            return Ok(());
+        }
+
+        // Check that no `PrePrepare`s already exist with this view and sequence number but a
+        // different block; if this is violated, the primary is faulty so initiate a view change
+        let mut mismatched_blocks = self
+            .msg_log
+            .get_messages_of_type_seq_view(
+                &PbftMessageType::PrePrepare,
+                msg.info().get_seq_num(),
+                msg.info().get_view(),
+            )
+            .iter()
+            .filter_map(|existing_msg| {
+                let block = existing_msg.get_block().clone();
+                if &block != msg.get_block() {
+                    Some(block)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if !mismatched_blocks.is_empty() {
+            warn!("When checking PrePrepare {:?}, found PrePrepare(s) with same view and seq num but mismatched block(s): {:?}", msg, mismatched_blocks);
+            mismatched_blocks.push(msg.get_block().clone());
+            for block in mismatched_blocks {
+                self.service
+                    .fail_block(block.get_block_id().to_vec())
+                    .map_err(|err| {
+                        PbftError::InternalError(format!("Couldn't fail block: {}", err))
+                    })?;
+            }
+            self.propose_view_change(state, state.view + 1)?;
+            return Ok(());
+        }
+
+        // Add message to the log
+        self.msg_log.add_message(msg.clone(), state)?;
+
+        // If this message is for the current sequence number and the node is in the PrePreparing
+        // phase, check the block
+        if msg.info().get_seq_num() == state.seq_num && state.phase == PbftPhase::PrePreparing {
+            state.switch_phase(PbftPhase::Checking);
+
+            // We can also stop the view change timer, since we received a new block and a
+            // valid PrePrepare in time
+            state.faulty_primary_timeout.stop();
+
+            self.service
+                .check_blocks(vec![msg.get_block().clone().block_id])
+                .map_err(|_| PbftError::InternalError(String::from("Failed to check blocks")))?
+        }
+
         Ok(())
     }
 
@@ -1408,6 +1454,36 @@ mod tests {
         block.payload = seal;
 
         node.on_block_new(block, &mut state).unwrap();
+    }
+
+    /// Make sure that a valid `PrePrepare` is accepted
+    #[test]
+    fn test_pre_prepare() {
+        let cfg = mock_config(4);
+        let mut node0 = mock_node(vec![0]);
+        let mut state0 = PbftState::new(vec![0], 0, &cfg);
+
+        // Add BlockNew to log
+        let block_new = mock_msg(&PbftMessageType::BlockNew, 0, 1, mock_block(1), vec![0]);
+        node0
+            .msg_log
+            .add_message(block_new, &state0)
+            .unwrap_or_else(handle_pbft_err);
+
+        // Add PrePrepare to log
+        let valid_msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, mock_block(1), vec![0]);
+        node0
+            .handle_pre_prepare(valid_msg.clone(), &mut state0)
+            .unwrap_or_else(handle_pbft_err);
+
+        // Verify it worked
+        assert!(node0.msg_log.log_has_required_msgs(
+            &PbftMessageType::PrePrepare,
+            &valid_msg,
+            true,
+            1
+        ));
+        assert_eq!(state0.phase, PbftPhase::Checking);
     }
 
     /// Make sure that receiving a `BlockValid` update works as expected
