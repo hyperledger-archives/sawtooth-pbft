@@ -43,7 +43,7 @@ message PbftMessageInfo {
 }
 
 
-// A generic PBFT message (PrePrepare, Prepare, Commit, Checkpoint)
+// A generic PBFT message (PrePrepare, Prepare, Commit)
 message PbftMessage {
   // Message information
   PbftMessageInfo info = 1;
@@ -58,9 +58,9 @@ message PbftViewChange {
   // Message information
   PbftMessageInfo info = 1;
 
-  // Set of `2f + 1` checkpoint messages, proving correctness of stable
-  // checkpoint mentioned in info's `sequence_number`
-  repeated PbftMessage checkpoint_messages = 2;
+  // Consensus seal proving the correctness of the block committed at the
+  // sequence number specified in the message info
+  PbftSeal seal = 2;
 }
 
 message PbftSignedCommitVote {

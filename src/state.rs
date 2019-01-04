@@ -50,7 +50,6 @@ pub enum PbftPhase {
 pub enum PbftMode {
     Normal,
     ViewChanging,
-    Checkpointing,
 }
 
 impl fmt::Display for PbftState {
@@ -58,7 +57,6 @@ impl fmt::Display for PbftState {
         let ast = if self.is_primary() { "*" } else { " " };
         let mode = match self.mode {
             PbftMode::Normal => "N",
-            PbftMode::Checkpointing => "C",
             PbftMode::ViewChanging => "V",
         };
 
@@ -135,9 +133,8 @@ pub struct PbftState {
     /// Is this node primary or secondary?
     role: PbftNodeRole,
 
-    /// Normal operation, view change, or checkpointing. Previous mode is stored when checkpointing
+    /// Normal operation or view changing
     pub mode: PbftMode,
-    pub pre_checkpoint_mode: PbftMode,
 
     /// Map of peers in the network, including ourselves
     pub peer_ids: Vec<PeerId>,
@@ -183,7 +180,6 @@ impl PbftState {
                 PbftNodeRole::Secondary
             },
             mode: PbftMode::Normal,
-            pre_checkpoint_mode: PbftMode::Normal,
             f,
             peer_ids: config.peers.clone(),
             commit_timeout: Timeout::new(config.commit_timeout),

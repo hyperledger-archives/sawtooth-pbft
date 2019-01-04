@@ -51,9 +51,6 @@ pub struct PbftConfig {
     /// How many blocks to commit before forcing a view change
     pub forced_view_change_period: u64,
 
-    /// How many requests in between each checkpoint
-    pub checkpoint_period: u64,
-
     /// How large the PbftLog is allowed to get
     pub max_log_size: u64,
 
@@ -70,7 +67,6 @@ impl PbftConfig {
             commit_timeout: Duration::from_millis(4000),
             idle_timeout: Duration::from_millis(30_000),
             forced_view_change_period: 30,
-            checkpoint_period: 100,
             max_log_size: 1000,
             storage: "memory".into(),
         }
@@ -82,7 +78,6 @@ impl PbftConfig {
 /// Configuration loads the following settings:
 /// + `sawtooth.consensus.pbft.peers` (required)
 /// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
-/// + `sawtooth.consensus.pbft.checkpoint_period` (optional, default 10 ms)
 /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 4s)
 /// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30s)
 /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
@@ -103,7 +98,6 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
             vec![
                 String::from("sawtooth.consensus.pbft.peers"),
                 String::from("sawtooth.consensus.pbft.block_duration"),
-                String::from("sawtooth.consensus.pbft.checkpoint_period"),
                 String::from("sawtooth.consensus.pbft.commit_timeout"),
                 String::from("sawtooth.consensus.pbft.idle_timeout"),
                 String::from("sawtooth.consensus.pbft.forced_view_change_period"),
@@ -149,13 +143,8 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
     // Get various integer constants
     merge_setting_if_set(
         &settings,
-        &mut config.checkpoint_period,
+        &mut config.forced_view_change_period,
         "sawtooth.consensus.pbft.forced_view_change_period",
-    );
-    merge_setting_if_set(
-        &settings,
-        &mut config.checkpoint_period,
-        "sawtooth.consensus.pbft.checkpoint_period",
     );
     merge_setting_if_set(
         &settings,

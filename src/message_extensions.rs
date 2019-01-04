@@ -27,9 +27,12 @@ use std::hash::{Hash, Hasher};
 use hex;
 
 use crate::message_type::PbftMessageType;
-use crate::protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftViewChange};
+use crate::protos::pbft_message::{
+    PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
+};
 
 impl Eq for PbftMessage {}
+impl Eq for PbftSeal {}
 impl Eq for PbftViewChange {}
 
 impl Hash for PbftMessageInfo {
@@ -57,13 +60,28 @@ impl Hash for PbftMessage {
     }
 }
 
+impl Hash for PbftSeal {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_previous_id().hash(state);
+        self.get_summary().hash(state);
+        for vote in self.get_previous_commit_votes() {
+            vote.hash(state);
+        }
+    }
+}
+
+impl Hash for PbftSignedCommitVote {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_header_bytes().hash(state);
+        self.get_header_signature().hash(state);
+        self.get_message_bytes().hash(state);
+    }
+}
+
 impl Hash for PbftViewChange {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.get_info().hash(state);
-        for msg in self.get_checkpoint_messages().iter() {
-            msg.get_info().hash(state);
-            msg.get_block().hash(state);
-        }
+        self.get_seal().hash(state);
     }
 }
 

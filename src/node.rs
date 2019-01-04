@@ -32,7 +32,7 @@ use crate::config::{get_peers_from_settings, PbftConfig};
 use crate::error::PbftError;
 use crate::handlers;
 use crate::hash::verify_sha512;
-use crate::message_log::{PbftLog, PbftStableCheckpoint};
+use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
     PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
@@ -70,8 +70,8 @@ impl PbftNode {
 
     /// Handle a peer message from another PbftNode
     /// This method handles all messages from other nodes. Such messages may include `PrePrepare`,
-    /// `Prepare`, `Commit`, `Checkpoint`, or `ViewChange`. If a node receives a type of message
-    /// before it is ready to do so, the message is pushed into a backlog queue.
+    /// `Prepare`, `Commit`, or `ViewChange`. If a node receives a type of message before it is
+    // ready to do so, the message is pushed into a backlog queue.
     #[allow(clippy::needless_pass_by_value)]
     pub fn on_peer_message(
         &mut self,
@@ -120,25 +120,6 @@ impl PbftNode {
                 {
                     self.commit_block_if_committing(&msg, state)?;
                 }
-            }
-
-            PbftMessageType::Checkpoint => {
-                if self.check_if_stale_checkpoint(&msg, state)? {
-                    return Ok(());
-                }
-
-                if !self.check_if_checkpoint_started(&msg, state) {
-                    return Ok(());
-                }
-
-                // Add message to the log
-                self.msg_log.add_message(msg.clone(), state)?;
-
-                if check_if_secondary(state) {
-                    self.start_checkpointing_and_forward(&msg, state)?;
-                }
-
-                self.garbage_collect_if_stable_checkpoint(&msg, state)?;
             }
 
             PbftMessageType::ViewChange => {
@@ -215,87 +196,6 @@ impl PbftNode {
             );
             Ok(())
         }
-    }
-
-    fn check_if_stale_checkpoint(
-        &mut self,
-        pbft_message: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<bool, PbftError> {
-        debug!(
-            "{}: Received Checkpoint message from {:?}",
-            state,
-            PeerId::from(pbft_message.info().get_signer_id())
-        );
-
-        if self.msg_log.get_latest_checkpoint() >= pbft_message.info().get_seq_num() {
-            debug!(
-                "{}: Already at a stable checkpoint with this sequence number or past it!",
-                state
-            );
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    #[allow(clippy::ptr_arg)]
-    fn check_if_checkpoint_started(&mut self, msg: &ParsedMessage, state: &mut PbftState) -> bool {
-        // Not ready to receive checkpoint yet; only acceptable in PrePreparing
-        if state.phase != PbftPhase::PrePreparing {
-            self.msg_log.push_backlog(msg.clone());
-            debug!(
-                "{}: Not in PrePreparing; not handling checkpoint yet",
-                state
-            );
-            false
-        } else {
-            true
-        }
-    }
-
-    fn start_checkpointing_and_forward(
-        &mut self,
-        pbft_message: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        state.pre_checkpoint_mode = state.mode;
-        state.mode = PbftMode::Checkpointing;
-        self._broadcast_pbft_message(
-            pbft_message.info().get_seq_num(),
-            &PbftMessageType::Checkpoint,
-            PbftBlock::new(),
-            state,
-        )
-    }
-
-    fn garbage_collect_if_stable_checkpoint(
-        &mut self,
-        pbft_message: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        if state.mode == PbftMode::Checkpointing {
-            if !self.msg_log.log_has_required_msgs(
-                &PbftMessageType::Checkpoint,
-                pbft_message,
-                false,
-                2 * state.f + 1,
-            ) {
-                return Ok(());
-            }
-            warn!(
-                "{}: Reached stable checkpoint (seq num {}); garbage collecting logs",
-                state,
-                pbft_message.info().get_seq_num()
-            );
-            self.msg_log.garbage_collect(
-                pbft_message.info().get_seq_num(),
-                pbft_message.info().get_view(),
-            );
-
-            state.mode = state.pre_checkpoint_mode;
-        }
-        Ok(())
     }
 
     fn propose_view_change_if_enough_messages(
@@ -380,11 +280,11 @@ impl PbftNode {
         &mut self,
         block: &Block,
         state: &mut PbftState,
-    ) -> Result<(), PbftError> {
+    ) -> Result<Option<PbftSeal>, PbftError> {
         // We don't publish a consensus seal until block 1, so we don't verify it
         // until block 2
         if block.block_num < 2 {
-            return Ok(());
+            return Ok(None);
         }
 
         if block.payload.is_empty() {
@@ -455,7 +355,7 @@ impl PbftNode {
             )));
         }
 
-        Ok(())
+        Ok(Some(seal))
     }
 
     /// Attempts to catch this node up with its peers, if necessary
@@ -642,7 +542,11 @@ impl PbftNode {
         msg.set_block(pbft_block.clone());
 
         match self.verify_consensus_seal(&block, state) {
-            Ok(()) => {}
+            Ok(Some(seal)) => {
+                self.msg_log
+                    .add_consensus_seal(block.block_id.clone(), state.seq_num, seal);
+            }
+            Ok(None) => {}
             Err(err) => {
                 warn!(
                     "Failing block due to failed consensus seal verification and \
@@ -680,9 +584,8 @@ impl PbftNode {
     /// Handle a `BlockCommit` update from the Validator
     /// Since the block was successfully committed, the primary is not faulty and the view change
     /// timer can be stopped. If this node is a primary, then initialize a new block. Both node
-    /// roles transition back to the `PrePreparing` phase. If this node is at a checkpoint after
-    /// the previously committed block (`checkpoint_period` blocks have been committed since the
-    /// last checkpoint), then start a checkpoint.
+    /// roles transition back to the `NotStarted` phase.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn on_block_commit(
         &mut self,
         block_id: BlockId,
@@ -705,14 +608,11 @@ impl PbftNode {
             state.seq_num += 1;
 
             // Start a view change if we need to force one for fairness or if membership changed
-            if state.at_forced_view_change() || self.update_membership(block_id, state) {
+            if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
                 self.force_view_change(state);
             }
 
-            // Start a checkpoint in PrePreparing, if we're at one
-            if self.msg_log.at_checkpoint() {
-                self.start_checkpoint(state)?;
-            }
+            self.msg_log.garbage_collect(state.seq_num, &block_id);
         } else {
             debug!("{}: Not doing anything with BlockCommit", state);
         }
@@ -877,23 +777,6 @@ impl PbftNode {
         state.idle_timeout.start();
     }
 
-    /// Start the checkpoint process
-    /// Primaries start the checkpoint to ensure sequence number correctness
-    pub fn start_checkpoint(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
-        if !state.is_primary() {
-            return Ok(());
-        }
-        if state.mode == PbftMode::Checkpointing {
-            return Ok(());
-        }
-
-        state.pre_checkpoint_mode = state.mode;
-        state.mode = PbftMode::Checkpointing;
-        info!("{}: Starting checkpoint", state);
-        let s = state.seq_num;
-        self._broadcast_pbft_message(s, &PbftMessageType::Checkpoint, PbftBlock::new(), state)
-    }
-
     /// Retry messages from the backlog queue
     pub fn retry_backlog(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
         let mut peer_res = Ok(());
@@ -919,29 +802,16 @@ impl PbftNode {
         warn!("{}: Starting view change", state);
         state.mode = PbftMode::ViewChanging;
 
-        let PbftStableCheckpoint {
-            seq_num: stable_seq_num,
-            checkpoint_messages,
-        } = if let Some(ref cp) = self.msg_log.latest_stable_checkpoint {
-            debug!("{}: No stable checkpoint", state);
-            cp.clone()
-        } else {
-            PbftStableCheckpoint {
-                seq_num: 0,
-                checkpoint_messages: vec![],
-            }
-        };
-
         let info = handlers::make_msg_info(
             &PbftMessageType::ViewChange,
             state.view + 1,
-            stable_seq_num,
+            state.seq_num - 1,
             state.id.clone(),
         );
 
         let mut vc_msg = PbftViewChange::new();
         vc_msg.set_info(info);
-        vc_msg.set_checkpoint_messages(RepeatedField::from_vec(checkpoint_messages.to_vec()));
+        vc_msg.set_seal(self.msg_log.get_consensus_seal(state.seq_num - 1)?);
         let msg_bytes = vc_msg
             .write_to_bytes()
             .map_err(PbftError::SerializationError)?;
@@ -1032,10 +902,6 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         return Ok(());
     }
-}
-
-fn check_if_secondary(state: &PbftState) -> bool {
-    !state.is_primary() && state.mode != PbftMode::Checkpointing
 }
 
 /// Create a Protobuf binary representation of a PbftMessage from its info and corresponding Block
@@ -1332,7 +1198,6 @@ mod tests {
         assert_eq!(state.view, 0);
         assert_eq!(state.phase, PbftPhase::PrePreparing);
         assert_eq!(state.mode, PbftMode::Normal);
-        assert_eq!(state.pre_checkpoint_mode, PbftMode::Normal);
         assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
         assert_eq!(state.f, 1);
         assert_eq!(state.forced_view_change_period, 30);
@@ -1352,7 +1217,6 @@ mod tests {
         assert_eq!(state.view, 0);
         assert_eq!(state.phase, PbftPhase::PrePreparing);
         assert_eq!(state.mode, PbftMode::Normal);
-        assert_eq!(state.pre_checkpoint_mode, PbftMode::Normal);
         assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
         assert_eq!(state.f, 1);
         assert_eq!(state.forced_view_change_period, 30);
@@ -1380,7 +1244,6 @@ mod tests {
             assert_eq!(state.view, 0);
             assert_eq!(state.phase, PbftPhase::PrePreparing);
             assert_eq!(state.mode, PbftMode::Normal);
-            assert_eq!(state.pre_checkpoint_mode, PbftMode::Normal);
             assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
             assert_eq!(state.f, 1);
             assert_eq!(state.forced_view_change_period, 30);
@@ -1547,38 +1410,6 @@ mod tests {
         remove_file(BLOCK_FILE).unwrap();
     }
 
-    /// Make sure that checkpointing works as expected:
-    /// + Node enters Normal mode again after checkpoint
-    /// + A stable checkpoint is created
-    #[test]
-    fn checkpoint() {
-        let mut node1 = mock_node(vec![1]);
-        let cfg = mock_config(4);
-        let mut state1 = PbftState::new(vec![], 0, &cfg);
-        // Pretend that the node just finished block 10
-        state1.seq_num = 10;
-        let block = mock_block(10);
-        assert_eq!(state1.mode, PbftMode::Normal);
-        assert!(node1.msg_log.latest_stable_checkpoint.is_none());
-
-        // Receive 3 `Checkpoint` messages
-        for peer in 0..3 {
-            let msg = mock_msg(
-                &PbftMessageType::Checkpoint,
-                0,
-                10,
-                block.clone(),
-                vec![peer],
-            );
-            node1
-                .on_peer_message(msg, &mut state1)
-                .unwrap_or_else(handle_pbft_err);
-        }
-
-        assert_eq!(state1.mode, PbftMode::Normal);
-        assert!(node1.msg_log.latest_stable_checkpoint.is_some());
-    }
-
     /// Test that view changes work as expected, and that nodes take the proper roles after a view
     /// change
     #[test]
@@ -1588,6 +1419,10 @@ mod tests {
         let mut state1 = PbftState::new(vec![1], 0, &cfg);
 
         assert!(!state1.is_primary());
+
+        node1
+            .msg_log
+            .add_consensus_seal(mock_block_id(0), 0, PbftSeal::new());
 
         // Receive 3 `ViewChange` messages
         for peer in 0..3 {
@@ -1601,7 +1436,7 @@ mod tests {
             let info = make_msg_info(&PbftMessageType::ViewChange, 1, 0, vec![peer]);
             let mut vc_msg = PbftViewChange::new();
             vc_msg.set_info(info);
-            vc_msg.set_checkpoint_messages(RepeatedField::default());
+            vc_msg.set_seal(PbftSeal::new());
 
             node1
                 .on_peer_message(ParsedMessage::from_view_change_message(vc_msg), &mut state1)
@@ -1619,6 +1454,10 @@ mod tests {
         let cfg = mock_config(4);
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         assert_eq!(state1.mode, PbftMode::Normal);
+
+        node1
+            .msg_log
+            .add_consensus_seal(mock_block_id(0), 0, PbftSeal::new());
 
         node1
             .propose_view_change(&mut state1)
