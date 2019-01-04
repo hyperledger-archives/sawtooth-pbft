@@ -101,19 +101,7 @@ impl PbftNode {
         match msg_type {
             PbftMessageType::PrePrepare => self.handle_pre_prepare(msg, state)?,
             PbftMessageType::Prepare => self.handle_prepare(msg, state)?,
-
-            PbftMessageType::Commit => {
-                self.msg_log.add_message(msg.clone(), state)?;
-
-                // We only want to commit the block if this message is for the current sequence
-                // number, we're in the Committing phase, and the `Committable` predicate is true
-                if msg.info().get_seq_num() == state.seq_num
-                    && state.phase == PbftPhase::Committing
-                    && self.msg_log.check_committable(&msg.info(), state.f)
-                {
-                    handlers::commit(state, &mut *self.service, &msg)?;
-                }
-            }
+            PbftMessageType::Commit => self.handle_commit(msg, state)?,
 
             PbftMessageType::ViewChange => {
                 // Ignore old view change messages (already on a view >= the one this message is
@@ -348,6 +336,49 @@ impl PbftNode {
                         block,
                         state,
                     )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle a `Commit` message
+    ///
+    /// Once a `Commit` for the current sequence number is accepted and added to the log, the node
+    /// will check if it has the required 2f + 1 `Commit` messages to actually commit the block
+    fn handle_commit(
+        &mut self,
+        msg: ParsedMessage,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        let info = msg.info().clone();
+        let block = msg.get_block().clone();
+
+        self.msg_log.add_message(msg, state)?;
+
+        // If this message is for the current sequence number and the node is in the Committing
+        // phase, check if the node is ready to commit the block
+        if info.get_seq_num() == state.seq_num && state.phase == PbftPhase::Committing {
+            // The node is ready to commit the block (i.e. the predicate `committable` is true)
+            // when its log has 2f + 1 Commit messages from different nodes that match the
+            // PrePrepare message received earlier (same view, sequence number, and block)
+            if let Some(pre_prep) = self
+                .msg_log
+                .get_one_msg(&info, &PbftMessageType::PrePrepare)
+            {
+                if self.msg_log.log_has_required_msgs(
+                    &PbftMessageType::Commit,
+                    &pre_prep,
+                    true,
+                    2 * state.f + 1,
+                ) {
+                    self.service
+                        .commit_block(block.block_id.clone())
+                        .map_err(|e| {
+                            PbftError::InternalError(format!("Failed to commit block: {:?}", e))
+                        })?;
+                    state.switch_phase(PbftPhase::Finished);
                 }
             }
         }
@@ -644,14 +675,11 @@ impl PbftNode {
             self.msg_log.add_message(message.clone(), state)?;
         }
 
-        // Skip straight to the Committing phase and Commit the new block using one of the parsed
-        // messages to simulate having received a regular commit message
-        state.phase = PbftPhase::Committing;
-        handlers::commit(
-            state,
-            &mut *self.service,
-            &messages[0].as_msg_type(PbftMessageType::Commit),
-        )?;
+        // Commit the new block using one of the parsed messages and skip straight to Finished
+        self.service
+            .commit_block(messages[0].get_block().block_id.clone())
+            .map_err(|e| PbftError::InternalError(format!("Failed to commit block: {:?}", e)))?;
+        state.phase = PbftPhase::Finished;
 
         // Call on_block_commit right away so we're ready to catch up again if necessary
         self.on_block_commit(BlockId::from(messages[0].get_block().get_block_id()), state);

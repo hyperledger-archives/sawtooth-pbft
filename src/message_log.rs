@@ -85,39 +85,6 @@ impl PbftLog {
         }
     }
 
-    /// `check_prepared` predicate
-    /// `check_prepared` is true for this node if the following messages are present in its log:
-    ///  + A `PrePrepare` message matching the original message (in the current view)
-    ///  + `2f + 1` matching `Prepare` messages from different nodes that match
-    ///    `PrePrepare` message above (including its own)
-    pub fn check_prepared(&self, info: &PbftMessageInfo, f: u64) -> bool {
-        match self.get_one_msg(info, &PbftMessageType::PrePrepare) {
-            Some(msg) => {
-                self.log_has_required_msgs(&PbftMessageType::Prepare, &msg, true, 2 * f + 1)
-            }
-            None => false,
-        }
-    }
-
-    /// Checks if the node is ready to enter the `Committing` phase based on the `PbftMessage` received
-    ///
-    /// `check_committable` is true if for this node:
-    ///   + `check_prepared` is true
-    ///   + This node has accepted `2f + 1` `Commit` messages, including its own, that match the
-    ///     corresponding `PrePrepare` message
-    pub fn check_committable(&self, info: &PbftMessageInfo, f: u64) -> bool {
-        // Check if Prepared predicate is true
-        self.check_prepared(info, f)
-            && self.log_has_required_msgs(
-                &PbftMessageType::Commit,
-                &self
-                    .get_one_msg(info, &PbftMessageType::PrePrepare)
-                    .unwrap(),
-                true,
-                2 * f + 1,
-            )
-    }
-
     /// Get one message matching the type, view number, and sequence number
     pub fn get_one_msg(
         &self,
@@ -359,73 +326,6 @@ mod tests {
 
         assert_eq!(gotten_msgs.len(), 1);
         assert_eq!(&msg, gotten_msgs[0]);
-    }
-
-    /// Test that `check_prepared` and `check_committable` predicates work properly
-    #[test]
-    fn prepared_committed() {
-        let cfg = config::mock_config(4);
-        let mut log = PbftLog::new(&cfg);
-        let state = PbftState::new(vec![], 0, &cfg);
-
-        let msg = make_msg(
-            &PbftMessageType::BlockNew,
-            0,
-            1,
-            get_peer_id(&cfg, 0),
-            get_peer_id(&cfg, 0),
-        );
-        log.add_message(msg.clone(), &state).unwrap();
-
-        assert!(!log.check_prepared(&msg.info(), 1 as u64));
-        assert!(!log.check_committable(&msg.info(), 1 as u64));
-
-        let msg = make_msg(
-            &PbftMessageType::PrePrepare,
-            0,
-            1,
-            get_peer_id(&cfg, 0),
-            get_peer_id(&cfg, 0),
-        );
-        log.add_message(msg.clone(), &state).unwrap();
-        assert!(!log.check_prepared(&msg.info(), 1 as u64));
-        assert!(!log.check_committable(&msg.info(), 1 as u64));
-
-        for peer in 0..4 {
-            let msg = make_msg(
-                &PbftMessageType::Prepare,
-                0,
-                1,
-                get_peer_id(&cfg, peer),
-                get_peer_id(&cfg, 0),
-            );
-
-            log.add_message(msg.clone(), &state).unwrap();
-            if peer < 2 {
-                assert!(!log.check_prepared(&msg.info(), 1 as u64));
-                assert!(!log.check_committable(&msg.info(), 1 as u64));
-            } else {
-                assert!(log.check_prepared(&msg.info(), 1 as u64));
-                assert!(!log.check_committable(&msg.info(), 1 as u64));
-            }
-        }
-
-        for peer in 0..4 {
-            let msg = make_msg(
-                &PbftMessageType::Commit,
-                0,
-                1,
-                get_peer_id(&cfg, peer),
-                get_peer_id(&cfg, 0),
-            );
-
-            log.add_message(msg.clone(), &state).unwrap();
-            if peer < 2 {
-                assert!(!log.check_committable(&msg.info(), 1 as u64));
-            } else {
-                assert!(log.check_committable(&msg.info(), 1 as u64));
-            }
-        }
     }
 
     /// Make sure that log garbage collection works as expected

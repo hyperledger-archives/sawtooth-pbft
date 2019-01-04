@@ -21,37 +21,9 @@ use std::convert::From;
 
 use hex;
 use sawtooth_sdk::consensus::engine::{Block, PeerId};
-use sawtooth_sdk::consensus::service::Service;
 
-use crate::error::PbftError;
-use crate::message_type::ParsedMessage;
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{PbftBlock, PbftMessageInfo};
-use crate::state::{PbftPhase, PbftState};
-
-/// Handle a `Commit` message
-///
-/// We have received `2f + 1` `Commit` messages so we are ready to commit the block to the chain.
-#[allow(clippy::ptr_arg)]
-pub fn commit(
-    state: &mut PbftState,
-    service: &mut Service,
-    message: &ParsedMessage,
-) -> Result<(), PbftError> {
-    info!(
-        "{}: Committing block {:?}",
-        state,
-        message.get_block().block_id.clone()
-    );
-
-    service
-        .commit_block(message.get_block().block_id.clone())
-        .map_err(|e| PbftError::InternalError(format!("Failed to commit block: {:?}", e)))?;
-
-    state.switch_phase(PbftPhase::Finished);
-
-    Ok(())
-}
 
 /// Create a PbftMessageInfo struct with the desired type, view, sequence number, and signer ID
 pub fn make_msg_info(
