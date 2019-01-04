@@ -119,13 +119,9 @@ pub struct PbftState {
     /// The maximum number of faulty nodes in the network
     pub f: u64,
 
-    /// Timer used to make sure the primary is executing BlockCommits in a timely manner. If not,
-    /// then this node will initiate a view change.
-    pub commit_timeout: Timeout,
-
-    /// Timer used to force view changes if too much idle time has elapsed between the last block
-    /// being committed and the next block being proposed.
-    pub idle_timeout: Timeout,
+    /// Timer used to make sure the primary publishes blocks in a timely manner. If not, then this
+    /// node will initiate a view change.
+    pub faulty_primary_timeout: Timeout,
 
     pub forced_view_change_period: u64,
 
@@ -159,8 +155,7 @@ impl PbftState {
             mode: PbftMode::Normal,
             f,
             peer_ids: config.peers.clone(),
-            commit_timeout: Timeout::new(config.commit_timeout),
-            idle_timeout: Timeout::new(config.idle_timeout),
+            faulty_primary_timeout: Timeout::new(config.faulty_primary_timeout),
             forced_view_change_period: config.forced_view_change_period,
             working_block: None,
         }
@@ -236,8 +231,7 @@ impl PbftState {
         self.working_block = None;
         self.phase = PbftPhase::PrePreparing;
         self.mode = PbftMode::Normal;
-        self.commit_timeout.stop();
-        self.idle_timeout.start();
+        self.faulty_primary_timeout.start();
     }
 }
 
