@@ -20,7 +20,7 @@
 use std::fmt;
 
 use hex;
-use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
+use sawtooth_sdk::consensus::engine::PeerId;
 
 use crate::config::PbftConfig;
 use crate::message_type::PbftMessageType;
@@ -69,15 +69,12 @@ impl fmt::Display for PbftState {
         };
 
         let wb = match self.working_block {
-            WorkingBlockOption::WorkingBlock(ref block) => format!(
+            Some(ref block) => format!(
                 "{}/{}",
                 block.block_num,
                 &hex::encode(block.get_block_id())[..6]
             ),
-            WorkingBlockOption::TentativeWorkingBlock(ref block_id) => {
-                String::from(&hex::encode(block_id)[..5]) + "~"
-            }
-            _ => String::from("~none~"),
+            None => String::from("~none~"),
         };
 
         write!(
@@ -91,26 +88,6 @@ impl fmt::Display for PbftState {
             ast,
             &hex::encode(self.id.clone())[..6],
         )
-    }
-}
-
-/// Possible options for the current block
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub enum WorkingBlockOption {
-    /// There is no working block
-    NoWorkingBlock,
-
-    /// A block has been received in a BlockNew update, but has not been assigned a sequence number
-    /// yet
-    TentativeWorkingBlock(BlockId),
-
-    /// There is a current working block
-    WorkingBlock(PbftBlock),
-}
-
-impl WorkingBlockOption {
-    pub fn is_none(&self) -> bool {
-        self == &WorkingBlockOption::NoWorkingBlock
     }
 }
 
@@ -153,7 +130,7 @@ pub struct PbftState {
     pub forced_view_change_period: u64,
 
     /// The current block this node is working on
-    pub working_block: WorkingBlockOption,
+    pub working_block: Option<PbftBlock>,
 }
 
 impl PbftState {
@@ -185,7 +162,7 @@ impl PbftState {
             commit_timeout: Timeout::new(config.commit_timeout),
             idle_timeout: Timeout::new(config.idle_timeout),
             forced_view_change_period: config.forced_view_change_period,
-            working_block: WorkingBlockOption::NoWorkingBlock,
+            working_block: None,
         }
     }
 
@@ -256,7 +233,7 @@ impl PbftState {
     pub fn discard_current_block(&mut self) {
         warn!("PbftState::reset: {}", self);
 
-        self.working_block = WorkingBlockOption::NoWorkingBlock;
+        self.working_block = None;
         self.phase = PbftPhase::PrePreparing;
         self.mode = PbftMode::Normal;
         self.commit_timeout.stop();
