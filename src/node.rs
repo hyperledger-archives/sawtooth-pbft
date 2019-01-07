@@ -40,18 +40,19 @@ use crate::protos::pbft_message::{
 use crate::state::{PbftMode, PbftPhase, PbftState};
 use crate::timing::Timeout;
 
-/// Contains all of the components for operating a PBFT node.
+/// Contains the core logic of the PBFT node
 pub struct PbftNode {
     /// Used for interactions with the validator
     pub service: Box<Service>,
 
-    /// Messages this node has received
+    /// Log of messages this node has received and accepted
     pub msg_log: PbftLog,
 }
 
 impl PbftNode {
-    /// Construct a new PBFT node.
-    /// After the node is created, if the node is primary, it initializes a new block on the chain.
+    /// Construct a new PBFT node
+    ///
+    /// If the node is the primary on start-up, it initializes a new block on the chain
     pub fn new(config: &PbftConfig, service: Box<Service>, is_primary: bool) -> Self {
         let mut n = PbftNode {
             service,
@@ -67,7 +68,7 @@ impl PbftNode {
         n
     }
 
-    // ---------- Methods for handling Updates from the validator ----------
+    // ---------- Methods for handling Updates from the Validator ----------
 
     /// Handle a peer message from another PbftNode
     ///
@@ -411,7 +412,319 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Verify that the vote is properly signed
+    /// Handle a `BlockNew` update from the Validator
+    ///
+    /// The validator has received a new block; verify the block's consensus seal and add the
+    /// BlockNew to the message log. If this is the block we are waiting for: set it as the working
+    /// block, update the idle & commit timers, and broadcast a PrePrepare if this node is the
+    /// primary. If this is the block after the one this node is working on, use it to catch up.
+    pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
+        info!(
+            "{}: Got BlockNew: {} / {}",
+            state,
+            block.block_num,
+            hex::encode(&block.block_id[..3]),
+        );
+
+        if block.block_num < state.seq_num {
+            info!(
+                "Ignoring block ({}) that's older than current sequence number ({}).",
+                block.block_num, state.seq_num
+            );
+            return Ok(());
+        }
+
+        match self.verify_consensus_seal(&block, state) {
+            Ok(_) => {}
+            Err(err) => {
+                warn!(
+                    "Failing block due to failed consensus seal verification and \
+                     proposing view change! Error was {}",
+                    err
+                );
+                self.service.fail_block(block.block_id).map_err(|err| {
+                    PbftError::InternalError(format!("Couldn't fail block: {}", err))
+                })?;
+                self.propose_view_change(state, state.view + 1)?;
+                return Err(err);
+            }
+        }
+
+        // Create PBFT message for BlockNew and add it to the log
+        let mut msg = PbftMessage::new();
+        msg.set_info(handlers::make_msg_info(
+            &PbftMessageType::BlockNew,
+            state.view,
+            block.block_num,
+            state.id.clone(),
+        ));
+
+        let pbft_block = pbft_block_from_block(block.clone());
+        msg.set_block(pbft_block.clone());
+
+        self.msg_log
+            .add_message(ParsedMessage::from_pbft_message(msg.clone()), state)?;
+
+        // We can use this block's seal to commit the next block (i.e. catch-up) if it's the block
+        // after the one we're waiting for and we haven't already told the validator to commit the
+        // block we're waiting for
+        if block.block_num == state.seq_num + 1 && state.phase != PbftPhase::Finished {
+            self.catchup(state, &block)?;
+        } else if block.block_num == state.seq_num {
+            // This is the block we're waiting for, so we update state
+            state.working_block = Some(msg.get_block().clone());
+
+            // Send PrePrepare messages if we're the primary
+            if state.is_primary() {
+                let s = state.seq_num;
+                self._broadcast_pbft_message(s, &PbftMessageType::PrePrepare, pbft_block, state)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Use the given block's consensus seal to verify and commit the block this node is working on
+    fn catchup(&mut self, state: &mut PbftState, block: &Block) -> Result<(), PbftError> {
+        info!(
+            "{}: Trying catchup to #{} from BlockNew message #{}",
+            state, state.seq_num, block.block_num,
+        );
+
+        match state.working_block {
+            Some(ref working_block) => {
+                let block_num_matches = block.block_num == working_block.get_block_num() + 1;
+                let block_id_matches = block.previous_id == working_block.get_block_id();
+
+                if !block_num_matches || !block_id_matches {
+                    error!(
+                        "Block didn't match for catchup: {:?} {:?}",
+                        block, working_block
+                    );
+                    return Err(PbftError::MismatchedBlocks(vec![
+                        pbft_block_from_block(block.clone()),
+                        working_block.clone(),
+                    ]));
+                }
+            }
+            None => {
+                error!(
+                    "Trying to catch up, but node does not have block #{} yet",
+                    state.seq_num
+                );
+                return Err(PbftError::NoWorkingBlock);
+            }
+        }
+
+        // Parse messages from the seal
+        let seal: PbftSeal =
+            protobuf::parse_from_bytes(&block.payload).map_err(PbftError::SerializationError)?;
+
+        let messages =
+            seal.get_previous_commit_votes()
+                .iter()
+                .try_fold(Vec::new(), |mut msgs, v| {
+                    msgs.push(ParsedMessage::from_pbft_message(
+                        protobuf::parse_from_bytes(&v.get_message_bytes())
+                            .map_err(PbftError::SerializationError)?,
+                    ));
+                    Ok(msgs)
+                })?;
+
+        // Update our view if necessary
+        let view = messages[0].info().get_view();
+        if view > state.view {
+            info!("Updating view from {} to {}.", state.view, view);
+            state.view = view;
+        }
+
+        // Add messages to the log
+        for message in &messages {
+            self.msg_log.add_message(message.clone(), state)?;
+        }
+
+        // Commit the new block using one of the parsed messages and skip straight to Finished
+        self.service
+            .commit_block(messages[0].get_block().block_id.clone())
+            .map_err(|e| PbftError::InternalError(format!("Failed to commit block: {:?}", e)))?;
+        state.phase = PbftPhase::Finished;
+
+        // Call on_block_commit right away so we're ready to catch up again if necessary
+        self.on_block_commit(BlockId::from(messages[0].get_block().get_block_id()), state);
+
+        Ok(())
+    }
+
+    /// Handle a `BlockValid` update from the Validator
+    ///
+    /// This message arrives after `check_blocks` is called, signifying that the validator has
+    /// successfully checked a block with this `BlockId`. Once a `BlockValid` is received for the
+    /// working block, transition to the Preparing phase.
+    #[allow(clippy::ptr_arg)]
+    pub fn on_block_valid(
+        &mut self,
+        block_id: &BlockId,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        debug!("{}: <<<<<< BlockValid: {:?}", state, block_id);
+        let block = match state.working_block {
+            Some(ref block) => {
+                if &BlockId::from(block.get_block_id()) == block_id {
+                    Ok(block.clone())
+                } else {
+                    warn!("Got BlockValid that doesn't match the working block");
+                    Err(PbftError::NotReadyForMessage)
+                }
+            }
+            None => {
+                warn!("Got BlockValid with no working block");
+                Err(PbftError::NoWorkingBlock)
+            }
+        }?;
+
+        state.switch_phase(PbftPhase::Preparing);
+        self._broadcast_pbft_message(
+            state.seq_num,
+            &PbftMessageType::Prepare,
+            block.clone(),
+            state,
+        )?;
+        Ok(())
+    }
+
+    /// Handle a `BlockCommit` update from the Validator
+    ///
+    /// A block was sucessfully committed; update state to be ready for the next block, make any
+    /// necessary view and membership changes, garbage collect the logs, update the commit & idle
+    /// timers, and start a new block if this node is the primary.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn on_block_commit(&mut self, block_id: BlockId, state: &mut PbftState) {
+        debug!("{}: <<<<<< BlockCommit: {:?}", state, block_id);
+
+        let is_working_block = match state.working_block {
+            Some(ref block) => BlockId::from(block.get_block_id()) == block_id,
+            None => false,
+        };
+
+        if state.phase != PbftPhase::Finished || !is_working_block {
+            info!(
+                "{}: Got BlockCommit for a block that isn't the working block",
+                state
+            );
+            return;
+        }
+
+        // Update state to be ready for next block
+        state.switch_phase(PbftPhase::PrePreparing);
+        state.seq_num += 1;
+
+        // If we already have a BlockNew for the next block, we can make it the working block;
+        // otherwise just set the working block to None
+        state.working_block = self
+            .msg_log
+            .get_messages_of_type_seq(&PbftMessageType::BlockNew, state.seq_num)
+            .first()
+            .map(|msg| msg.get_block().clone());
+
+        // Increment the view if we need to force a view change for fairness or if membership
+        // has changed
+        if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
+            state.view += 1;
+        }
+
+        // Tell the log to garbage collect if it needs to
+        self.msg_log.garbage_collect(state.seq_num);
+
+        // Restart the faulty primary timeout for the next block
+        state.faulty_primary_timeout.start();
+
+        if state.is_primary() && state.working_block.is_none() {
+            info!(
+                "{}: Initializing block with previous ID {:?}",
+                state, block_id
+            );
+            self.service
+                .initialize_block(Some(block_id.clone()))
+                .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+        }
+    }
+
+    /// Check the on-chain list of peers; if it has changed, update peers list and return true.
+    fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) -> bool {
+        // Get list of peers from settings
+        let settings = self
+            .service
+            .get_settings(
+                block_id,
+                vec![String::from("sawtooth.consensus.pbft.peers")],
+            )
+            .expect("Failed to get settings");
+        let peers = get_peers_from_settings(&settings);
+        let new_peers_set: HashSet<PeerId> = peers.iter().cloned().collect();
+
+        // Check if membership has changed
+        let old_peers_set: HashSet<PeerId> = state.peer_ids.iter().cloned().collect();
+
+        if new_peers_set != old_peers_set {
+            state.peer_ids = peers;
+            let f = ((state.peer_ids.len() - 1) / 3) as u64;
+            if f == 0 {
+                panic!("This network no longer contains enough nodes to be fault tolerant");
+            }
+            state.f = f;
+            return true;
+        }
+
+        false
+    }
+
+    // ---------- Methods for building & verifying proofs and signed messages from other nodes ----------
+
+    /// Generate a `protobuf::RepeatedField` of signed votes from a list of parsed messages
+    #[allow(clippy::needless_pass_by_value)]
+    fn signed_votes_from_messages(msgs: Vec<&ParsedMessage>) -> RepeatedField<PbftSignedVote> {
+        RepeatedField::from(
+            msgs.iter()
+                .map(|m| {
+                    let mut vote = PbftSignedVote::new();
+
+                    vote.set_header_bytes(m.header_bytes.clone());
+                    vote.set_header_signature(m.header_signature.clone());
+                    vote.set_message_bytes(m.message_bytes.clone());
+
+                    vote
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Build a consensus seal to be put in the block that matches the `summary` and proves the
+    /// last block committed by this node
+    fn build_seal(&mut self, state: &PbftState, summary: Vec<u8>) -> Result<Vec<u8>, PbftError> {
+        info!("{}: Building seal for block {}", state, state.seq_num - 1);
+
+        let min_votes = 2 * state.f;
+        let messages = self
+            .msg_log
+            .get_enough_messages(&PbftMessageType::Commit, state.seq_num - 1, min_votes)
+            .ok_or_else(|| {
+                debug!("{}: {}", state, self.msg_log);
+                PbftError::InternalError(format!(
+                    "Couldn't find {} commit messages in the message log for building a seal!",
+                    min_votes
+                ))
+            })?;
+
+        let mut seal = PbftSeal::new();
+
+        seal.set_summary(summary);
+        seal.set_previous_id(BlockId::from(messages[0].get_block().get_block_id()));
+        seal.set_previous_commit_votes(Self::signed_votes_from_messages(messages));
+
+        seal.write_to_bytes().map_err(PbftError::SerializationError)
+    }
+
+    /// Verify that a vote is properly signed
     fn verify_vote_signer(vote: &PbftSignedVote) -> Result<(), PbftError> {
         let header: ConsensusPeerMessageHeader =
             protobuf::parse_from_bytes(&vote.get_header_bytes())
@@ -446,9 +759,8 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Verify an individual view change vote
-    ///
-    /// Return the signer ID of the wrapped PbftMessage for use in further verification
+    /// Verify an individual view change vote and return the signer ID of the wrapped PbftMessage
+    /// for use in further verification
     fn verify_view_change_vote(vote: &PbftSignedVote, view: u64) -> Result<PeerId, PbftError> {
         let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
             .map_err(PbftError::SerializationError)?;
@@ -473,7 +785,7 @@ impl PbftNode {
         Ok(PeerId::from(message.get_info().get_signer_id()))
     }
 
-    /// Verifies that the NewView messsage is valid
+    /// Verify that a NewView messsage is valid
     fn verify_new_view(
         &mut self,
         new_view: &PbftNewView,
@@ -531,9 +843,8 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Verifies an individual consensus vote
-    ///
-    /// Returns the signer ID of the wrapped PbftMessage, for use in further verification
+    /// Verify an individual consensus vote and returns the signer ID of the wrapped PbftMessage
+    /// for use in further verification
     fn verify_consensus_vote(vote: &PbftSignedVote, seal: &PbftSeal) -> Result<Vec<u8>, PbftError> {
         let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
             .map_err(PbftError::SerializationError)?;
@@ -558,7 +869,7 @@ impl PbftNode {
         Ok(message.get_info().get_signer_id().to_vec())
     }
 
-    /// Verifies the consensus seal from the current block, for the previous block
+    /// Verify the consensus seal from the current block that proves the previous block
     fn verify_consensus_seal(
         &mut self,
         block: &Block,
@@ -641,290 +952,9 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Use the given block's consensus seal to verify and commit the block this node is working on
-    fn catchup(&mut self, state: &mut PbftState, block: &Block) -> Result<(), PbftError> {
-        info!(
-            "{}: Trying catchup to #{} from BlockNew message #{}",
-            state, state.seq_num, block.block_num,
-        );
+    // ---------- Methods called in the main engine loop to periodically check and update state ----------
 
-        match state.working_block {
-            Some(ref working_block) => {
-                let block_num_matches = block.block_num == working_block.get_block_num() + 1;
-                let block_id_matches = block.previous_id == working_block.get_block_id();
-
-                if !block_num_matches || !block_id_matches {
-                    error!(
-                        "Block didn't match for catchup: {:?} {:?}",
-                        block, working_block
-                    );
-                    return Err(PbftError::MismatchedBlocks(vec![
-                        pbft_block_from_block(block.clone()),
-                        working_block.clone(),
-                    ]));
-                }
-            }
-            None => {
-                error!(
-                    "Trying to catch up, but node does not have block #{} yet",
-                    state.seq_num
-                );
-                return Err(PbftError::NoWorkingBlock);
-            }
-        }
-
-        // Parse messages from the seal
-        let seal: PbftSeal =
-            protobuf::parse_from_bytes(&block.payload).map_err(PbftError::SerializationError)?;
-
-        let messages =
-            seal.get_previous_commit_votes()
-                .iter()
-                .try_fold(Vec::new(), |mut msgs, v| {
-                    msgs.push(ParsedMessage::from_pbft_message(
-                        protobuf::parse_from_bytes(&v.get_message_bytes())
-                            .map_err(PbftError::SerializationError)?,
-                    ));
-                    Ok(msgs)
-                })?;
-
-        // Update our view if necessary
-        let view = messages[0].info().get_view();
-        if view > state.view {
-            info!("Updating view from {} to {}.", state.view, view);
-            state.view = view;
-        }
-
-        // Add messages to the log
-        for message in &messages {
-            self.msg_log.add_message(message.clone(), state)?;
-        }
-
-        // Commit the new block using one of the parsed messages and skip straight to Finished
-        self.service
-            .commit_block(messages[0].get_block().block_id.clone())
-            .map_err(|e| PbftError::InternalError(format!("Failed to commit block: {:?}", e)))?;
-        state.phase = PbftPhase::Finished;
-
-        // Call on_block_commit right away so we're ready to catch up again if necessary
-        self.on_block_commit(BlockId::from(messages[0].get_block().get_block_id()), state);
-
-        Ok(())
-    }
-
-    /// Handle a `BlockNew` update from the Validator
-    ///
-    /// The validator has received a new block; verify the block's consensus seal and add the
-    /// BlockNew to the message log. If this is the block we are waiting for: set it as the working
-    /// block, update the idle & commit timers, and broadcast a PrePrepare if this node is the
-    /// primary. If this is the block after the one this node is working on, use it to catch up.
-    pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
-        info!(
-            "{}: Got BlockNew: {} / {}",
-            state,
-            block.block_num,
-            hex::encode(&block.block_id[..3]),
-        );
-
-        if block.block_num < state.seq_num {
-            info!(
-                "Ignoring block ({}) that's older than current sequence number ({}).",
-                block.block_num, state.seq_num
-            );
-            return Ok(());
-        }
-
-        match self.verify_consensus_seal(&block, state) {
-            Ok(_) => {}
-            Err(err) => {
-                warn!(
-                    "Failing block due to failed consensus seal verification and \
-                     proposing view change! Error was {}",
-                    err
-                );
-                self.service.fail_block(block.block_id).map_err(|err| {
-                    PbftError::InternalError(format!("Couldn't fail block: {}", err))
-                })?;
-                self.propose_view_change(state, state.view + 1)?;
-                return Err(err);
-            }
-        }
-
-        // Create PBFT message for BlockNew and add it to the log
-        let mut msg = PbftMessage::new();
-        msg.set_info(handlers::make_msg_info(
-            &PbftMessageType::BlockNew,
-            state.view,
-            block.block_num,
-            state.id.clone(),
-        ));
-
-        let pbft_block = pbft_block_from_block(block.clone());
-        msg.set_block(pbft_block.clone());
-
-        self.msg_log
-            .add_message(ParsedMessage::from_pbft_message(msg.clone()), state)?;
-
-        // We can use this block's seal to commit the next block (i.e. catch-up) if it's the block
-        // after the one we're waiting for and we haven't already told the validator to commit the
-        // block we're waiting for
-        if block.block_num == state.seq_num + 1 && state.phase != PbftPhase::Finished {
-            self.catchup(state, &block)?;
-        } else if block.block_num == state.seq_num {
-            // This is the block we're waiting for, so we update state
-            state.working_block = Some(msg.get_block().clone());
-
-            // Send PrePrepare messages if we're the primary
-            if state.is_primary() {
-                let s = state.seq_num;
-                self._broadcast_pbft_message(s, &PbftMessageType::PrePrepare, pbft_block, state)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Handle a `BlockCommit` update from the Validator
-    ///
-    /// A block was sucessfully committed; update state to be ready for the next block, make any
-    /// necessary view and membership changes, garbage collect the logs, update the commit & idle
-    /// timers, and start a new block if this node is the primary.
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn on_block_commit(&mut self, block_id: BlockId, state: &mut PbftState) {
-        debug!("{}: <<<<<< BlockCommit: {:?}", state, block_id);
-
-        let is_working_block = match state.working_block {
-            Some(ref block) => BlockId::from(block.get_block_id()) == block_id,
-            None => false,
-        };
-
-        if state.phase != PbftPhase::Finished || !is_working_block {
-            info!(
-                "{}: Got BlockCommit for a block that isn't the working block",
-                state
-            );
-            return;
-        }
-
-        // Update state to be ready for next block
-        state.switch_phase(PbftPhase::PrePreparing);
-        state.seq_num += 1;
-
-        // If we already have a BlockNew for the next block, we can make it the working block;
-        // otherwise just set the working block to None
-        state.working_block = self
-            .msg_log
-            .get_messages_of_type_seq(&PbftMessageType::BlockNew, state.seq_num)
-            .first()
-            .map(|msg| msg.get_block().clone());
-
-        // Increment the view if we need to force a view change for fairness or if membership
-        // has changed
-        if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
-            state.view += 1;
-        }
-
-        // Tell the log to garbage collect if it needs to
-        self.msg_log.garbage_collect(state.seq_num);
-
-        // Restart the faulty primary timeout for the next block
-        state.faulty_primary_timeout.start();
-
-        if state.is_primary() && state.working_block.is_none() {
-            info!(
-                "{}: Initializing block with previous ID {:?}",
-                state, block_id
-            );
-            self.service
-                .initialize_block(Some(block_id.clone()))
-                .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
-        }
-    }
-
-    /// Handle a `BlockValid` update
-    /// This message arrives after `check_blocks` is called, signifying that the validator has
-    /// successfully checked a block with this `BlockId`.
-    /// Once a `BlockValid` is received, transition to the Preparing phase.
-    #[allow(clippy::ptr_arg)]
-    pub fn on_block_valid(
-        &mut self,
-        block_id: &BlockId,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        debug!("{}: <<<<<< BlockValid: {:?}", state, block_id);
-        let block = match state.working_block {
-            Some(ref block) => {
-                if &BlockId::from(block.get_block_id()) == block_id {
-                    Ok(block.clone())
-                } else {
-                    warn!("Got BlockValid that doesn't match the working block");
-                    Err(PbftError::NotReadyForMessage)
-                }
-            }
-            None => {
-                warn!("Got BlockValid with no working block");
-                Err(PbftError::NoWorkingBlock)
-            }
-        }?;
-
-        state.switch_phase(PbftPhase::Preparing);
-        self._broadcast_pbft_message(
-            state.seq_num,
-            &PbftMessageType::Prepare,
-            block.clone(),
-            state,
-        )?;
-        Ok(())
-    }
-
-    // ---------- Methods for periodically checking on and updating the state, called by the engine ----------
-
-    /// Generate a `protobuf::RepeatedField` of signed votes from a list of parsed messages
-    #[allow(clippy::needless_pass_by_value)]
-    fn signed_votes_from_messages(msgs: Vec<&ParsedMessage>) -> RepeatedField<PbftSignedVote> {
-        RepeatedField::from(
-            msgs.iter()
-                .map(|m| {
-                    let mut vote = PbftSignedVote::new();
-
-                    vote.set_header_bytes(m.header_bytes.clone());
-                    vote.set_header_signature(m.header_signature.clone());
-                    vote.set_message_bytes(m.message_bytes.clone());
-
-                    vote
-                })
-                .collect::<Vec<_>>(),
-        )
-    }
-
-    fn build_seal(&mut self, state: &PbftState, summary: Vec<u8>) -> Result<Vec<u8>, PbftError> {
-        info!("{}: Building seal for block {}", state, state.seq_num - 1);
-
-        let min_votes = 2 * state.f;
-        let messages = self
-            .msg_log
-            .get_enough_messages(&PbftMessageType::Commit, state.seq_num - 1, min_votes)
-            .ok_or_else(|| {
-                debug!("{}: {}", state, self.msg_log);
-                PbftError::InternalError(format!(
-                    "Couldn't find {} commit messages in the message log for building a seal!",
-                    min_votes
-                ))
-            })?;
-
-        let mut seal = PbftSeal::new();
-
-        seal.set_summary(summary);
-        seal.set_previous_id(BlockId::from(messages[0].get_block().get_block_id()));
-        seal.set_previous_commit_votes(Self::signed_votes_from_messages(messages));
-
-        seal.write_to_bytes().map_err(PbftError::SerializationError)
-    }
-
-    /// The primary tries to finalize a block every so often
-    /// # Panics
-    /// Panics if `finalize_block` fails. This is necessary because it means the validator wasn't
-    /// able to publish the new block.
+    /// At a regular interval, try to finalize a block when the primary is ready
     pub fn try_publish(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
         // Only the primary takes care of this, and we try publishing a block
         // on every engine loop, even if it's not yet ready. This isn't an error,
@@ -976,6 +1006,7 @@ impl PbftNode {
         state.faulty_primary_timeout.check_expired()
     }
 
+    /// Start the faulty primary timeout
     pub fn start_faulty_primary_timeout(&self, state: &mut PbftState) {
         state.faulty_primary_timeout.start();
     }
@@ -994,6 +1025,65 @@ impl PbftNode {
         }
         peer_res
     }
+
+    // ---------- Methods for communication between nodes ----------
+
+    /// Verify that the specified message type should be sent, construct the message bytes, and
+    /// broadcast the message to all of this node's peers and itself
+    fn _broadcast_pbft_message(
+        &mut self,
+        seq_num: u64,
+        msg_type: &PbftMessageType,
+        block: PbftBlock,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        let expected_type = state.check_msg_type();
+        // Make sure that we should be sending messages of this type
+        if msg_type.is_multicast() && msg_type != &expected_type {
+            return Ok(());
+        }
+
+        let msg_bytes = make_msg_bytes(
+            handlers::make_msg_info(&msg_type, state.view, seq_num, state.id.clone()),
+            block,
+        )
+        .unwrap_or_default();
+
+        self._broadcast_message(&msg_type, msg_bytes, state)
+    }
+
+    /// Broadcast the specified message to all of the node's peers, including itself
+    #[cfg(not(test))]
+    fn _broadcast_message(
+        &mut self,
+        msg_type: &PbftMessageType,
+        msg: Vec<u8>,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        // Broadcast to peers
+        debug!("{}: Broadcasting {:?}", state, msg_type);
+        self.service
+            .broadcast(String::from(msg_type).as_str(), msg.clone())
+            .unwrap_or_else(|err| error!("Couldn't broadcast: {}", err));
+
+        // Send to self
+        let parsed_message = ParsedMessage::from_bytes(msg)?;
+
+        self.on_peer_message(parsed_message, state)
+    }
+
+    /// Disabled self-sending (used for testing)
+    #[cfg(test)]
+    fn _broadcast_message(
+        &mut self,
+        _msg_type: &PbftMessageType,
+        _msg: Vec<u8>,
+        _state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        return Ok(());
+    }
+
+    // ---------- Miscellaneous methods ----------
 
     /// Initiate a view change when this node suspects that the primary is faulty
     pub fn propose_view_change(
@@ -1034,90 +1124,6 @@ impl PbftNode {
             .map_err(PbftError::SerializationError)?;
 
         self._broadcast_message(&PbftMessageType::ViewChange, msg_bytes, state)
-    }
-
-    /// Check the on-chain list of peers; if it has changed, update peers list and return true.
-    fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) -> bool {
-        // Get list of peers from settings
-        let settings = self
-            .service
-            .get_settings(
-                block_id,
-                vec![String::from("sawtooth.consensus.pbft.peers")],
-            )
-            .expect("Failed to get settings");
-        let peers = get_peers_from_settings(&settings);
-        let new_peers_set: HashSet<PeerId> = peers.iter().cloned().collect();
-
-        // Check if membership has changed
-        let old_peers_set: HashSet<PeerId> = state.peer_ids.iter().cloned().collect();
-
-        if new_peers_set != old_peers_set {
-            state.peer_ids = peers;
-            let f = ((state.peer_ids.len() - 1) / 3) as u64;
-            if f == 0 {
-                panic!("This network no longer contains enough nodes to be fault tolerant");
-            }
-            state.f = f;
-            return true;
-        }
-
-        false
-    }
-
-    // ---------- Methods for communication between nodes ----------
-
-    // Broadcast a message to this node's peers, and itself
-    fn _broadcast_pbft_message(
-        &mut self,
-        seq_num: u64,
-        msg_type: &PbftMessageType,
-        block: PbftBlock,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        let expected_type = state.check_msg_type();
-        // Make sure that we should be sending messages of this type
-        if msg_type.is_multicast() && msg_type != &expected_type {
-            return Ok(());
-        }
-
-        let msg_bytes = make_msg_bytes(
-            handlers::make_msg_info(&msg_type, state.view, seq_num, state.id.clone()),
-            block,
-        )
-        .unwrap_or_default();
-
-        self._broadcast_message(&msg_type, msg_bytes, state)
-    }
-
-    #[cfg(not(test))]
-    fn _broadcast_message(
-        &mut self,
-        msg_type: &PbftMessageType,
-        msg: Vec<u8>,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        // Broadcast to peers
-        debug!("{}: Broadcasting {:?}", state, msg_type);
-        self.service
-            .broadcast(String::from(msg_type).as_str(), msg.clone())
-            .unwrap_or_else(|err| error!("Couldn't broadcast: {}", err));
-
-        // Send to self
-        let parsed_message = ParsedMessage::from_bytes(msg)?;
-
-        self.on_peer_message(parsed_message, state)
-    }
-
-    /// NOTE: Disabling self-sending for testing purposes
-    #[cfg(test)]
-    fn _broadcast_message(
-        &mut self,
-        _msg_type: &PbftMessageType,
-        _msg: Vec<u8>,
-        _state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        return Ok(());
     }
 }
 
