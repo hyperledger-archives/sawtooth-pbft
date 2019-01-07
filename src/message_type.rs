@@ -202,7 +202,7 @@ impl ParsedMessage {
     pub fn as_msg_type(&self, msg_type: PbftMessageType) -> ParsedMessage {
         let mut new_msg = self.get_pbft_message().clone();
         let mut info = new_msg.take_info();
-        info.set_msg_type(String::from(&msg_type));
+        info.set_msg_type(String::from(msg_type));
         new_msg.set_info(info);
 
         ParsedMessage {
@@ -216,7 +216,7 @@ impl ParsedMessage {
 }
 
 // Messages related to PBFT consensus
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub enum PbftMessageType {
     /// Basic message types for the multicast protocol
     PrePrepare,
@@ -248,7 +248,7 @@ impl fmt::Display for PbftMessageType {
 
 impl PbftMessageType {
     /// Is the message type a multicast message (`PrePrepare`, `Prepare`, or `Commit`)?
-    pub fn is_multicast(&self) -> bool {
+    pub fn is_multicast(self) -> bool {
         match self {
             PbftMessageType::PrePrepare | PbftMessageType::Prepare | PbftMessageType::Commit => {
                 true
@@ -275,8 +275,8 @@ impl<'a> From<&'a str> for PbftMessageType {
     }
 }
 
-impl<'a> From<&'a PbftMessageType> for String {
-    fn from(mc_type: &'a PbftMessageType) -> String {
-        format!("{:?}", mc_type)
+impl From<PbftMessageType> for String {
+    fn from(msg_type: PbftMessageType) -> String {
+        format!("{:?}", msg_type)
     }
 }

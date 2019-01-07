@@ -89,7 +89,7 @@ impl PbftLog {
     pub fn get_one_msg(
         &self,
         info: &PbftMessageInfo,
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
     ) -> Option<&ParsedMessage> {
         let msgs =
             self.get_messages_of_type_seq_view(msg_type, info.get_seq_num(), info.get_view());
@@ -100,7 +100,7 @@ impl PbftLog {
     /// sequence and view number of the provided `ref_msg`, as well as its block (optional)
     pub fn log_has_required_msgs(
         &self,
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
         ref_msg: &ParsedMessage,
         check_block: bool,
         required: u64,
@@ -148,7 +148,7 @@ impl PbftLog {
     /// Obtain all messages from the log that match a given type and sequence_number
     pub fn get_messages_of_type_seq(
         &self,
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
         sequence_number: u64,
     ) -> Vec<&ParsedMessage> {
         self.messages
@@ -164,7 +164,7 @@ impl PbftLog {
     /// Obtain all messages from the log that match a given type and view
     pub fn get_messages_of_type_view(
         &self,
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
         view: u64,
     ) -> Vec<&ParsedMessage> {
         self.messages
@@ -179,7 +179,7 @@ impl PbftLog {
     /// Obtain messages from the log that match a given type, sequence number, and view
     pub fn get_messages_of_type_seq_view(
         &self,
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
         sequence_number: u64,
         view: u64,
     ) -> Vec<&ParsedMessage> {
@@ -212,7 +212,7 @@ impl PbftLog {
     /// the publishing node's approval is implicit via publishing.
     pub fn get_enough_messages(
         &self,
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
         sequence_number: u64,
         minimum: u64,
     ) -> Option<Vec<&ParsedMessage>> {
@@ -274,7 +274,7 @@ mod tests {
 
     /// Create a PbftMessage, given its type, view, sequence number, and who it's from
     fn make_msg(
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
         view: u64,
         seq_num: u64,
         signer_id: PeerId,
@@ -313,7 +313,7 @@ mod tests {
         let state = PbftState::new(vec![], 0, &cfg);
 
         let msg = make_msg(
-            &PbftMessageType::PrePrepare,
+            PbftMessageType::PrePrepare,
             0,
             1,
             get_peer_id(&cfg, 0),
@@ -322,7 +322,7 @@ mod tests {
 
         log.add_message(msg.clone(), &state).unwrap();
 
-        let gotten_msgs = log.get_messages_of_type_seq_view(&PbftMessageType::PrePrepare, 1, 0);
+        let gotten_msgs = log.get_messages_of_type_seq_view(PbftMessageType::PrePrepare, 1, 0);
 
         assert_eq!(gotten_msgs.len(), 1);
         assert_eq!(&msg, gotten_msgs[0]);
@@ -338,7 +338,7 @@ mod tests {
 
         for seq in 1..5 {
             let msg = make_msg(
-                &PbftMessageType::BlockNew,
+                PbftMessageType::BlockNew,
                 0,
                 seq,
                 get_peer_id(&cfg, 0),
@@ -347,7 +347,7 @@ mod tests {
             log.add_message(msg.clone(), &state).unwrap();
 
             let msg = make_msg(
-                &PbftMessageType::PrePrepare,
+                PbftMessageType::PrePrepare,
                 0,
                 seq,
                 get_peer_id(&cfg, 0),
@@ -357,7 +357,7 @@ mod tests {
 
             for peer in 0..4 {
                 let msg = make_msg(
-                    &PbftMessageType::Prepare,
+                    PbftMessageType::Prepare,
                     0,
                     seq,
                     get_peer_id(&cfg, peer),
@@ -369,7 +369,7 @@ mod tests {
 
             for peer in 0..4 {
                 let msg = make_msg(
-                    &PbftMessageType::Commit,
+                    PbftMessageType::Commit,
                     0,
                     seq,
                     get_peer_id(&cfg, peer),
@@ -391,18 +391,18 @@ mod tests {
                 PbftMessageType::Commit,
             ] {
                 assert_eq!(
-                    log.get_messages_of_type_seq_view(&msg_type, old, 0).len(),
+                    log.get_messages_of_type_seq_view(*msg_type, old, 0).len(),
                     0
                 );
             }
         }
 
-        for msg_type in &[PbftMessageType::BlockNew, PbftMessageType::PrePrepare] {
-            assert_eq!(log.get_messages_of_type_seq_view(&msg_type, 4, 0).len(), 1);
+        for msg_type in vec![PbftMessageType::BlockNew, PbftMessageType::PrePrepare] {
+            assert_eq!(log.get_messages_of_type_seq_view(msg_type, 4, 0).len(), 1);
         }
 
-        for msg_type in &[PbftMessageType::Prepare, PbftMessageType::Commit] {
-            assert_eq!(log.get_messages_of_type_seq_view(&msg_type, 4, 0).len(), 4);
+        for msg_type in vec![PbftMessageType::Prepare, PbftMessageType::Commit] {
+            assert_eq!(log.get_messages_of_type_seq_view(msg_type, 4, 0).len(), 4);
         }
     }
 }

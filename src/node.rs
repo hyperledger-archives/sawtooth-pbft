@@ -140,7 +140,7 @@ impl PbftNode {
         // backlog because we can't perform consensus until the validator has this block
         let block_new_exists = self
             .msg_log
-            .get_messages_of_type_seq(&PbftMessageType::BlockNew, msg.info().get_seq_num())
+            .get_messages_of_type_seq(PbftMessageType::BlockNew, msg.info().get_seq_num())
             .iter()
             .any(|block_new_msg| block_new_msg.get_block() == msg.get_block());
         if !block_new_exists {
@@ -157,7 +157,7 @@ impl PbftNode {
         let mut mismatched_blocks = self
             .msg_log
             .get_messages_of_type_seq_view(
-                &PbftMessageType::PrePrepare,
+                PbftMessageType::PrePrepare,
                 msg.info().get_seq_num(),
                 msg.info().get_view(),
             )
@@ -227,12 +227,9 @@ impl PbftNode {
             // The node is ready to move on to the Committing phase (i.e. the predicate `prepared`
             // is true) when its log has 2f + 1 Prepare messages from different nodes that match
             // the PrePrepare message received earlier (same view, sequence number, and block)
-            if let Some(pre_prep) = self
-                .msg_log
-                .get_one_msg(&info, &PbftMessageType::PrePrepare)
-            {
+            if let Some(pre_prep) = self.msg_log.get_one_msg(&info, PbftMessageType::PrePrepare) {
                 if self.msg_log.log_has_required_msgs(
-                    &PbftMessageType::Prepare,
+                    PbftMessageType::Prepare,
                     &pre_prep,
                     true,
                     2 * state.f + 1,
@@ -240,7 +237,7 @@ impl PbftNode {
                     state.switch_phase(PbftPhase::Committing);
                     self._broadcast_pbft_message(
                         state.seq_num,
-                        &PbftMessageType::Commit,
+                        PbftMessageType::Commit,
                         block,
                         state,
                     )?;
@@ -271,12 +268,9 @@ impl PbftNode {
             // The node is ready to commit the block (i.e. the predicate `committable` is true)
             // when its log has 2f + 1 Commit messages from different nodes that match the
             // PrePrepare message received earlier (same view, sequence number, and block)
-            if let Some(pre_prep) = self
-                .msg_log
-                .get_one_msg(&info, &PbftMessageType::PrePrepare)
-            {
+            if let Some(pre_prep) = self.msg_log.get_one_msg(&info, PbftMessageType::PrePrepare) {
                 if self.msg_log.log_has_required_msgs(
-                    &PbftMessageType::Commit,
+                    PbftMessageType::Commit,
                     &pre_prep,
                     true,
                     2 * state.f + 1,
@@ -327,7 +321,7 @@ impl PbftNode {
             PbftMode::ViewChanging(v) => msg_view > v,
             PbftMode::Normal => true,
         } && self.msg_log.log_has_required_msgs(
-            &PbftMessageType::ViewChange,
+            PbftMessageType::ViewChange,
             msg,
             false,
             state.f + 1,
@@ -339,7 +333,7 @@ impl PbftNode {
         // including our own), broadcast the NewView message
         let messages = self
             .msg_log
-            .get_messages_of_type_view(&PbftMessageType::ViewChange, msg_view)
+            .get_messages_of_type_view(PbftMessageType::ViewChange, msg_view)
             .iter()
             .cloned()
             .filter(|msg| !msg.from_self)
@@ -349,7 +343,7 @@ impl PbftNode {
             let mut new_view = PbftNewView::new();
 
             new_view.set_info(PbftMessageInfo::new_from(
-                &PbftMessageType::NewView,
+                PbftMessageType::NewView,
                 msg_view,
                 state.seq_num - 1,
                 state.id.clone(),
@@ -361,7 +355,7 @@ impl PbftNode {
                 .write_to_bytes()
                 .map_err(PbftError::SerializationError)?;
 
-            self._broadcast_message(&PbftMessageType::NewView, msg_bytes, state)?;
+            self._broadcast_message(PbftMessageType::NewView, msg_bytes, state)?;
         }
 
         Ok(())
@@ -452,7 +446,7 @@ impl PbftNode {
         // Create PBFT message for BlockNew and add it to the log
         let mut msg = PbftMessage::new();
         msg.set_info(PbftMessageInfo::new_from(
-            &PbftMessageType::BlockNew,
+            PbftMessageType::BlockNew,
             state.view,
             block.block_num,
             state.id.clone(),
@@ -476,7 +470,7 @@ impl PbftNode {
             // Send PrePrepare messages if we're the primary
             if state.is_primary() {
                 let s = state.seq_num;
-                self._broadcast_pbft_message(s, &PbftMessageType::PrePrepare, pbft_block, state)?;
+                self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block, state)?;
             }
         }
 
@@ -584,7 +578,7 @@ impl PbftNode {
         state.switch_phase(PbftPhase::Preparing);
         self._broadcast_pbft_message(
             state.seq_num,
-            &PbftMessageType::Prepare,
+            PbftMessageType::Prepare,
             block.clone(),
             state,
         )?;
@@ -621,7 +615,7 @@ impl PbftNode {
         // otherwise just set the working block to None
         state.working_block = self
             .msg_log
-            .get_messages_of_type_seq(&PbftMessageType::BlockNew, state.seq_num)
+            .get_messages_of_type_seq(PbftMessageType::BlockNew, state.seq_num)
             .first()
             .map(|msg| msg.get_block().clone());
 
@@ -705,7 +699,7 @@ impl PbftNode {
         let min_votes = 2 * state.f;
         let messages = self
             .msg_log
-            .get_enough_messages(&PbftMessageType::Commit, state.seq_num - 1, min_votes)
+            .get_enough_messages(PbftMessageType::Commit, state.seq_num - 1, min_votes)
             .ok_or_else(|| {
                 debug!("{}: {}", state, self.msg_log);
                 PbftError::InternalError(format!(
@@ -1032,33 +1026,33 @@ impl PbftNode {
     fn _broadcast_pbft_message(
         &mut self,
         seq_num: u64,
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
         block: PbftBlock,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         // Make sure that we should be sending messages of this type
         let expected_type = state.check_msg_type();
-        if msg_type.is_multicast() && msg_type != &expected_type {
+        if msg_type.is_multicast() && msg_type != expected_type {
             return Ok(());
         }
 
         let mut msg = PbftMessage::new();
         msg.set_info(PbftMessageInfo::new_from(
-            &msg_type,
+            msg_type,
             state.view,
             seq_num,
             state.id.clone(),
         ));
         msg.set_block(block);
 
-        self._broadcast_message(&msg_type, msg.write_to_bytes().unwrap_or_default(), state)
+        self._broadcast_message(msg_type, msg.write_to_bytes().unwrap_or_default(), state)
     }
 
     /// Broadcast the specified message to all of the node's peers, including itself
     #[cfg(not(test))]
     fn _broadcast_message(
         &mut self,
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
         msg: Vec<u8>,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
@@ -1078,7 +1072,7 @@ impl PbftNode {
     #[cfg(test)]
     fn _broadcast_message(
         &mut self,
-        _msg_type: &PbftMessageType,
+        _msg_type: PbftMessageType,
         _msg: Vec<u8>,
         _state: &mut PbftState,
     ) -> Result<(), PbftError> {
@@ -1115,7 +1109,7 @@ impl PbftNode {
 
         let mut vc_msg = PbftMessage::new();
         vc_msg.set_info(PbftMessageInfo::new_from(
-            &PbftMessageType::ViewChange,
+            PbftMessageType::ViewChange,
             view,
             state.seq_num - 1,
             state.id.clone(),
@@ -1125,7 +1119,7 @@ impl PbftNode {
             .write_to_bytes()
             .map_err(PbftError::SerializationError)?;
 
-        self._broadcast_message(&PbftMessageType::ViewChange, msg_bytes, state)
+        self._broadcast_message(PbftMessageType::ViewChange, msg_bytes, state)
     }
 }
 
@@ -1337,7 +1331,7 @@ mod tests {
         let pub_key = context.get_public_key(&*key).unwrap();
 
         let mut vc_msg = PbftMessage::new();
-        let info = PbftMessageInfo::new_from(&PbftMessageType::ViewChange, view, seq_num, peer);
+        let info = PbftMessageInfo::new_from(PbftMessageType::ViewChange, view, seq_num, peer);
         vc_msg.set_info(info);
 
         let mut message = ParsedMessage::from_pbft_message(vc_msg);
@@ -1355,13 +1349,13 @@ mod tests {
 
     /// Create a mock serialized PbftMessage
     fn mock_msg(
-        msg_type: &PbftMessageType,
+        msg_type: PbftMessageType,
         view: u64,
         seq_num: u64,
         block: Block,
         from: PeerId,
     ) -> ParsedMessage {
-        let info = PbftMessageInfo::new_from(&msg_type, view, seq_num, from);
+        let info = PbftMessageInfo::new_from(msg_type, view, seq_num, from);
 
         let mut pbft_msg = PbftMessage::new();
         pbft_msg.set_info(info);
@@ -1527,21 +1521,21 @@ mod tests {
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
 
         // Add BlockNew to log
-        let block_new = mock_msg(&PbftMessageType::BlockNew, 0, 1, mock_block(1), vec![0]);
+        let block_new = mock_msg(PbftMessageType::BlockNew, 0, 1, mock_block(1), vec![0]);
         node0
             .msg_log
             .add_message(block_new, &state0)
             .unwrap_or_else(handle_pbft_err);
 
         // Add PrePrepare to log
-        let valid_msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, mock_block(1), vec![0]);
+        let valid_msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, mock_block(1), vec![0]);
         node0
             .handle_pre_prepare(valid_msg.clone(), &mut state0)
             .unwrap_or_else(handle_pbft_err);
 
         // Verify it worked
         assert!(node0.msg_log.log_has_required_msgs(
-            &PbftMessageType::PrePrepare,
+            PbftMessageType::PrePrepare,
             &valid_msg,
             true,
             1
@@ -1591,7 +1585,7 @@ mod tests {
             .unwrap_or_else(handle_pbft_err);
 
         // Receive a PrePrepare
-        let msg = mock_msg(&PbftMessageType::PrePrepare, 0, 1, block.clone(), vec![0]);
+        let msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, block.clone(), vec![0]);
         node1
             .on_peer_message(msg, &mut state1)
             .unwrap_or_else(handle_pbft_err);
@@ -1610,7 +1604,7 @@ mod tests {
         // Receive 3 `Prepare` messages
         for peer in 0..3 {
             assert_eq!(state1.phase, PbftPhase::Preparing);
-            let msg = mock_msg(&PbftMessageType::Prepare, 0, 1, block.clone(), vec![peer]);
+            let msg = mock_msg(PbftMessageType::Prepare, 0, 1, block.clone(), vec![peer]);
             node1
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
@@ -1619,7 +1613,7 @@ mod tests {
         // Receive 3 `Commit` messages
         for peer in 0..3 {
             assert_eq!(state1.phase, PbftPhase::Committing);
-            let msg = mock_msg(&PbftMessageType::Commit, 0, 1, block.clone(), vec![peer]);
+            let msg = mock_msg(PbftMessageType::Commit, 0, 1, block.clone(), vec![peer]);
             node1
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
@@ -1674,14 +1668,14 @@ mod tests {
         // Receive `NewView` message
         let msgs: Vec<&ParsedMessage> = node1
             .msg_log
-            .get_messages_of_type_view(&PbftMessageType::ViewChange, 1)
+            .get_messages_of_type_view(PbftMessageType::ViewChange, 1)
             .iter()
             .cloned()
             .filter(|msg| !msg.from_self)
             .collect::<Vec<_>>();
         let mut new_view = PbftNewView::new();
         new_view.set_info(PbftMessageInfo::new_from(
-            &PbftMessageType::NewView,
+            PbftMessageType::NewView,
             1,
             0,
             vec![1],
