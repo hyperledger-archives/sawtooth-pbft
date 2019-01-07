@@ -717,14 +717,35 @@ impl PbftNode {
         seal.write_to_bytes().map_err(PbftError::SerializationError)
     }
 
-    /// Verify that a vote is properly signed
-    fn verify_vote_signer(vote: &PbftSignedVote) -> Result<(), PbftError> {
+    /// Verify that a vote matches the expected type, is properly signed, and passes the specified
+    /// criteria; if it passes verification, return the signer ID to be used for further
+    /// verification
+    fn verify_vote<F>(
+        vote: &PbftSignedVote,
+        expected_type: PbftMessageType,
+        validation_criteria: F,
+    ) -> Result<PeerId, PbftError>
+    where
+        F: Fn(&PbftMessage) -> Result<(), PbftError>,
+    {
+        // Parse the message
+        let pbft_message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
+            .map_err(PbftError::SerializationError)?;
         let header: ConsensusPeerMessageHeader =
             protobuf::parse_from_bytes(&vote.get_header_bytes())
                 .map_err(PbftError::SerializationError)?;
 
-        let key = Secp256k1PublicKey::from_hex(&hex::encode(&header.signer_id)).unwrap();
+        // Verify the message type
+        let msg_type = PbftMessageType::from(pbft_message.get_info().get_msg_type());
+        if msg_type != expected_type {
+            return Err(PbftError::InternalError(format!(
+                "Received a {:?} vote, but expected a {:?}",
+                msg_type, expected_type
+            )));
+        }
 
+        // Verify the signature
+        let key = Secp256k1PublicKey::from_hex(&hex::encode(&header.signer_id)).unwrap();
         let context = create_context("secp256k1")
             .map_err(|err| PbftError::InternalError(format!("Couldn't create context: {}", err)))?;
 
@@ -749,33 +770,10 @@ impl PbftNode {
 
         verify_sha512(vote.get_message_bytes(), header.get_content_sha512())?;
 
-        Ok(())
-    }
+        // Validate against the specified criteria
+        validation_criteria(&pbft_message)?;
 
-    /// Verify an individual view change vote and return the signer ID of the wrapped PbftMessage
-    /// for use in further verification
-    fn verify_view_change_vote(vote: &PbftSignedVote, view: u64) -> Result<PeerId, PbftError> {
-        let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
-            .map_err(PbftError::SerializationError)?;
-
-        if PbftMessageType::from(message.get_info().get_msg_type()) != PbftMessageType::ViewChange {
-            return Err(PbftError::InternalError(format!(
-                "Received view change vote that is not a ViewChange: {:?}",
-                message
-            )));
-        }
-
-        if message.get_info().get_view() != view {
-            return Err(PbftError::InternalError(format!(
-                "ViewChange's view ({:?}) does not match NewView's view ({:?})",
-                message.get_info().get_view(),
-                view,
-            )));
-        }
-
-        Self::verify_vote_signer(vote)?;
-
-        Ok(PeerId::from(message.get_info().get_signer_id()))
+        Ok(PeerId::from(pbft_message.get_info().get_signer_id()))
     }
 
     /// Verify that a NewView messsage is valid
@@ -801,9 +799,17 @@ impl PbftNode {
             new_view
                 .get_view_changes()
                 .iter()
-                .try_fold(HashSet::new(), |mut ids, v| {
-                    Self::verify_view_change_vote(v, new_view.get_info().get_view())
-                        .and_then(|vid| Ok(ids.insert(vid)))?;
+                .try_fold(HashSet::new(), |mut ids, vote| {
+                    Self::verify_vote(vote, PbftMessageType::ViewChange, |msg| {
+                        if msg.get_info().get_view() != new_view.get_info().get_view() {
+                            return Err(PbftError::InternalError(format!(
+                                "ViewChange ({:?}) doesn't match NewView ({:?})",
+                                msg, &new_view,
+                            )));
+                        }
+                        Ok(())
+                    })
+                    .and_then(|id| Ok(ids.insert(id)))?;
                     Ok(ids)
                 })?;
 
@@ -834,32 +840,6 @@ impl PbftNode {
         }
 
         Ok(())
-    }
-
-    /// Verify an individual consensus vote and returns the signer ID of the wrapped PbftMessage
-    /// for use in further verification
-    fn verify_consensus_vote(vote: &PbftSignedVote, seal: &PbftSeal) -> Result<Vec<u8>, PbftError> {
-        let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
-            .map_err(PbftError::SerializationError)?;
-
-        if PbftMessageType::from(message.get_info().get_msg_type()) != PbftMessageType::Commit {
-            return Err(PbftError::InternalError(format!(
-                "Received consensus vote that is not a Commit: {:?}",
-                message
-            )));
-        }
-
-        if message.get_block().block_id != seal.previous_id {
-            return Err(PbftError::InternalError(format!(
-                "PbftMessage block ID ({:?}) doesn't match seal's previous id ({:?})!",
-                message.get_block().get_block_id(),
-                seal.previous_id
-            )));
-        }
-
-        Self::verify_vote_signer(vote)?;
-
-        Ok(message.get_info().get_signer_id().to_vec())
     }
 
     /// Verify the consensus seal from the current block that proves the previous block
@@ -902,8 +882,18 @@ impl PbftNode {
         let voter_ids =
             seal.get_previous_commit_votes()
                 .iter()
-                .try_fold(HashSet::new(), |mut ids, v| {
-                    Self::verify_consensus_vote(v, &seal).and_then(|vid| Ok(ids.insert(vid)))?;
+                .try_fold(HashSet::new(), |mut ids, vote| {
+                    Self::verify_vote(vote, PbftMessageType::Commit, |msg| {
+                        if msg.get_block().block_id != seal.previous_id {
+                            return Err(PbftError::InternalError(format!(
+                            "PbftMessage block ID ({:?}) doesn't match seal's previous id ({:?})!",
+                            msg.get_block().block_id,
+                            seal.previous_id
+                        )));
+                        }
+                        Ok(())
+                    })
+                    .and_then(|id| Ok(ids.insert(id)))?;
                     Ok(ids)
                 })?;
 
