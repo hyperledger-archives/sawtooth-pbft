@@ -25,6 +25,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use hex;
+use sawtooth_sdk::consensus::engine::Block;
 
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{
@@ -95,5 +96,16 @@ impl fmt::Display for PbftMessageInfo {
             self.get_view(),
             &hex::encode(self.get_signer_id())[..6],
         )
+    }
+}
+
+impl From<Block> for PbftBlock {
+    fn from(block: Block) -> Self {
+        let mut pbft_block = PbftBlock::new();
+        pbft_block.set_block_id(block.block_id);
+        pbft_block.set_signer_id(block.signer_id);
+        pbft_block.set_block_num(block.block_num);
+        pbft_block.set_summary(block.summary);
+        pbft_block
     }
 }

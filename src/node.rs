@@ -457,7 +457,7 @@ impl PbftNode {
             state.id.clone(),
         ));
 
-        let pbft_block = pbft_block_from_block(block.clone());
+        let pbft_block = PbftBlock::from(block.clone());
         msg.set_block(pbft_block.clone());
 
         self.msg_log
@@ -500,7 +500,7 @@ impl PbftNode {
                         block, working_block
                     );
                     return Err(PbftError::MismatchedBlocks(vec![
-                        pbft_block_from_block(block.clone()),
+                        PbftBlock::from(block.clone()),
                         working_block.clone(),
                     ]));
                 }
@@ -1035,8 +1035,8 @@ impl PbftNode {
         block: PbftBlock,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        let expected_type = state.check_msg_type();
         // Make sure that we should be sending messages of this type
+        let expected_type = state.check_msg_type();
         if msg_type.is_multicast() && msg_type != &expected_type {
             return Ok(());
         }
@@ -1126,17 +1126,6 @@ impl PbftNode {
 
         self._broadcast_message(&PbftMessageType::ViewChange, msg_bytes, state)
     }
-}
-
-// Make a PbftBlock out of a consensus Block (PBFT doesn't need to use all the information about
-// the block - this keeps blocks lighter weight)
-fn pbft_block_from_block(block: Block) -> PbftBlock {
-    let mut pbft_block = PbftBlock::new();
-    pbft_block.set_block_id(block.block_id);
-    pbft_block.set_signer_id(block.signer_id);
-    pbft_block.set_block_num(block.block_num);
-    pbft_block.set_summary(block.summary);
-    pbft_block
 }
 
 /// NOTE: Testing the PbftNode is a bit strange. Due to missing functionality in the Service,
@@ -1376,7 +1365,7 @@ mod tests {
 
         let mut pbft_msg = PbftMessage::new();
         pbft_msg.set_info(info);
-        pbft_msg.set_block(pbft_block_from_block(block.clone()));
+        pbft_msg.set_block(PbftBlock::from(block));
 
         ParsedMessage::from_pbft_message(pbft_msg)
     }
@@ -1401,10 +1390,7 @@ mod tests {
         node0.on_block_new(mock_block(1), &mut state0).unwrap();
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.seq_num, 1);
-        assert_eq!(
-            state0.working_block,
-            Some(pbft_block_from_block(mock_block(1)))
-        );
+        assert_eq!(state0.working_block, Some(PbftBlock::from(mock_block(1))));
 
         // Try the next block
         let mut node1 = mock_node(vec![1]);
@@ -1413,10 +1399,7 @@ mod tests {
             .on_block_new(mock_block(1), &mut state1)
             .unwrap_or_else(handle_pbft_err);
         assert_eq!(state1.phase, PbftPhase::PrePreparing);
-        assert_eq!(
-            state1.working_block,
-            Some(pbft_block_from_block(mock_block(1)))
-        );
+        assert_eq!(state1.working_block, Some(PbftBlock::from(mock_block(1))));
     }
 
     #[test]
@@ -1459,10 +1442,7 @@ mod tests {
         assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
         assert_eq!(state.f, 1);
         assert_eq!(state.forced_view_change_period, 30);
-        assert_eq!(
-            state.working_block,
-            Some(pbft_block_from_block(mock_block(1)))
-        );
+        assert_eq!(state.working_block, Some(PbftBlock::from(mock_block(1))));
         assert!(state.is_primary());
 
         state.seq_num += 1;
@@ -1480,7 +1460,7 @@ mod tests {
             assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
             assert_eq!(state.f, 1);
             assert_eq!(state.forced_view_change_period, 30);
-            assert_eq!(state.working_block, Some(pbft_block_from_block(block)));
+            assert_eq!(state.working_block, Some(PbftBlock::from(block)));
             assert!(state.is_primary());
 
             state.seq_num += 1;
@@ -1576,7 +1556,7 @@ mod tests {
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         state0.phase = PbftPhase::Checking;
-        state0.working_block = Some(pbft_block_from_block(mock_block(1)));
+        state0.working_block = Some(PbftBlock::from(mock_block(1)));
         node.on_block_valid(&mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
         assert_eq!(state0.phase, PbftPhase::Preparing);
@@ -1589,7 +1569,7 @@ mod tests {
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         state0.phase = PbftPhase::Finished;
-        state0.working_block = Some(pbft_block_from_block(mock_block(1)));
+        state0.working_block = Some(PbftBlock::from(mock_block(1)));
         assert_eq!(state0.seq_num, 1);
         node.on_block_commit(mock_block_id(1), &mut state0);
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
@@ -1734,7 +1714,7 @@ mod tests {
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         let block0 = mock_block(1);
-        let pbft_block0 = pbft_block_from_block(block0);
+        let pbft_block0 = PbftBlock::from(block0);
 
         for i in 0..3 {
             let mut info = PbftMessageInfo::new();
