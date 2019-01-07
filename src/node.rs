@@ -182,7 +182,7 @@ impl PbftNode {
                         PbftError::InternalError(format!("Couldn't fail block: {}", err))
                     })?;
             }
-            self.propose_view_change(state, state.view + 1)?;
+            self.start_view_change(state, state.view + 1)?;
             return Ok(());
         }
 
@@ -326,7 +326,7 @@ impl PbftNode {
             false,
             state.f + 1,
         ) {
-            self.propose_view_change(state, msg_view)?;
+            self.start_view_change(state, msg_view)?;
         }
 
         // If we're the new primary and we have the required 2f ViewChange messages (not
@@ -382,7 +382,7 @@ impl PbftNode {
             Err(e) => {
                 if let PbftMode::ViewChanging(v) = state.mode {
                     warn!("NewView message is invalid, got error: {:?}, Starting new view change to view {}", e, v + 1);
-                    self.propose_view_change(state, v + 1)?;
+                    self.start_view_change(state, v + 1)?;
                     return Ok(());
                 }
             }
@@ -438,7 +438,7 @@ impl PbftNode {
                 self.service.fail_block(block.block_id).map_err(|err| {
                     PbftError::InternalError(format!("Couldn't fail block: {}", err))
                 })?;
-                self.propose_view_change(state, state.view + 1)?;
+                self.start_view_change(state, state.view + 1)?;
                 return Err(err);
             }
         }
@@ -1071,12 +1071,11 @@ impl PbftNode {
 
     // ---------- Miscellaneous methods ----------
 
-    /// Initiate a view change when this node suspects that the primary is faulty
-    pub fn propose_view_change(
-        &mut self,
-        state: &mut PbftState,
-        view: u64,
-    ) -> Result<(), PbftError> {
+    /// Start a view change when this node suspects that the primary is faulty
+    ///
+    /// Update state to reflect that the node is now in the process of this view change, start the
+    /// view change timeout, and broadcast a view change message
+    pub fn start_view_change(&mut self, state: &mut PbftState, view: u64) -> Result<(), PbftError> {
         // Do not send messages again if we are already in the midst of this or a later view change
         if match state.mode {
             PbftMode::ViewChanging(v) => view <= v,
@@ -1097,6 +1096,7 @@ impl PbftNode {
         );
         state.view_change_timeout.start();
 
+        // Broadcast the view change message
         let mut vc_msg = PbftMessage::new();
         vc_msg.set_info(PbftMessageInfo::new_from(
             PbftMessageType::ViewChange,
@@ -1643,7 +1643,7 @@ mod tests {
         // Receive 3 `ViewChange` messages
         for peer in 0..3 {
             // It takes f + 1 `ViewChange` messages to trigger a view change, if it wasn't started
-            // by `propose_view_change()`
+            // by `start_view_change()`
             if peer < 2 {
                 assert_eq!(state1.mode, PbftMode::Normal);
             } else {
@@ -1682,7 +1682,7 @@ mod tests {
 
     /// Make sure that view changes start correctly
     #[test]
-    fn propose_view_change() {
+    fn start_view_change() {
         let mut node1 = mock_node(vec![1]);
         let cfg = mock_config(4);
         let mut state1 = PbftState::new(vec![], 0, &cfg);
@@ -1690,7 +1690,7 @@ mod tests {
 
         let new_view = state1.view + 1;
         node1
-            .propose_view_change(&mut state1, new_view)
+            .start_view_change(&mut state1, new_view)
             .unwrap_or_else(handle_pbft_err);
 
         assert_eq!(state1.mode, PbftMode::ViewChanging(1));
