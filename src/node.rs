@@ -22,7 +22,7 @@ use std::convert::From;
 use std::error::Error;
 
 use hex;
-use protobuf::{Message, ProtobufError, RepeatedField};
+use protobuf::{Message, RepeatedField};
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId};
 use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
@@ -34,9 +34,7 @@ use crate::handlers;
 use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
-use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
-};
+use crate::protos::pbft_message::{PbftBlock, PbftMessage, PbftNewView, PbftSeal, PbftSignedVote};
 use crate::state::{PbftMode, PbftPhase, PbftState};
 use crate::timing::Timeout;
 
@@ -1043,13 +1041,16 @@ impl PbftNode {
             return Ok(());
         }
 
-        let msg_bytes = make_msg_bytes(
-            handlers::make_msg_info(&msg_type, state.view, seq_num, state.id.clone()),
-            block,
-        )
-        .unwrap_or_default();
+        let mut msg = PbftMessage::new();
+        msg.set_info(handlers::make_msg_info(
+            &msg_type,
+            state.view,
+            seq_num,
+            state.id.clone(),
+        ));
+        msg.set_block(block);
 
-        self._broadcast_message(&msg_type, msg_bytes, state)
+        self._broadcast_message(&msg_type, msg.write_to_bytes().unwrap_or_default(), state)
     }
 
     /// Broadcast the specified message to all of the node's peers, including itself
@@ -1127,14 +1128,6 @@ impl PbftNode {
     }
 }
 
-/// Create a Protobuf binary representation of a PbftMessage from its info and corresponding Block
-fn make_msg_bytes(info: PbftMessageInfo, block: PbftBlock) -> Result<Vec<u8>, ProtobufError> {
-    let mut msg = PbftMessage::new();
-    msg.set_info(info);
-    msg.set_block(block);
-    msg.write_to_bytes()
-}
-
 // Make a PbftBlock out of a consensus Block (PBFT doesn't need to use all the information about
 // the block - this keeps blocks lighter weight)
 fn pbft_block_from_block(block: Block) -> PbftBlock {
@@ -1156,6 +1149,7 @@ mod tests {
     use crate::config::mock_config;
     use crate::handlers::make_msg_info;
     use crate::hash::{hash_sha256, hash_sha512};
+    use crate::protos::pbft_message::PbftMessageInfo;
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
     use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
     use serde_json;
