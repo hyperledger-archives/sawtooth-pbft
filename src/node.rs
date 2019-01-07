@@ -22,6 +22,7 @@ use std::convert::From;
 use std::error::Error;
 
 use hex;
+use itertools::Itertools;
 use protobuf::{Message, RepeatedField};
 use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId};
 use sawtooth_sdk::consensus::service::Service;
@@ -696,15 +697,34 @@ impl PbftNode {
     fn build_seal(&mut self, state: &PbftState, summary: Vec<u8>) -> Result<Vec<u8>, PbftError> {
         info!("{}: Building seal for block {}", state, state.seq_num - 1);
 
-        let min_votes = 2 * state.f;
+        // The previous block may have been committed in a different view, so the node will need
+        // find the view that contains the required 2f Commit messages for building the seal
         let messages = self
             .msg_log
-            .get_enough_messages(PbftMessageType::Commit, state.seq_num - 1, min_votes)
+            .get_messages_of_type_seq(PbftMessageType::Commit, state.seq_num - 1)
+            .iter()
+            // Filter out this node's own messages because self-sent messages aren't signed and
+            // therefore can't be included in the seal
+            .filter(|msg| !msg.from_self)
+            .cloned()
+            // Map to (view, msg) pairs
+            .map(|msg| (msg.info().get_view(), msg))
+            // Group messages together by view
+            .into_group_map()
+            .into_iter()
+            // One and only one view should have the required number of messages, since the block
+            // at this sequence number should only have been committed once and therefore in only
+            // one view
+            .find_map(|(_view, msgs)| {
+                if msgs.len() >= 2 * state.f as usize {
+                    Some(msgs)
+                } else {
+                    None
+                }
+            })
             .ok_or_else(|| {
-                debug!("{}: {}", state, self.msg_log);
-                PbftError::InternalError(format!(
-                    "Couldn't find {} commit messages in the message log for building a seal!",
-                    min_votes
+                PbftError::InternalError(String::from(
+                    "Couldn't find 2f commit messages in the message log for building a seal!",
                 ))
             })?;
 
