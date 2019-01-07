@@ -102,101 +102,8 @@ impl PbftNode {
             PbftMessageType::PrePrepare => self.handle_pre_prepare(msg, state)?,
             PbftMessageType::Prepare => self.handle_prepare(msg, state)?,
             PbftMessageType::Commit => self.handle_commit(msg, state)?,
-
-            PbftMessageType::ViewChange => {
-                // Ignore old view change messages (already on a view >= the one this message is
-                // for or already trying to change to a later view)
-                let msg_view = msg.info().get_view();
-                if msg_view <= state.view
-                    || match state.mode {
-                        PbftMode::ViewChanging(v) => msg_view < v,
-                        _ => false,
-                    }
-                {
-                    return Ok(());
-                }
-
-                self.msg_log.add_message(msg.clone(), state)?;
-
-                // Even if we haven't detected a faulty primary yet, start view changing if we've
-                // received f + 1 ViewChange messages for this proposed view (but if we're already
-                // view changing, only do this for a later view); this will prevent starting the
-                // view change too late
-                if match state.mode {
-                    PbftMode::ViewChanging(v) => msg_view > v,
-                    PbftMode::Normal => true,
-                } && self.msg_log.log_has_required_msgs(
-                    &PbftMessageType::ViewChange,
-                    &msg,
-                    false,
-                    state.f + 1,
-                ) {
-                    self.propose_view_change(state, msg_view)?;
-                }
-
-                // If we're the new primary and we have the required 2f ViewChange messages (not
-                // including our own), broadcast the NewView message
-                let messages = self
-                    .msg_log
-                    .get_messages_of_type_view(&PbftMessageType::ViewChange, msg_view)
-                    .iter()
-                    .cloned()
-                    .filter(|msg| !msg.from_self)
-                    .collect::<Vec<_>>();
-
-                if state.is_primary_at_view(msg_view) && messages.len() >= 2 * state.f as usize {
-                    let mut new_view = PbftNewView::new();
-
-                    new_view.set_info(handlers::make_msg_info(
-                        &PbftMessageType::NewView,
-                        msg_view,
-                        state.seq_num - 1,
-                        state.id.clone(),
-                    ));
-
-                    new_view.set_view_changes(Self::signed_votes_from_messages(messages));
-
-                    let msg_bytes = new_view
-                        .write_to_bytes()
-                        .map_err(PbftError::SerializationError)?;
-
-                    self._broadcast_message(&PbftMessageType::NewView, msg_bytes, state)?;
-                }
-            }
-
-            PbftMessageType::NewView => {
-                let new_view = msg.get_new_view_message();
-
-                match self.verify_new_view(new_view, state) {
-                    Err(PbftError::NotFromPrimary) => {
-                        // Not the new primary that's faulty, so no need to do a new view change,
-                        // just don't proceed any further
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        if let PbftMode::ViewChanging(v) = state.mode {
-                            warn!("NewView message is invalid, got error: {:?}, Starting new view change to view {}", e, v + 1);
-                            self.propose_view_change(state, v + 1)?;
-                            return Ok(());
-                        }
-                    }
-                    Ok(_) => {}
-                }
-
-                // Update view
-                state.view = new_view.get_info().get_view();
-                state.view_change_timeout.stop();
-
-                // Initialize a new block if necessary
-                if state.is_primary() && state.working_block.is_none() {
-                    self.service
-                        .initialize_block(None)
-                        .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
-                }
-
-                state.reset_to_start();
-            }
-
+            PbftMessageType::ViewChange => self.handle_view_change(&msg, state)?,
+            PbftMessageType::NewView => self.handle_new_view(&msg, state)?,
             _ => warn!("Message type not implemented"),
         }
         Ok(())
@@ -382,6 +289,123 @@ impl PbftNode {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Handle a `ViewChange` message
+    ///
+    /// When a `ViewChange` is received, check that it isn't outdated and add it to the log. If the
+    /// node isn't already view changing but it now has f + 1 ViewChange messages, start view
+    /// changing early. If the node is the primary and has 2f view change messages now, broadcast
+    /// the NewView message to the rest of the nodes to move to the new view.
+    fn handle_view_change(
+        &mut self,
+        msg: &ParsedMessage,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        // Ignore old view change messages (already on a view >= the one this message is
+        // for or already trying to change to a later view)
+        let msg_view = msg.info().get_view();
+        if msg_view <= state.view
+            || match state.mode {
+                PbftMode::ViewChanging(v) => msg_view < v,
+                _ => false,
+            }
+        {
+            return Ok(());
+        }
+
+        self.msg_log.add_message(msg.clone(), state)?;
+
+        // Even if we haven't detected a faulty primary yet, start view changing if we've
+        // received f + 1 ViewChange messages for this proposed view (but if we're already
+        // view changing, only do this for a later view); this will prevent starting the
+        // view change too late
+        if match state.mode {
+            PbftMode::ViewChanging(v) => msg_view > v,
+            PbftMode::Normal => true,
+        } && self.msg_log.log_has_required_msgs(
+            &PbftMessageType::ViewChange,
+            msg,
+            false,
+            state.f + 1,
+        ) {
+            self.propose_view_change(state, msg_view)?;
+        }
+
+        // If we're the new primary and we have the required 2f ViewChange messages (not
+        // including our own), broadcast the NewView message
+        let messages = self
+            .msg_log
+            .get_messages_of_type_view(&PbftMessageType::ViewChange, msg_view)
+            .iter()
+            .cloned()
+            .filter(|msg| !msg.from_self)
+            .collect::<Vec<_>>();
+
+        if state.is_primary_at_view(msg_view) && messages.len() >= 2 * state.f as usize {
+            let mut new_view = PbftNewView::new();
+
+            new_view.set_info(handlers::make_msg_info(
+                &PbftMessageType::NewView,
+                msg_view,
+                state.seq_num - 1,
+                state.id.clone(),
+            ));
+
+            new_view.set_view_changes(Self::signed_votes_from_messages(messages));
+
+            let msg_bytes = new_view
+                .write_to_bytes()
+                .map_err(PbftError::SerializationError)?;
+
+            self._broadcast_message(&PbftMessageType::NewView, msg_bytes, state)?;
+        }
+
+        Ok(())
+    }
+
+    /// Handle a `NewView` message
+    ///
+    /// When a `NewView` is received, first verify that it is valid. If the NewView is invalid,
+    /// start a new view change for the next view; if the NewView is valid, update the view and the
+    /// node's state.
+    fn handle_new_view(
+        &mut self,
+        msg: &ParsedMessage,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        let new_view = msg.get_new_view_message();
+
+        match self.verify_new_view(new_view, state) {
+            Err(PbftError::NotFromPrimary) => {
+                // Not the new primary that's faulty, so no need to do a new view change,
+                // just don't proceed any further
+                return Ok(());
+            }
+            Err(e) => {
+                if let PbftMode::ViewChanging(v) = state.mode {
+                    warn!("NewView message is invalid, got error: {:?}, Starting new view change to view {}", e, v + 1);
+                    self.propose_view_change(state, v + 1)?;
+                    return Ok(());
+                }
+            }
+            Ok(_) => {}
+        }
+
+        // Update view
+        state.view = new_view.get_info().get_view();
+        state.view_change_timeout.stop();
+
+        // Initialize a new block if necessary
+        if state.is_primary() && state.working_block.is_none() {
+            self.service
+                .initialize_block(None)
+                .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+        }
+
+        state.reset_to_start();
 
         Ok(())
     }
