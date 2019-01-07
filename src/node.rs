@@ -70,10 +70,10 @@ impl PbftNode {
     // ---------- Methods for handling Updates from the validator ----------
 
     /// Handle a peer message from another PbftNode
-    /// This method handles all messages from other nodes. Such messages may include `PrePrepare`,
-    /// `Prepare`, `Commit`, or `ViewChange`. If a node receives a type of message before it is
-    // ready to do so, the message is pushed into a backlog queue.
-    #[allow(clippy::needless_pass_by_value)]
+    ///
+    /// Handle all messages from other nodes. Such messages include `PrePrepare`, `Prepare`,
+    /// `Commit`, `ViewChange`, and `NewView`. If the node is view changing, ignore all messages
+    /// that aren't `ViewChange`s or `NewView`s.
     pub fn on_peer_message(
         &mut self,
         msg: ParsedMessage,
@@ -106,6 +106,7 @@ impl PbftNode {
             PbftMessageType::NewView => self.handle_new_view(&msg, state)?,
             _ => warn!("Message type not implemented"),
         }
+
         Ok(())
     }
 
