@@ -48,7 +48,7 @@ pub struct PbftConfig {
     /// different view change
     pub view_change_duration: Duration,
 
-    /// How many blocks to commit before forcing a view change
+    /// How many blocks to commit before forcing a view change for fairness
     pub forced_view_change_period: u64,
 
     /// How large the PbftLog is allowed to get
@@ -81,14 +81,14 @@ impl PbftConfig {
 /// + `sawtooth.consensus.pbft.faulty_primary_timeout` (optional, default 30s)
 /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
 /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
-/// + `sawtooth.consensus.pbft.message_timeout` (optional, default 100 blocks)
+/// + `sawtooth.consensus.pbft.message_timeout` (optional, default 10 ms)
 /// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
 /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
 ///
 /// # Panics
 /// + If the `sawtooth.consensus.pbft.peers` setting is not provided
 /// + If settings loading fails entirely
-/// + If block duration is greater than the view change timeout
+/// + If block duration is greater than the faulty primary timeout
 pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig {
     let mut config = PbftConfig::default();
 
