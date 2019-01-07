@@ -30,11 +30,12 @@ use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
 
 use crate::config::{get_peers_from_settings, PbftConfig};
 use crate::error::PbftError;
-use crate::handlers;
 use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
-use crate::protos::pbft_message::{PbftBlock, PbftMessage, PbftNewView, PbftSeal, PbftSignedVote};
+use crate::protos::pbft_message::{
+    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
+};
 use crate::state::{PbftMode, PbftPhase, PbftState};
 use crate::timing::Timeout;
 
@@ -347,7 +348,7 @@ impl PbftNode {
         if state.is_primary_at_view(msg_view) && messages.len() >= 2 * state.f as usize {
             let mut new_view = PbftNewView::new();
 
-            new_view.set_info(handlers::make_msg_info(
+            new_view.set_info(PbftMessageInfo::new_from(
                 &PbftMessageType::NewView,
                 msg_view,
                 state.seq_num - 1,
@@ -450,7 +451,7 @@ impl PbftNode {
 
         // Create PBFT message for BlockNew and add it to the log
         let mut msg = PbftMessage::new();
-        msg.set_info(handlers::make_msg_info(
+        msg.set_info(PbftMessageInfo::new_from(
             &PbftMessageType::BlockNew,
             state.view,
             block.block_num,
@@ -1042,7 +1043,7 @@ impl PbftNode {
         }
 
         let mut msg = PbftMessage::new();
-        msg.set_info(handlers::make_msg_info(
+        msg.set_info(PbftMessageInfo::new_from(
             &msg_type,
             state.view,
             seq_num,
@@ -1113,7 +1114,7 @@ impl PbftNode {
         state.view_change_timeout.start();
 
         let mut vc_msg = PbftMessage::new();
-        vc_msg.set_info(handlers::make_msg_info(
+        vc_msg.set_info(PbftMessageInfo::new_from(
             &PbftMessageType::ViewChange,
             view,
             state.seq_num - 1,
@@ -1136,7 +1137,6 @@ impl PbftNode {
 mod tests {
     use super::*;
     use crate::config::mock_config;
-    use crate::handlers::make_msg_info;
     use crate::hash::{hash_sha256, hash_sha512};
     use crate::protos::pbft_message::PbftMessageInfo;
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
@@ -1337,7 +1337,7 @@ mod tests {
         let pub_key = context.get_public_key(&*key).unwrap();
 
         let mut vc_msg = PbftMessage::new();
-        let info = make_msg_info(&PbftMessageType::ViewChange, view, seq_num, peer);
+        let info = PbftMessageInfo::new_from(&PbftMessageType::ViewChange, view, seq_num, peer);
         vc_msg.set_info(info);
 
         let mut message = ParsedMessage::from_pbft_message(vc_msg);
@@ -1361,7 +1361,7 @@ mod tests {
         block: Block,
         from: PeerId,
     ) -> ParsedMessage {
-        let info = make_msg_info(&msg_type, view, seq_num, from);
+        let info = PbftMessageInfo::new_from(&msg_type, view, seq_num, from);
 
         let mut pbft_msg = PbftMessage::new();
         pbft_msg.set_info(info);
@@ -1680,7 +1680,12 @@ mod tests {
             .filter(|msg| !msg.from_self)
             .collect::<Vec<_>>();
         let mut new_view = PbftNewView::new();
-        new_view.set_info(make_msg_info(&PbftMessageType::NewView, 1, 0, vec![1]));
+        new_view.set_info(PbftMessageInfo::new_from(
+            &PbftMessageType::NewView,
+            1,
+            0,
+            vec![1],
+        ));
         new_view.set_view_changes(PbftNode::signed_votes_from_messages(msgs));
 
         node1

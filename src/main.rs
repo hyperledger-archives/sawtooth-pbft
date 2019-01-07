@@ -37,7 +37,6 @@ use sawtooth_sdk::consensus::zmq_driver::ZmqDriver;
 pub mod config;
 pub mod engine;
 pub mod error;
-pub mod handlers;
 pub mod hash;
 pub mod message_extensions;
 pub mod message_log;
