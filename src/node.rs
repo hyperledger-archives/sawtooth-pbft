@@ -228,7 +228,10 @@ impl PbftNode {
             // The node is ready to move on to the Committing phase (i.e. the predicate `prepared`
             // is true) when its log has 2f + 1 Prepare messages from different nodes that match
             // the PrePrepare message received earlier (same view, sequence number, and block)
-            if let Some(pre_prep) = self.msg_log.get_one_msg(&info, PbftMessageType::PrePrepare) {
+            if let Some(pre_prep) = self
+                .msg_log
+                .get_first_msg(&info, PbftMessageType::PrePrepare)
+            {
                 if self.msg_log.log_has_required_msgs(
                     PbftMessageType::Prepare,
                     &pre_prep,
@@ -269,7 +272,10 @@ impl PbftNode {
             // The node is ready to commit the block (i.e. the predicate `committable` is true)
             // when its log has 2f + 1 Commit messages from different nodes that match the
             // PrePrepare message received earlier (same view, sequence number, and block)
-            if let Some(pre_prep) = self.msg_log.get_one_msg(&info, PbftMessageType::PrePrepare) {
+            if let Some(pre_prep) = self
+                .msg_log
+                .get_first_msg(&info, PbftMessageType::PrePrepare)
+            {
                 if self.msg_log.log_has_required_msgs(
                     PbftMessageType::Commit,
                     &pre_prep,

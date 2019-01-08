@@ -23,29 +23,19 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt;
 
 use hex;
-use itertools::Itertools;
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
 use crate::message_type::{ParsedMessage, PbftMessageType};
-use crate::protos::pbft_message::{PbftMessageInfo, PbftSeal};
+use crate::protos::pbft_message::PbftMessageInfo;
 use crate::state::PbftState;
-use sawtooth_sdk::consensus::engine::BlockId;
-
-/// Stores a consensus seal along with its associated sequence number and block ID
-#[derive(Clone, Eq, Hash, PartialEq)]
-struct PbftSealEntry {
-    block_id: BlockId,
-    seq_num: u64,
-    seal: PbftSeal,
-}
 
 /// Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
-    /// Generic messages (BlockNew, PrePrepare, Prepare, Commit)
+    /// All messages accepted by the node that have not been garbage collected
     messages: HashSet<ParsedMessage>,
 
-    /// Maximum log size, defined from on-chain settings
+    /// Maximum log size
     max_log_size: u64,
 
     /// Backlog of messages (from peers) with sender's ID
@@ -77,6 +67,7 @@ impl fmt::Display for PbftLog {
 }
 
 impl PbftLog {
+    /// Create a new, empty `PbftLog` with the `max_log_size` specified in the `config`
     pub fn new(config: &PbftConfig) -> Self {
         PbftLog {
             messages: HashSet::new(),
@@ -85,19 +76,32 @@ impl PbftLog {
         }
     }
 
-    /// Get one message matching the type, view number, and sequence number
-    pub fn get_one_msg(
-        &self,
-        info: &PbftMessageInfo,
-        msg_type: PbftMessageType,
-    ) -> Option<&ParsedMessage> {
-        let msgs =
-            self.get_messages_of_type_seq_view(msg_type, info.get_seq_num(), info.get_view());
-        msgs.first().cloned()
+    /// Add a parsed PBFT message to the log
+    pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) -> Result<(), PbftError> {
+        // Except for ViewChanges, the message must be for the current view to be accepted
+        let msg_type = PbftMessageType::from(msg.info().get_msg_type());
+        if msg_type != PbftMessageType::ViewChange && msg.info().get_view() != state.view {
+            error!(
+                "Got message with mismatched view number; {} != {}",
+                msg.info().get_view(),
+                state.view,
+            );
+            return Err(PbftError::ViewMismatch(
+                msg.info().get_view() as usize,
+                state.view as usize,
+            ));
+        }
+
+        self.messages.insert(msg);
+        trace!("{}", self);
+
+        Ok(())
     }
 
-    /// Check if the log contains `required` number of messages with type `msg_type` that match the
-    /// sequence and view number of the provided `ref_msg`, as well as its block (optional)
+    /// Check if the log contains `required` number of messages that match:
+    /// - The `msg_type`
+    /// - Sequence + view number of the provided `ref_msg`
+    /// - The block in `ref_msg` (only if `check_block` is `true`)
     pub fn log_has_required_msgs(
         &self,
         msg_type: PbftMessageType,
@@ -123,29 +127,19 @@ impl PbftLog {
         msgs.len() as u64 >= required
     }
 
-    /// Add a generic PBFT message to the log
-    pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) -> Result<(), PbftError> {
-        // Except for ViewChanges, the message must be for the current view to be accepted
-        let msg_type = PbftMessageType::from(msg.info().get_msg_type());
-        if msg_type != PbftMessageType::ViewChange && msg.info().get_view() != state.view {
-            error!(
-                "Got message with mismatched view number; {} != {}",
-                msg.info().get_view(),
-                state.view,
-            );
-            return Err(PbftError::ViewMismatch(
-                msg.info().get_view() as usize,
-                state.view as usize,
-            ));
-        }
-
-        self.messages.insert(msg);
-        trace!("{}", self);
-
-        Ok(())
+    /// Get the first message matching the type, view, and sequence number of the `info` (if one
+    /// exists)
+    pub fn get_first_msg(
+        &self,
+        info: &PbftMessageInfo,
+        msg_type: PbftMessageType,
+    ) -> Option<&ParsedMessage> {
+        let msgs =
+            self.get_messages_of_type_seq_view(msg_type, info.get_seq_num(), info.get_view());
+        msgs.first().cloned()
     }
 
-    /// Obtain all messages from the log that match a given type and sequence_number
+    /// Obtain all messages from the log that match the given type and sequence_number
     pub fn get_messages_of_type_seq(
         &self,
         msg_type: PbftMessageType,
@@ -161,7 +155,7 @@ impl PbftLog {
             .collect()
     }
 
-    /// Obtain all messages from the log that match a given type and view
+    /// Obtain all messages from the log that match the given type and view
     pub fn get_messages_of_type_view(
         &self,
         msg_type: PbftMessageType,
@@ -176,7 +170,7 @@ impl PbftLog {
             .collect()
     }
 
-    /// Obtain messages from the log that match a given type, sequence number, and view
+    /// Obtain all messages from the log that match the given type, sequence number, and view
     pub fn get_messages_of_type_seq_view(
         &self,
         msg_type: PbftMessageType,
@@ -194,17 +188,17 @@ impl PbftLog {
             .collect()
     }
 
-    /// Garbage collect the log after we've committed a block
+    /// Garbage collect the log if it has reached the `max_log_size`
     #[allow(clippy::ptr_arg)]
     pub fn garbage_collect(&mut self, current_seq_num: u64) {
-        // If we've reached the max log size, filter out all old messages
+        // If the max log size has been reached, filter out all old messages
         if self.messages.len() as u64 >= self.max_log_size {
             self.messages = self
                 .messages
                 .iter()
                 .filter(|ref msg| {
-                    // We need to keep messages from the previous sequence number to build the next
-                    // consensus seal
+                    // The node needs to keep messages from the previous sequence number in case it
+                    // needs to build the next consensus seal
                     msg.info().get_seq_num() >= current_seq_num - 1
                 })
                 .cloned()
@@ -212,10 +206,12 @@ impl PbftLog {
         }
     }
 
+    /// Push a `ParsedMessage` to the backlog
     pub fn push_backlog(&mut self, msg: ParsedMessage) {
         self.backlog.push_back(msg);
     }
 
+    /// Pop the next `ParsedMessage` from the backlog
     pub fn pop_backlog(&mut self) -> Option<ParsedMessage> {
         self.backlog.pop_front()
     }
