@@ -25,7 +25,7 @@ use crate::config;
 use crate::error::PbftError;
 use crate::message_type::ParsedMessage;
 use crate::node::PbftNode;
-use crate::state::PbftState;
+use crate::state::{PbftMode, PbftState};
 use crate::storage::get_storage;
 use crate::timing;
 
@@ -95,7 +95,19 @@ impl Engine for PbftEngine {
                 // ViewChange if necessary
                 if node.check_faulty_primary_timeout_expired(state) {
                     warn!("Faulty primary timeout expired; proposing view change");
-                    handle_pbft_result(node.propose_view_change(state));
+                    handle_pbft_result(node.propose_view_change(state, state.view + 1));
+                }
+
+                // Check the view change timeout if the node is view changing so we can start a new
+                // view change if we don't get a NewView in time
+                if let PbftMode::ViewChanging(v) = state.mode {
+                    if node.check_view_change_timeout_expired(state) {
+                        warn!(
+                            "View change timeout expired; proposing view change for view {}",
+                            v + 1
+                        );
+                        handle_pbft_result(node.propose_view_change(state, v + 1));
+                    }
                 }
             });
 
@@ -126,7 +138,7 @@ fn handle_update(
         Ok(Update::BlockValid(block_id)) => node.on_block_valid(&block_id, state)?,
         Ok(Update::BlockInvalid(_)) => {
             warn!("{}: BlockInvalid received, starting view change", state);
-            node.propose_view_change(state)?
+            node.propose_view_change(state, state.view + 1)?
         }
         Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state),
         Ok(Update::PeerMessage(message, sender_id)) => {

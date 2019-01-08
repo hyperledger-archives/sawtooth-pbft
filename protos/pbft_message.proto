@@ -52,25 +52,25 @@ message PbftMessage {
   PbftBlock block = 2;
 }
 
-
-// View change message, for when a node suspects the primary node is faulty
-message PbftViewChange {
+// A message sent by the new primary to signify that the new view should be
+// started
+message PbftNewView {
   // Message information
   PbftMessageInfo info = 1;
 
-  // Consensus seal proving the correctness of the block committed at the
-  // sequence number specified in the message info
-  PbftSeal seal = 2;
+  // A list of ViewChange messages to prove this view change (must contain at
+  // least 2f messages)
+  repeated PbftSignedVote view_changes = 2;
 }
 
-message PbftSignedCommitVote {
+message PbftSignedVote {
   // Serialized ConsensusPeerMessage header
   bytes header_bytes = 1;
 
   // Signature of the serialized ConsensusPeerMessageHeader
   bytes header_signature = 2;
 
-  // Serialized PBFT Message
+  // Serialized PBFT message
   bytes message_bytes = 3;
 }
 
@@ -78,9 +78,10 @@ message PbftSeal {
   // ID of the previous block
   bytes previous_id = 1;
 
-  // Summary of the previous block
+  // Summary of the current block
   bytes summary = 2;
 
-  // 2f + 1 votes
-  repeated PbftSignedCommitVote previous_commit_votes = 3;
+  // A list of Commit votes to prove the previous block commit (must contain at
+  // least 2f votes)
+  repeated PbftSignedVote previous_commit_votes = 3;
 }

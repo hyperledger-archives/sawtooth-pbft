@@ -35,9 +35,10 @@ use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftSeal, PbftSignedCommitVote, PbftViewChange,
+    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
+use crate::timing::Timeout;
 
 /// Contains all of the components for operating a PBFT node.
 pub struct PbftNode {
@@ -80,7 +81,24 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         info!("{}: Got peer message: {}", state, msg.info());
 
-        match PbftMessageType::from(msg.info().msg_type.as_str()) {
+        let msg_type = PbftMessageType::from(msg.info().msg_type.as_str());
+
+        // If this node is in the process of a view change, ignore all messages except ViewChanges
+        // and NewViews
+        if match state.mode {
+            PbftMode::ViewChanging(_) => true,
+            _ => false,
+        } && msg_type != PbftMessageType::ViewChange
+            && msg_type != PbftMessageType::NewView
+        {
+            warn!(
+                "{}: Node is view changing; ignoring {} message",
+                state, msg_type
+            );
+            return Ok(());
+        }
+
+        match msg_type {
             PbftMessageType::PrePrepare => {
                 // Message is added to log by handler if it is valid
                 match handlers::pre_prepare(state, &mut self.msg_log, &msg) {
@@ -90,23 +108,62 @@ impl PbftNode {
                         self.msg_log.push_backlog(msg);
                         return Ok(());
                     }
+                    Err(PbftError::MismatchedBlocks(blocks)) => {
+                        // Got PrePrepare(s) for the same sequence number and view, but they had
+                        // different block(s); primary is faulty
+                        for block in blocks {
+                            self.service
+                                .fail_block(block.get_block_id().to_vec())
+                                .map_err(|err| {
+                                    PbftError::InternalError(format!(
+                                        "Couldn't fail block: {}",
+                                        err
+                                    ))
+                                })?;
+                        }
+                        self.propose_view_change(state, state.view + 1)?;
+                        return Ok(());
+                    }
                     err => {
                         return err;
                     }
                 }
 
-                self.broadcast_pre_prepare(&msg, state)?;
+                // We only want to check the block if this message is for the current sequence
+                // number and we're in the PrePreparing phase
+                if msg.info().get_seq_num() == state.seq_num
+                    && state.phase == PbftPhase::PrePreparing
+                {
+                    state.switch_phase(PbftPhase::Checking);
+
+                    // We can also stop the view change timer, since we received a new block and a
+                    // valid PrePrepare in time
+                    state.faulty_primary_timeout.stop();
+
+                    self.service
+                        .check_blocks(vec![msg.get_block().clone().block_id])
+                        .map_err(|_| {
+                            PbftError::InternalError(String::from("Failed to check blocks"))
+                        })?
+                }
             }
 
             PbftMessageType::Prepare => {
                 self.msg_log.add_message(msg.clone(), state)?;
 
-                // We only want to check the block if this message is for the current sequence
-                // number
+                // We only want to switch to committing if this message is for the current sequence
+                // number, we're in the Preparing phase, and the `Prepared` predicate is true
                 if msg.info().get_seq_num() == state.seq_num
+                    && state.phase == PbftPhase::Preparing
                     && self.msg_log.check_prepared(&msg.info(), state.f)
                 {
-                    self.check_blocks_if_not_checking(&msg, state)?;
+                    state.switch_phase(PbftPhase::Committing);
+                    self._broadcast_pbft_message(
+                        state.seq_num,
+                        &PbftMessageType::Commit,
+                        msg.get_block().clone(),
+                        state,
+                    )?;
                 }
             }
 
@@ -114,31 +171,107 @@ impl PbftNode {
                 self.msg_log.add_message(msg.clone(), state)?;
 
                 // We only want to commit the block if this message is for the current sequence
-                // number
+                // number, we're in the Committing phase, and the `Committable` predicate is true
                 if msg.info().get_seq_num() == state.seq_num
+                    && state.phase == PbftPhase::Committing
                     && self.msg_log.check_committable(&msg.info(), state.f)
                 {
-                    self.commit_block_if_committing(&msg, state)?;
+                    handlers::commit(state, &mut *self.service, &msg)?;
                 }
             }
 
             PbftMessageType::ViewChange => {
-                let info = msg.info();
-                debug!(
-                    "{}: Received ViewChange message from Node {:?} (v {}, seq {})",
-                    state,
-                    PeerId::from(info.get_signer_id()),
-                    info.get_view(),
-                    info.get_seq_num(),
-                );
-
-                self.msg_log.add_message(msg.clone(), state)?;
-
-                if self.propose_view_change_if_enough_messages(&msg, state)? {
+                // Ignore old view change messages (already on a view >= the one this message is
+                // for or already trying to change to a later view)
+                let msg_view = msg.info().get_view();
+                if msg_view <= state.view
+                    || match state.mode {
+                        PbftMode::ViewChanging(v) => msg_view < v,
+                        _ => false,
+                    }
+                {
                     return Ok(());
                 }
 
-                handlers::view_change(state, &mut self.msg_log, &mut *self.service, &msg)?;
+                self.msg_log.add_message(msg.clone(), state)?;
+
+                // Even if we haven't detected a faulty primary yet, start view changing if we've
+                // received f + 1 ViewChange messages for this proposed view (but if we're already
+                // view changing, only do this for a later view); this will prevent starting the
+                // view change too late
+                if match state.mode {
+                    PbftMode::ViewChanging(v) => msg_view > v,
+                    PbftMode::Normal => true,
+                } && self.msg_log.log_has_required_msgs(
+                    &PbftMessageType::ViewChange,
+                    &msg,
+                    false,
+                    state.f + 1,
+                ) {
+                    self.propose_view_change(state, msg_view)?;
+                }
+
+                // If we're the new primary and we have the required 2f ViewChange messages (not
+                // including our own), broadcast the NewView message
+                let messages = self
+                    .msg_log
+                    .get_messages_of_type_view(&PbftMessageType::ViewChange, msg_view)
+                    .iter()
+                    .cloned()
+                    .filter(|msg| !msg.from_self)
+                    .collect::<Vec<_>>();
+
+                if state.is_primary_at_view(msg_view) && messages.len() >= 2 * state.f as usize {
+                    let mut new_view = PbftNewView::new();
+
+                    new_view.set_info(handlers::make_msg_info(
+                        &PbftMessageType::NewView,
+                        msg_view,
+                        state.seq_num - 1,
+                        state.id.clone(),
+                    ));
+
+                    new_view.set_view_changes(Self::signed_votes_from_messages(messages));
+
+                    let msg_bytes = new_view
+                        .write_to_bytes()
+                        .map_err(PbftError::SerializationError)?;
+
+                    self._broadcast_message(&PbftMessageType::NewView, msg_bytes, state)?;
+                }
+            }
+
+            PbftMessageType::NewView => {
+                let new_view = msg.get_new_view_message();
+
+                match self.verify_new_view(new_view, state) {
+                    Err(PbftError::NotFromPrimary) => {
+                        // Not the new primary that's faulty, so no need to do a new view change,
+                        // just don't proceed any further
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        if let PbftMode::ViewChanging(v) = state.mode {
+                            warn!("NewView message is invalid, got error: {:?}, Starting new view change to view {}", e, v + 1);
+                            self.propose_view_change(state, v + 1)?;
+                            return Ok(());
+                        }
+                    }
+                    Ok(_) => {}
+                }
+
+                // Update view
+                state.view = new_view.get_info().get_view();
+                state.view_change_timeout.stop();
+
+                // Initialize a new block if necessary
+                if state.is_primary() && state.working_block.is_none() {
+                    self.service
+                        .initialize_block(None)
+                        .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+                }
+
+                state.reset_to_start();
             }
 
             _ => warn!("Message type not implemented"),
@@ -146,102 +279,8 @@ impl PbftNode {
         Ok(())
     }
 
-    fn broadcast_pre_prepare(
-        &mut self,
-        pbft_message: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        info!(
-            "{}: PrePrepare, sequence number {}",
-            state,
-            pbft_message.info().get_seq_num()
-        );
-
-        self._broadcast_pbft_message(
-            pbft_message.info().get_seq_num(),
-            &PbftMessageType::Prepare,
-            (*pbft_message.get_block()).clone(),
-            state,
-        )
-    }
-
-    fn check_blocks_if_not_checking(
-        &mut self,
-        pbft_message: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        if state.phase != PbftPhase::Checking {
-            state.switch_phase(PbftPhase::Checking);
-            debug!("{}: Checking blocks", state);
-            self.service
-                .check_blocks(vec![pbft_message.get_block().clone().block_id])
-                .map_err(|_| PbftError::InternalError(String::from("Failed to check blocks")))?
-        }
-        Ok(())
-    }
-
-    #[allow(clippy::ptr_arg)]
-    fn commit_block_if_committing(
-        &mut self,
-        msg: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        if state.phase == PbftPhase::Committing {
-            handlers::commit(state, &mut *self.service, msg)
-        } else {
-            debug!(
-                "{}: Already committed block {:?}",
-                state,
-                msg.get_block().block_id
-            );
-            Ok(())
-        }
-    }
-
-    fn propose_view_change_if_enough_messages(
-        &mut self,
-        message: &ParsedMessage,
-        state: &mut PbftState,
-    ) -> Result<bool, PbftError> {
-        if state.mode != PbftMode::ViewChanging {
-            // Even if our own timer hasn't expired, still do a ViewChange if we've received
-            // f + 1 VC messages to prevent being late to the new view party
-            if self.msg_log.log_has_required_msgs(
-                &PbftMessageType::ViewChange,
-                message,
-                false,
-                state.f + 1,
-            ) && message.info().get_view() > state.view
-            {
-                warn!("{}: Starting ViewChange from a ViewChange message", state);
-                self.propose_view_change(state)?;
-                Ok(false)
-            } else {
-                Ok(true)
-            }
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Verifies an individual consensus vote
-    ///
-    /// Returns the signer ID of the wrapped PbftMessage, for use in further verification
-    fn verify_consensus_vote(
-        vote: &PbftSignedCommitVote,
-        seal: &PbftSeal,
-    ) -> Result<Vec<u8>, PbftError> {
-        let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
-            .map_err(PbftError::SerializationError)?;
-
-        if message.get_block().block_id != seal.previous_id {
-            return Err(PbftError::InternalError(format!(
-                "PbftMessage block ID ({:?}) doesn't match seal's previous id ({:?})!",
-                message.get_block().get_block_id(),
-                seal.previous_id
-            )));
-        }
-
+    /// Verify that the vote is properly signed
+    fn verify_vote_signer(vote: &PbftSignedVote) -> Result<(), PbftError> {
         let header: ConsensusPeerMessageHeader =
             protobuf::parse_from_bytes(&vote.get_header_bytes())
                 .map_err(PbftError::SerializationError)?;
@@ -272,6 +311,118 @@ impl PbftNode {
 
         verify_sha512(vote.get_message_bytes(), header.get_content_sha512())?;
 
+        Ok(())
+    }
+
+    /// Verify an individual view change vote
+    ///
+    /// Return the signer ID of the wrapped PbftMessage for use in further verification
+    fn verify_view_change_vote(vote: &PbftSignedVote, view: u64) -> Result<PeerId, PbftError> {
+        let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
+            .map_err(PbftError::SerializationError)?;
+
+        if PbftMessageType::from(message.get_info().get_msg_type()) != PbftMessageType::ViewChange {
+            return Err(PbftError::InternalError(format!(
+                "Received view change vote that is not a ViewChange: {:?}",
+                message
+            )));
+        }
+
+        if message.get_info().get_view() != view {
+            return Err(PbftError::InternalError(format!(
+                "ViewChange's view ({:?}) does not match NewView's view ({:?})",
+                message.get_info().get_view(),
+                view,
+            )));
+        }
+
+        Self::verify_vote_signer(vote)?;
+
+        Ok(PeerId::from(message.get_info().get_signer_id()))
+    }
+
+    /// Verifies that the NewView messsage is valid
+    fn verify_new_view(
+        &mut self,
+        new_view: &PbftNewView,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        // Make sure this is from the new primary
+        if PeerId::from(new_view.get_info().get_signer_id())
+            != state.get_primary_id_at_view(new_view.get_info().get_view())
+        {
+            error!(
+                "Got NewView message ({:?}) from node that is not primary for new view",
+                new_view,
+            );
+            return Err(PbftError::NotFromPrimary);
+        }
+
+        // Verify each individual vote, and extract the signer ID from each ViewChange that
+        // it contains so we can verify the IDs themselves
+        let voter_ids =
+            new_view
+                .get_view_changes()
+                .iter()
+                .try_fold(HashSet::new(), |mut ids, v| {
+                    Self::verify_view_change_vote(v, new_view.get_info().get_view())
+                        .and_then(|vid| Ok(ids.insert(vid)))?;
+                    Ok(ids)
+                })?;
+
+        // All of the votes must come from known peers, and the new primary can't
+        // explicitly vote itself, since broacasting the NewView is an implicit vote. Check
+        // that the votes we've received are a subset of "peers - primary".
+        let peer_ids: HashSet<_> = state
+            .peer_ids
+            .iter()
+            .cloned()
+            .filter(|pid| pid != &PeerId::from(new_view.get_info().get_signer_id()))
+            .collect();
+
+        if !voter_ids.is_subset(&peer_ids) {
+            return Err(PbftError::InternalError(format!(
+                "Got unexpected vote IDs when verifying NewView: {:?}",
+                voter_ids.difference(&peer_ids).collect::<Vec<_>>()
+            )));
+        }
+
+        // Check that we've received 2f votes, since the primary vote is implicit
+        if voter_ids.len() < 2 * state.f as usize {
+            return Err(PbftError::InternalError(format!(
+                "Need {} votes, only found {}!",
+                2 * state.f,
+                voter_ids.len()
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Verifies an individual consensus vote
+    ///
+    /// Returns the signer ID of the wrapped PbftMessage, for use in further verification
+    fn verify_consensus_vote(vote: &PbftSignedVote, seal: &PbftSeal) -> Result<Vec<u8>, PbftError> {
+        let message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
+            .map_err(PbftError::SerializationError)?;
+
+        if PbftMessageType::from(message.get_info().get_msg_type()) != PbftMessageType::Commit {
+            return Err(PbftError::InternalError(format!(
+                "Received consensus vote that is not a Commit: {:?}",
+                message
+            )));
+        }
+
+        if message.get_block().block_id != seal.previous_id {
+            return Err(PbftError::InternalError(format!(
+                "PbftMessage block ID ({:?}) doesn't match seal's previous id ({:?})!",
+                message.get_block().get_block_id(),
+                seal.previous_id
+            )));
+        }
+
+        Self::verify_vote_signer(vote)?;
+
         Ok(message.get_info().get_signer_id().to_vec())
     }
 
@@ -280,11 +431,11 @@ impl PbftNode {
         &mut self,
         block: &Block,
         state: &mut PbftState,
-    ) -> Result<Option<PbftSeal>, PbftError> {
+    ) -> Result<(), PbftError> {
         // We don't publish a consensus seal until block 1, so we don't verify it
         // until block 2
         if block.block_num < 2 {
-            return Ok(None);
+            return Ok(());
         }
 
         if block.payload.is_empty() {
@@ -355,7 +506,7 @@ impl PbftNode {
             )));
         }
 
-        Ok(Some(seal))
+        Ok(())
     }
 
     /// Use the given block's consensus seal to verify and commit the block this node is working on
@@ -375,10 +526,10 @@ impl PbftNode {
                         "Block didn't match for catchup: {:?} {:?}",
                         block, working_block
                     );
-                    return Err(PbftError::BlockMismatch(
+                    return Err(PbftError::MismatchedBlocks(vec![
                         pbft_block_from_block(block.clone()),
                         working_block.clone(),
-                    ));
+                    ]));
                 }
             }
             None => {
@@ -455,11 +606,7 @@ impl PbftNode {
         }
 
         match self.verify_consensus_seal(&block, state) {
-            Ok(Some(seal)) => {
-                self.msg_log
-                    .add_consensus_seal(block.block_id.clone(), state.seq_num, seal);
-            }
-            Ok(None) => {}
+            Ok(_) => {}
             Err(err) => {
                 warn!(
                     "Failing block due to failed consensus seal verification and \
@@ -469,7 +616,7 @@ impl PbftNode {
                 self.service.fail_block(block.block_id).map_err(|err| {
                     PbftError::InternalError(format!("Couldn't fail block: {}", err))
                 })?;
-                self.propose_view_change(state)?;
+                self.propose_view_change(state, state.view + 1)?;
                 return Err(err);
             }
         }
@@ -542,13 +689,14 @@ impl PbftNode {
             .first()
             .map(|msg| msg.get_block().clone());
 
-        // Start a view change if we need to force one for fairness or if membership changed
+        // Increment the view if we need to force a view change for fairness or if membership
+        // has changed
         if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
-            self.force_view_change(state);
+            state.view += 1;
         }
 
         // Tell the log to garbage collect if it needs to
-        self.msg_log.garbage_collect(state.seq_num, &block_id);
+        self.msg_log.garbage_collect(state.seq_num);
 
         // Restart the faulty primary timeout for the next block
         state.faulty_primary_timeout.start();
@@ -567,7 +715,7 @@ impl PbftNode {
     /// Handle a `BlockValid` update
     /// This message arrives after `check_blocks` is called, signifying that the validator has
     /// successfully checked a block with this `BlockId`.
-    /// Once a `BlockValid` is received, transition to committing blocks.
+    /// Once a `BlockValid` is received, transition to the Preparing phase.
     #[allow(clippy::ptr_arg)]
     pub fn on_block_valid(
         &mut self,
@@ -590,10 +738,10 @@ impl PbftNode {
             }
         }?;
 
-        state.switch_phase(PbftPhase::Committing);
+        state.switch_phase(PbftPhase::Preparing);
         self._broadcast_pbft_message(
             state.seq_num,
-            &PbftMessageType::Commit,
+            &PbftMessageType::Prepare,
             block.clone(),
             state,
         )?;
@@ -601,6 +749,24 @@ impl PbftNode {
     }
 
     // ---------- Methods for periodically checking on and updating the state, called by the engine ----------
+
+    /// Generate a `protobuf::RepeatedField` of signed votes from a list of parsed messages
+    #[allow(clippy::needless_pass_by_value)]
+    fn signed_votes_from_messages(msgs: Vec<&ParsedMessage>) -> RepeatedField<PbftSignedVote> {
+        RepeatedField::from(
+            msgs.iter()
+                .map(|m| {
+                    let mut vote = PbftSignedVote::new();
+
+                    vote.set_header_bytes(m.header_bytes.clone());
+                    vote.set_header_signature(m.header_signature.clone());
+                    vote.set_message_bytes(m.message_bytes.clone());
+
+                    vote
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
 
     fn build_seal(&mut self, state: &PbftState, summary: Vec<u8>) -> Result<Vec<u8>, PbftError> {
         info!("{}: Building seal for block {}", state, state.seq_num - 1);
@@ -621,20 +787,7 @@ impl PbftNode {
 
         seal.set_summary(summary);
         seal.set_previous_id(BlockId::from(messages[0].get_block().get_block_id()));
-        seal.set_previous_commit_votes(RepeatedField::from(
-            messages
-                .iter()
-                .map(|m| {
-                    let mut vote = PbftSignedCommitVote::new();
-
-                    vote.set_header_bytes(m.header_bytes.clone());
-                    vote.set_header_signature(m.header_signature.clone());
-                    vote.set_message_bytes(m.message_bytes.clone());
-
-                    vote
-                })
-                .collect::<Vec<_>>(),
-        ));
+        seal.set_previous_commit_votes(Self::signed_votes_from_messages(messages));
 
         seal.write_to_bytes().map_err(PbftError::SerializationError)
     }
@@ -698,6 +851,11 @@ impl PbftNode {
         state.faulty_primary_timeout.start();
     }
 
+    /// Check to see if the view change timeout has expired
+    pub fn check_view_change_timeout_expired(&mut self, state: &mut PbftState) -> bool {
+        state.view_change_timeout.check_expired()
+    }
+
     /// Retry messages from the backlog queue
     pub fn retry_backlog(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
         let mut peer_res = Ok(());
@@ -708,31 +866,40 @@ impl PbftNode {
         peer_res
     }
 
-    pub fn force_view_change(&mut self, state: &mut PbftState) {
-        info!("{}: Forcing view change", state);
-        handlers::force_view_change(state, &mut *self.service)
-    }
-
-    /// Initiate a view change (this node suspects that the primary is faulty)
-    /// Nodes drop everything when they're doing a view change - will not process any peer messages
-    /// other than `ViewChanges` until the view change is complete.
-    pub fn propose_view_change(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
-        if state.mode == PbftMode::ViewChanging {
+    /// Initiate a view change when this node suspects that the primary is faulty
+    pub fn propose_view_change(
+        &mut self,
+        state: &mut PbftState,
+        view: u64,
+    ) -> Result<(), PbftError> {
+        // Do not send messages again if we are already in the midst of this or a later view change
+        if match state.mode {
+            PbftMode::ViewChanging(v) => view <= v,
+            _ => false,
+        } {
             return Ok(());
         }
-        warn!("{}: Starting view change", state);
-        state.mode = PbftMode::ViewChanging;
 
-        let info = handlers::make_msg_info(
+        warn!("{}: Starting view change", state);
+        state.mode = PbftMode::ViewChanging(view);
+
+        // Update the view change timeout and start it
+        state.view_change_timeout = Timeout::new(
+            state
+                .view_change_duration
+                .checked_mul((view - state.view) as u32)
+                .expect("View change timeout has overflowed."),
+        );
+        state.view_change_timeout.start();
+
+        let mut vc_msg = PbftMessage::new();
+        vc_msg.set_info(handlers::make_msg_info(
             &PbftMessageType::ViewChange,
-            state.view + 1,
+            view,
             state.seq_num - 1,
             state.id.clone(),
-        );
+        ));
 
-        let mut vc_msg = PbftViewChange::new();
-        vc_msg.set_info(info);
-        vc_msg.set_seal(self.msg_log.get_consensus_seal(state.seq_num - 1)?);
         let msg_bytes = vc_msg
             .write_to_bytes()
             .map_err(PbftError::SerializationError)?;
@@ -1045,6 +1212,29 @@ mod tests {
         block
     }
 
+    /// Create a signed ViewChange message
+    fn mock_view_change(view: u64, seq_num: u64, peer: PeerId, from_self: bool) -> ParsedMessage {
+        let context = create_context("secp256k1").unwrap();
+        let key = context.new_random_private_key().unwrap();
+        let pub_key = context.get_public_key(&*key).unwrap();
+
+        let mut vc_msg = PbftMessage::new();
+        let info = make_msg_info(&PbftMessageType::ViewChange, view, seq_num, peer);
+        vc_msg.set_info(info);
+
+        let mut message = ParsedMessage::from_pbft_message(vc_msg);
+        let mut header = ConsensusPeerMessageHeader::new();
+        header.set_signer_id(pub_key.as_slice().to_vec());
+        header.set_content_sha512(hash_sha512(&message.message_bytes));
+        let header_bytes = header.write_to_bytes().unwrap();
+        let header_signature = hex::decode(context.sign(&header_bytes, &*key).unwrap()).unwrap();
+        message.from_self = from_self;
+        message.header_bytes = header_bytes;
+        message.header_signature = header_signature;
+
+        message
+    }
+
     /// Create a mock serialized PbftMessage
     fn mock_msg(
         msg_type: &PbftMessageType,
@@ -1230,7 +1420,7 @@ mod tests {
         state0.working_block = Some(pbft_block_from_block(mock_block(1)));
         node.on_block_valid(&mock_block_id(1), &mut state0)
             .unwrap_or_else(handle_pbft_err);
-        assert_eq!(state0.phase, PbftPhase::Committing);
+        assert_eq!(state0.phase, PbftPhase::Preparing);
     }
 
     /// Make sure that receiving a `BlockCommit` update works as expected
@@ -1267,13 +1457,16 @@ mod tests {
             .on_peer_message(msg, &mut state1)
             .unwrap_or_else(handle_pbft_err);
 
-        assert_eq!(state1.phase, PbftPhase::Preparing);
+        assert_eq!(state1.phase, PbftPhase::Checking);
         assert_eq!(state1.seq_num, 1);
         if let Some(ref blk) = state1.working_block {
             assert_eq!(BlockId::from(blk.clone().block_id), mock_block_id(1));
         } else {
             panic!("Wrong WorkingBlockOption");
         }
+
+        // Spoof the `check_blocks()` call
+        assert!(node1.on_block_valid(&mock_block_id(1), &mut state1).is_ok());
 
         // Receive 3 `Prepare` messages
         for peer in 0..3 {
@@ -1283,10 +1476,6 @@ mod tests {
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(handle_pbft_err);
         }
-        assert_eq!(state1.phase, PbftPhase::Checking);
-
-        // Spoof the `check_blocks()` call
-        assert!(node1.on_block_valid(&mock_block_id(1), &mut state1).is_ok());
 
         // Receive 3 `Commit` messages
         for peer in 0..3 {
@@ -1328,10 +1517,6 @@ mod tests {
 
         assert!(!state1.is_primary());
 
-        node1
-            .msg_log
-            .add_consensus_seal(mock_block_id(0), 0, PbftSeal::new());
-
         // Receive 3 `ViewChange` messages
         for peer in 0..3 {
             // It takes f + 1 `ViewChange` messages to trigger a view change, if it wasn't started
@@ -1339,17 +1524,29 @@ mod tests {
             if peer < 2 {
                 assert_eq!(state1.mode, PbftMode::Normal);
             } else {
-                assert_eq!(state1.mode, PbftMode::ViewChanging);
+                assert_eq!(state1.mode, PbftMode::ViewChanging(1));
             }
-            let info = make_msg_info(&PbftMessageType::ViewChange, 1, 0, vec![peer]);
-            let mut vc_msg = PbftViewChange::new();
-            vc_msg.set_info(info);
-            vc_msg.set_seal(PbftSeal::new());
 
             node1
-                .on_peer_message(ParsedMessage::from_view_change_message(vc_msg), &mut state1)
+                .on_peer_message(mock_view_change(1, 0, vec![peer], peer == 1), &mut state1)
                 .unwrap_or_else(handle_pbft_err);
         }
+
+        // Receive `NewView` message
+        let msgs: Vec<&ParsedMessage> = node1
+            .msg_log
+            .get_messages_of_type_view(&PbftMessageType::ViewChange, 1)
+            .iter()
+            .cloned()
+            .filter(|msg| !msg.from_self)
+            .collect::<Vec<_>>();
+        let mut new_view = PbftNewView::new();
+        new_view.set_info(make_msg_info(&PbftMessageType::NewView, 1, 0, vec![1]));
+        new_view.set_view_changes(PbftNode::signed_votes_from_messages(msgs));
+
+        node1
+            .on_peer_message(ParsedMessage::from_new_view_message(new_view), &mut state1)
+            .unwrap_or_else(handle_pbft_err);
 
         assert!(state1.is_primary());
         assert_eq!(state1.view, 1);
@@ -1363,15 +1560,12 @@ mod tests {
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         assert_eq!(state1.mode, PbftMode::Normal);
 
+        let new_view = state1.view + 1;
         node1
-            .msg_log
-            .add_consensus_seal(mock_block_id(0), 0, PbftSeal::new());
-
-        node1
-            .propose_view_change(&mut state1)
+            .propose_view_change(&mut state1, new_view)
             .unwrap_or_else(handle_pbft_err);
 
-        assert_eq!(state1.mode, PbftMode::ViewChanging);
+        assert_eq!(state1.mode, PbftMode::ViewChanging(1));
     }
 
     /// Test that try_publish adds in the consensus seal

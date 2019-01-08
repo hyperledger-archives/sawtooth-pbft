@@ -40,8 +40,6 @@ use crate::state::{PbftPhase, PbftState};
 ///   different block
 /// - The message's view matches the node's current view (handled by message log)
 /// - The sequence number is between the low and high watermarks (handled by message log)
-///
-/// If a `PrePrepare` message is accepted, we update the phase and stop the view change timer
 pub fn pre_prepare(
     state: &mut PbftState,
     msg_log: &mut PbftLog,
@@ -66,28 +64,32 @@ pub fn pre_prepare(
         return Err(PbftError::NoBlockNew);
     }
 
-    // Check that a `PrePrepare` doesn't already exist with this view and sequence number but a
-    // different block
-    if let Some(existing_msg) = msg_log.get_one_msg(message.info(), &PbftMessageType::PrePrepare) {
-        if existing_msg.get_block() != message.get_block() {
-            // If the blocks don't match between two PrePrepares with the same view and
-            // sequence number, the primary is faulty
-            error!("Found two PrePrepares at view {} and seq num {} with different blocks: {:?} and {:?}", message.info().get_view(), message.info().get_seq_num(), existing_msg.get_block(), message.get_block());
-            return Err(PbftError::BlockMismatch(
-                existing_msg.get_block().clone(),
-                message.get_block().clone(),
-            ));
-        }
+    // Check that no `PrePrepare`s already exist with this view and sequence number but a different
+    // block
+    let mut mismatched_blocks = msg_log
+        .get_messages_of_type_seq_view(
+            &PbftMessageType::PrePrepare,
+            message.info().get_seq_num(),
+            message.info().get_view(),
+        )
+        .iter()
+        .filter_map(|existing_msg| {
+            let block = existing_msg.get_block().clone();
+            if &block != message.get_block() {
+                Some(block)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if !mismatched_blocks.is_empty() {
+        error!("When checking PrePrepare {:?}, found PrePrepare(s) with same view and seq num but mismatched block(s): {:?}", message, mismatched_blocks);
+        mismatched_blocks.push(message.get_block().clone());
+        return Err(PbftError::MismatchedBlocks(mismatched_blocks));
     }
 
     msg_log.add_message(message.clone(), state)?;
-
-    // We only switch to Preparing and stop the faulty primary timeout if this is the PrePrepare
-    // for the current sequence number
-    if message.info().get_seq_num() == state.seq_num {
-        state.switch_phase(PbftPhase::Preparing);
-        state.faulty_primary_timeout.stop();
-    }
 
     Ok(())
 }
@@ -114,99 +116,6 @@ pub fn commit(
     state.switch_phase(PbftPhase::Finished);
 
     Ok(())
-}
-
-/// Handle a `ViewChange` message
-/// Once a node receives `2f + 1` `ViewChange` messages, the node enters view `v + 1` and changes
-/// itself into the appropriate role for that view (i.e. if `v = 1` and this is node 1, then this
-/// node is now the primary).
-pub fn view_change(
-    state: &mut PbftState,
-    msg_log: &mut PbftLog,
-    service: &mut Service,
-    vc_message: &ParsedMessage,
-) -> Result<(), PbftError> {
-    if !check_received_enough_view_changes(state, msg_log, vc_message) {
-        return Ok(());
-    }
-
-    set_current_view_from_msg(state, vc_message);
-
-    // Upgrade this node to primary, if its ID is correct
-    if check_is_primary(state) {
-        become_primary(state, service)
-    } else {
-        become_secondary(state)
-    }
-
-    state.discard_current_block();
-
-    Ok(())
-}
-
-pub fn force_view_change(state: &mut PbftState, service: &mut Service) {
-    let next_view = state.view + 1;
-    set_current_view(state, next_view);
-
-    // Upgrade this node to primary, if its ID is correct
-    if check_is_primary(state) {
-        become_primary(state, service)
-    } else {
-        become_secondary(state)
-    }
-}
-
-fn check_received_enough_view_changes(
-    state: &PbftState,
-    msg_log: &PbftLog,
-    vc_message: &ParsedMessage,
-) -> bool {
-    msg_log.log_has_required_msgs(
-        &PbftMessageType::ViewChange,
-        vc_message,
-        false,
-        2 * state.f + 1,
-    )
-}
-
-fn set_current_view_from_msg(state: &mut PbftState, vc_message: &ParsedMessage) {
-    set_current_view(state, vc_message.info().get_view())
-}
-
-fn set_current_view(state: &mut PbftState, view: u64) {
-    state.view = view;
-    warn!("{}: Updating to view {}", state, state.view);
-}
-
-fn check_is_primary(state: &PbftState) -> bool {
-    state.id == state.get_primary_id()
-}
-
-fn become_primary(state: &mut PbftState, service: &mut Service) {
-    state.upgrade_role();
-    warn!("{}: I'm now a primary", state);
-
-    // If we're the new primary, need to clean up the block mess from the view change and
-    // initialize a new block.
-    if let Some(ref working_block) = state.working_block {
-        info!(
-            "{}: Ignoring block {}",
-            state,
-            &hex::encode(working_block.get_block_id())
-        );
-        service
-            .ignore_block(working_block.get_block_id().to_vec())
-            .unwrap_or_else(|e| error!("Couldn't ignore block: {}", e));
-    }
-    info!("{}: Initializing block", state);
-    service
-        .initialize_block(None)
-        .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
-}
-
-fn become_secondary(state: &mut PbftState) {
-    warn!("{}: I'm now a secondary", state);
-    state.downgrade_role();
 }
 
 /// Create a PbftMessageInfo struct with the desired type, view, sequence number, and signer ID

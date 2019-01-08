@@ -18,6 +18,7 @@
 //! Information about a PBFT node's state
 
 use std::fmt;
+use std::time::Duration;
 
 use hex;
 use sawtooth_sdk::consensus::engine::PeerId;
@@ -27,20 +28,12 @@ use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::PbftBlock;
 use crate::timing::Timeout;
 
-// Possible roles for a node
-// Primary is in charge of making consensus decisions
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-enum PbftNodeRole {
-    Primary,
-    Secondary,
-}
-
 /// Phases of the PBFT algorithm, in `Normal` mode
 #[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize)]
 pub enum PbftPhase {
     PrePreparing,
-    Preparing,
     Checking,
+    Preparing,
     Committing,
     Finished,
 }
@@ -49,21 +42,22 @@ pub enum PbftPhase {
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum PbftMode {
     Normal,
-    ViewChanging,
+    // Contains the view number of the view this node is attempting to change to
+    ViewChanging(u64),
 }
 
 impl fmt::Display for PbftState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let ast = if self.is_primary() { "*" } else { " " };
         let mode = match self.mode {
-            PbftMode::Normal => "N",
-            PbftMode::ViewChanging => "V",
+            PbftMode::Normal => String::from("N"),
+            PbftMode::ViewChanging(v) => format!("V{}", v),
         };
 
         let phase = match self.phase {
             PbftPhase::PrePreparing => "PP",
-            PbftPhase::Preparing => "Pr",
             PbftPhase::Checking => "Ch",
+            PbftPhase::Preparing => "Pr",
             PbftPhase::Committing => "Co",
             PbftPhase::Finished => "Fi",
         };
@@ -107,9 +101,6 @@ pub struct PbftState {
     /// Current phase of the algorithm
     pub phase: PbftPhase,
 
-    /// Is this node primary or secondary?
-    role: PbftNodeRole,
-
     /// Normal operation or view changing
     pub mode: PbftMode,
 
@@ -122,6 +113,15 @@ pub struct PbftState {
     /// Timer used to make sure the primary publishes blocks in a timely manner. If not, then this
     /// node will initiate a view change.
     pub faulty_primary_timeout: Timeout,
+
+    /// When view changing, timer is used to make sure a valid NewView message is sent by the new
+    /// primary in a timely manner. If not, this node will start a different view change
+    pub view_change_timeout: Timeout,
+
+    /// The duration of the view change timeout; when a view change is initiated for view v + 1,
+    /// the timeout will be equal to the `view_change_duration`; if the timeout expires and the
+    /// node starts a change to view v + 2, the timeout will be `2 * view_change_duration`; etc.
+    pub view_change_duration: Duration,
 
     pub forced_view_change_period: u64,
 
@@ -143,19 +143,16 @@ impl PbftState {
         }
 
         PbftState {
-            id: id.clone(),
+            id,
             seq_num: head_block_num + 1,
             view: 0, // Node ID 0 is default primary
             phase: PbftPhase::PrePreparing,
-            role: if config.peers[0] == id {
-                PbftNodeRole::Primary
-            } else {
-                PbftNodeRole::Secondary
-            },
             mode: PbftMode::Normal,
             f,
             peer_ids: config.peers.clone(),
             faulty_primary_timeout: Timeout::new(config.faulty_primary_timeout),
+            view_change_timeout: Timeout::new(config.view_change_duration),
+            view_change_duration: config.view_change_duration,
             forced_view_change_period: config.forced_view_change_period,
             working_block: None,
         }
@@ -170,8 +167,8 @@ impl PbftState {
     pub fn check_msg_type(&self) -> PbftMessageType {
         match self.phase {
             PbftPhase::PrePreparing => PbftMessageType::PrePrepare,
-            PbftPhase::Preparing => PbftMessageType::Prepare,
             PbftPhase::Checking => PbftMessageType::Prepare,
+            PbftPhase::Preparing => PbftMessageType::Prepare,
             PbftPhase::Committing => PbftMessageType::Commit,
             PbftPhase::Finished => PbftMessageType::Unset,
         }
@@ -183,28 +180,29 @@ impl PbftState {
         self.peer_ids[primary_index].clone()
     }
 
+    /// Obtain the ID for the primary node at the specified view
+    pub fn get_primary_id_at_view(&self, view: u64) -> PeerId {
+        let primary_index = (view % (self.peer_ids.len() as u64)) as usize;
+        self.peer_ids[primary_index].clone()
+    }
+
     /// Tell if this node is currently the primary
     pub fn is_primary(&self) -> bool {
-        self.role == PbftNodeRole::Primary
+        self.id == self.get_primary_id()
     }
 
-    /// Upgrade this node to primary
-    pub fn upgrade_role(&mut self) {
-        self.role = PbftNodeRole::Primary;
-    }
-
-    /// Downgrade this node to secondary
-    pub fn downgrade_role(&mut self) {
-        self.role = PbftNodeRole::Secondary;
+    /// Tell if this node is the primary at the specified view
+    pub fn is_primary_at_view(&self, view: u64) -> bool {
+        self.id == self.get_primary_id_at_view(view)
     }
 
     /// Go to a phase and return new phase, if successfully changed
     /// Enforces sequential ordering of PBFT phases in normal mode.
     pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Option<PbftPhase> {
         let next = match self.phase {
-            PbftPhase::PrePreparing => PbftPhase::Preparing,
-            PbftPhase::Preparing => PbftPhase::Checking,
-            PbftPhase::Checking => PbftPhase::Committing,
+            PbftPhase::PrePreparing => PbftPhase::Checking,
+            PbftPhase::Checking => PbftPhase::Preparing,
+            PbftPhase::Preparing => PbftPhase::Committing,
             PbftPhase::Committing => PbftPhase::Finished,
             PbftPhase::Finished => PbftPhase::PrePreparing,
         };
@@ -222,13 +220,9 @@ impl PbftState {
         self.seq_num > 0 && self.seq_num % self.forced_view_change_period == 0
     }
 
-    /// Discard the current working block, and reset phase/mode
-    ///
-    /// Used after a view change has occured
-    pub fn discard_current_block(&mut self) {
-        warn!("PbftState::reset: {}", self);
-
-        self.working_block = None;
+    /// Reset the phase and mode, restart the timers; used after a view change has occured
+    pub fn reset_to_start(&mut self) {
+        info!("Resetting state: {}", self);
         self.phase = PbftPhase::PrePreparing;
         self.mode = PbftMode::Normal;
         self.faulty_primary_timeout.start();
@@ -276,21 +270,8 @@ mod tests {
         assert_eq!(state1.get_primary_id(), state1.peer_ids[0]);
     }
 
-    /// Make sure that nodes transition from primary to secondary and back smoothly
-    #[test]
-    fn role_changes() {
-        let config = mock_config(4);
-        let mut state = PbftState::new(vec![0], 0, &config);
-
-        state.downgrade_role();
-        assert!(!state.is_primary());
-
-        state.upgrade_role();
-        assert!(state.is_primary());
-    }
-
     /// Make sure that a normal PBFT cycle works properly
-    /// `PrePreparing` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
+    /// `PrePreparing` => `Checking` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
     /// Also make sure that no illegal phase changes are allowed to happen
     /// (e.g. `PrePreparing` => `Finished`)
     #[test]
@@ -298,13 +279,13 @@ mod tests {
         let config = mock_config(4);
         let mut state = PbftState::new(vec![0], 0, &config);
 
-        assert!(state.switch_phase(PbftPhase::Preparing).is_some());
         assert!(state.switch_phase(PbftPhase::Checking).is_some());
+        assert!(state.switch_phase(PbftPhase::Preparing).is_some());
         assert!(state.switch_phase(PbftPhase::Committing).is_some());
         assert!(state.switch_phase(PbftPhase::Finished).is_some());
         assert!(state.switch_phase(PbftPhase::PrePreparing).is_some());
 
         assert!(state.switch_phase(PbftPhase::Finished).is_none());
-        assert!(state.switch_phase(PbftPhase::Checking).is_none());
+        assert!(state.switch_phase(PbftPhase::Preparing).is_none());
     }
 }
