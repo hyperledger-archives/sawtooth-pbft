@@ -55,8 +55,8 @@ pub struct ParsedMessage {
     pub message_bytes: Vec<u8>,
 
     /// Whether or not this message was self-constructed. Self-constructed messages are skipped
-    /// during creationg of a signed vote, since PBFT doesn't have access to the validator key
-    /// necessary to create valid signed messages.
+    /// when assembling signed votes, since PBFT doesn't have access to the validator key necessary
+    /// to create valid signed messages.
     pub from_self: bool,
 }
 
@@ -100,13 +100,6 @@ impl ParsedMessage {
         match &self.message {
             PbftMessageWrapper::Message(m) => &m.get_info(),
             PbftMessageWrapper::NewView(m) => &m.get_info(),
-        }
-    }
-
-    pub fn info_mut(&mut self) -> &mut PbftMessageInfo {
-        match self.message {
-            PbftMessageWrapper::Message(ref mut m) => m.mut_info(),
-            PbftMessageWrapper::NewView(ref mut m) => m.mut_info(),
         }
     }
 
@@ -159,7 +152,7 @@ impl ParsedMessage {
         // This complex parsing is due to the fact that proto3 doesn't have any way of requiring
         // fields, so a `PbftNewView` can get parsed as a `PbftMessage` that doesn't have the
         // `block` field defined. So, we try parsing a PbftMessage first, and if that fails or has
-        // a NewView message type, then try parsing it as a new view messag; if that fails, then
+        // a NewView message type, then try parsing it as a new view message; if that fails, then
         // it's probably a bad message.
         let parsed_message = protobuf::parse_from_bytes::<PbftMessage>(&message.content)
             .ok()
@@ -195,23 +188,6 @@ impl ParsedMessage {
         };
 
         Self::from_peer_message(peer_message, true)
-    }
-
-    /// Constructs a copy of this message with the given message type
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn as_msg_type(&self, msg_type: PbftMessageType) -> ParsedMessage {
-        let mut new_msg = self.get_pbft_message().clone();
-        let mut info = new_msg.take_info();
-        info.set_msg_type(String::from(msg_type));
-        new_msg.set_info(info);
-
-        ParsedMessage {
-            from_self: self.from_self,
-            header_bytes: self.header_bytes.clone(),
-            header_signature: self.header_signature.clone(),
-            message: PbftMessageWrapper::Message(new_msg),
-            message_bytes: self.message_bytes.clone(),
-        }
     }
 }
 
