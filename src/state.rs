@@ -25,7 +25,6 @@ use sawtooth_sdk::consensus::engine::PeerId;
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
-use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::PbftBlock;
 use crate::timing::Timeout;
 
@@ -159,18 +158,6 @@ impl PbftState {
         }
     }
 
-    /// Check to see what type of message this node is expecting or sending, based on the current
-    /// phase
-    pub fn check_msg_type(&self) -> PbftMessageType {
-        match self.phase {
-            PbftPhase::PrePreparing => PbftMessageType::PrePrepare,
-            PbftPhase::Checking => PbftMessageType::Prepare,
-            PbftPhase::Preparing => PbftMessageType::Prepare,
-            PbftPhase::Committing => PbftMessageType::Commit,
-            PbftPhase::Finished => PbftMessageType::Unset,
-        }
-    }
-
     /// Obtain the ID for the primary node in the network
     pub fn get_primary_id(&self) -> PeerId {
         let primary_index = (self.view as usize) % self.peer_ids.len();
@@ -261,9 +248,6 @@ mod tests {
 
         assert_eq!(state0.f, 1);
         assert_eq!(state1.f, 1);
-
-        assert_eq!(state0.check_msg_type(), PbftMessageType::PrePrepare);
-        assert_eq!(state1.check_msg_type(), PbftMessageType::PrePrepare);
 
         assert_eq!(state0.get_primary_id(), state0.peer_ids[0]);
         assert_eq!(state1.get_primary_id(), state1.peer_ids[0]);

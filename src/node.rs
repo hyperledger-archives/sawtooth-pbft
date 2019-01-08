@@ -1044,8 +1044,8 @@ impl PbftNode {
 
     // ---------- Methods for communication between nodes ----------
 
-    /// Verify that the specified message type should be sent, construct the message bytes, and
-    /// broadcast the message to all of this node's peers and itself
+    /// Construct the message bytes and broadcast the message to all of this node's peers and
+    /// itself
     fn _broadcast_pbft_message(
         &mut self,
         seq_num: u64,
@@ -1053,12 +1053,6 @@ impl PbftNode {
         block: PbftBlock,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        // Make sure that we should be sending messages of this type
-        let expected_type = state.check_msg_type();
-        if msg_type.is_multicast() && msg_type != expected_type {
-            return Ok(());
-        }
-
         let mut msg = PbftMessage::new();
         msg.set_info(PbftMessageInfo::new_from(
             msg_type,

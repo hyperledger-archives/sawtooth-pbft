@@ -222,18 +222,6 @@ impl fmt::Display for PbftMessageType {
     }
 }
 
-impl PbftMessageType {
-    /// Is the message type a multicast message (`PrePrepare`, `Prepare`, or `Commit`)?
-    pub fn is_multicast(self) -> bool {
-        match self {
-            PbftMessageType::PrePrepare | PbftMessageType::Prepare | PbftMessageType::Commit => {
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
 impl<'a> From<&'a str> for PbftMessageType {
     fn from(s: &'a str) -> Self {
         match s {
