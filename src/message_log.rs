@@ -86,10 +86,7 @@ impl PbftLog {
                 msg.info().get_view(),
                 state.view,
             );
-            return Err(PbftError::ViewMismatch(
-                msg.info().get_view() as usize,
-                state.view as usize,
-            ));
+            return Err(PbftError::ViewMismatch(msg.info().get_view(), state.view));
         }
 
         self.messages.insert(msg);
@@ -254,8 +251,8 @@ mod tests {
     }
 
     /// Obtain the PeerId for node `which`
-    fn get_peer_id(cfg: &PbftConfig, which: u64) -> PeerId {
-        cfg.peers[which as usize].clone()
+    fn get_peer_id(cfg: &PbftConfig, which: usize) -> PeerId {
+        cfg.peers[which].clone()
     }
 
     /// Test that adding one message works as expected

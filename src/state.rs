@@ -173,13 +173,13 @@ impl PbftState {
 
     /// Obtain the ID for the primary node in the network
     pub fn get_primary_id(&self) -> PeerId {
-        let primary_index = (self.view % (self.peer_ids.len() as u64)) as usize;
+        let primary_index = (self.view as usize) % self.peer_ids.len();
         self.peer_ids[primary_index].clone()
     }
 
     /// Obtain the ID for the primary node at the specified view
     pub fn get_primary_id_at_view(&self, view: u64) -> PeerId {
-        let primary_index = (view % (self.peer_ids.len() as u64)) as usize;
+        let primary_index = (view as usize) % self.peer_ids.len();
         self.peer_ids[primary_index].clone()
     }
 

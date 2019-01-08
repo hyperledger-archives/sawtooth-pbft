@@ -346,7 +346,7 @@ impl PbftNode {
             .filter(|msg| !msg.from_self)
             .collect::<Vec<_>>();
 
-        if state.is_primary_at_view(msg_view) && messages.len() >= 2 * state.f as usize {
+        if state.is_primary_at_view(msg_view) && messages.len() as u64 >= 2 * state.f {
             let mut new_view = PbftNewView::new();
 
             new_view.set_info(PbftMessageInfo::new_from(
@@ -674,11 +674,11 @@ impl PbftNode {
 
         if new_peers_set != old_peers_set {
             state.peer_ids = peers;
-            let f = ((state.peer_ids.len() - 1) / 3) as u64;
+            let f = (state.peer_ids.len() - 1) / 3;
             if f == 0 {
                 panic!("This network no longer contains enough nodes to be fault tolerant");
             }
-            state.f = f;
+            state.f = f as u64;
             return true;
         }
 
@@ -729,7 +729,7 @@ impl PbftNode {
             // at this sequence number should only have been committed once and therefore in only
             // one view
             .find_map(|(_view, msgs)| {
-                if msgs.len() >= 2 * state.f as usize {
+                if msgs.len() as u64 >= 2 * state.f {
                     Some(msgs)
                 } else {
                     None
@@ -864,7 +864,7 @@ impl PbftNode {
         }
 
         // Check that we've received 2f votes, since the primary vote is implicit
-        if voter_ids.len() < 2 * state.f as usize {
+        if (voter_ids.len() as u64) < 2 * state.f {
             return Err(PbftError::InternalError(format!(
                 "Need {} votes, only found {}!",
                 2 * state.f,
@@ -957,7 +957,7 @@ impl PbftNode {
         }
 
         // Check that we've received 2f votes, since the primary vote is implicit
-        if voter_ids.len() < 2 * state.f as usize {
+        if (voter_ids.len() as u64) < 2 * state.f {
             return Err(PbftError::InternalError(format!(
                 "Need {} votes, only found {}!",
                 2 * state.f,
