@@ -38,8 +38,8 @@ pub struct PbftLog {
     /// Maximum log size
     max_log_size: u64,
 
-    /// Backlog of messages (from peers) with sender's ID
-    backlog: VecDeque<ParsedMessage>,
+    /// Backlog of `PrePrepare`s that the node has not yet received `BlockNew`s for
+    pre_prepare_backlog: VecDeque<ParsedMessage>,
 }
 
 impl fmt::Display for PbftLog {
@@ -72,7 +72,7 @@ impl PbftLog {
         PbftLog {
             messages: HashSet::new(),
             max_log_size: config.max_log_size,
-            backlog: VecDeque::new(),
+            pre_prepare_backlog: VecDeque::new(),
         }
     }
 
@@ -206,14 +206,14 @@ impl PbftLog {
         }
     }
 
-    /// Push a `ParsedMessage` to the backlog
+    /// Push a `PrePrepare` to the backlog
     pub fn push_backlog(&mut self, msg: ParsedMessage) {
-        self.backlog.push_back(msg);
+        self.pre_prepare_backlog.push_back(msg);
     }
 
-    /// Pop the next `ParsedMessage` from the backlog
+    /// Pop the next `PrePrepare` from the backlog
     pub fn pop_backlog(&mut self) -> Option<ParsedMessage> {
-        self.backlog.pop_front()
+        self.pre_prepare_backlog.pop_front()
     }
 }
 

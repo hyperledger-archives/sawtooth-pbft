@@ -64,7 +64,6 @@ impl Engine for PbftEngine {
         .expect("Couldn't load state!");
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
-        let mut backlog_ticker = timing::Ticker::new(config.message_timeout);
 
         let mut node = PbftNode::new(&config, service, pbft_state.read().is_primary());
 
@@ -111,9 +110,7 @@ impl Engine for PbftEngine {
                 }
             });
 
-            backlog_ticker.tick(|| {
-                handle_pbft_result(node.retry_backlog(state));
-            })
+            handle_pbft_result(node.retry_backlog(state));
         }
 
         Ok(())
