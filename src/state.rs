@@ -42,7 +42,7 @@ pub enum PbftPhase {
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum PbftMode {
     Normal,
-    // Contains the view number of the view this node is attempting to change to
+    /// Contains the view number of the view this node is attempting to change to
     ViewChanging(u64),
 }
 
@@ -92,10 +92,9 @@ pub struct PbftState {
     pub id: PeerId,
 
     /// The node's current sequence number
-    /// Always starts at 0; representative of an unknown sequence number.
     pub seq_num: u64,
 
-    /// The current view (where the primary's ID is p = v mod network_node_ids.len())
+    /// The current view
     pub view: u64,
 
     /// Current phase of the algorithm
@@ -115,7 +114,7 @@ pub struct PbftState {
     pub faulty_primary_timeout: Timeout,
 
     /// When view changing, timer is used to make sure a valid NewView message is sent by the new
-    /// primary in a timely manner. If not, this node will start a different view change
+    /// primary in a timely manner. If not, this node will start a different view change.
     pub view_change_timeout: Timeout,
 
     /// The duration of the view change timeout; when a view change is initiated for view v + 1,
@@ -123,6 +122,7 @@ pub struct PbftState {
     /// node starts a change to view v + 2, the timeout will be `2 * view_change_duration`; etc.
     pub view_change_duration: Duration,
 
+    /// How many blocks to commit before forcing a view change for fairness
     pub forced_view_change_period: u64,
 
     /// The current block this node is working on
@@ -145,7 +145,7 @@ impl PbftState {
         PbftState {
             id,
             seq_num: head_block_num + 1,
-            view: 0, // Node ID 0 is default primary
+            view: 0,
             phase: PbftPhase::PrePreparing,
             mode: PbftMode::Normal,
             f,
@@ -156,10 +156,6 @@ impl PbftState {
             forced_view_change_period: config.forced_view_change_period,
             working_block: None,
         }
-    }
-
-    pub fn peers(&self) -> &Vec<PeerId> {
-        &self.peer_ids
     }
 
     /// Check to see what type of message this node is expecting or sending, based on the current
