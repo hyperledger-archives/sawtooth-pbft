@@ -1345,9 +1345,6 @@ mod tests {
     fn handle_pbft_err(e: PbftError) {
         match e {
             PbftError::Timeout => (),
-            PbftError::WrongNumMessages(_, _, _) | PbftError::NotReadyForMessage => {
-                println!("{}", e)
-            }
             _ => panic!("{}", e),
         }
     }

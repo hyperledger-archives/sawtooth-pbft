@@ -167,7 +167,6 @@ fn handle_pbft_result(res: Result<(), PbftError>) {
     if let Err(e) = res {
         match e {
             PbftError::Timeout => (),
-            PbftError::WrongNumMessages(_, _, _) | PbftError::NotReadyForMessage => trace!("{}", e),
             _ => error!("{}", e),
         }
     }
