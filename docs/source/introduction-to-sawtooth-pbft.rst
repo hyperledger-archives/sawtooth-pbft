@@ -25,5 +25,14 @@ is that blocks committed by nodes are final, so there are no forks in the
 network. This is verified by a "Consensus Seal," which is appended to the
 following block and used to verify that the block was added correctly.
 
+For implementation details, see the `Sawtooth PBFT rustdocs
+<https://sawtooth.hyperledger.org/docs/pbft/nightly/master/pbft_doc/pbft_engine/index.html>`__.
+
+.. note::
+
+   Sawtooth PBFT is currently a prototype. For project status, see
+   `README.md <https://github.com/hyperledger/sawtooth-pbft/blob/master/README.md>`__
+   in the `Sawtooth PBFT repository <https://github.com/hyperledger/sawtooth-pbft>`__.
+
 .. Licensed under Creative Commons Attribution 4.0 International License
 .. https://creativecommons.org/licenses/by/4.0/
