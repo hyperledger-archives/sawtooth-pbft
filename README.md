@@ -47,9 +47,9 @@ it causes issues with consensus.
 
 ## Documentation
 
-Current documentation for Sawtooth PBFT is available in the
-[docs subdirectory](https://github.com/hyperledger/sawtooth-pbft/tree/master/docs)
-of this repository.
+- [Current Sawtooth PBFT documentation](https://sawtooth.hyperledger.org/docs/#sawtooth-pbft)
+
+- [Rustdocs for Sawtooth PBFT](https://sawtooth.hyperledger.org/docs/pbft/nightly/master/pbft_doc/pbft_engine/index.html)
 
 ## License
 
