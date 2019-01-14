@@ -140,7 +140,7 @@ fn handle_update(
             warn!("{}: BlockInvalid received, starting view change", state);
             node.start_view_change(state, state.view + 1)?
         }
-        Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state),
+        Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state)?,
         Ok(Update::PeerMessage(message, sender_id)) => {
             let parsed_message = ParsedMessage::from_peer_message(message, false)?;
             let signer_id = parsed_message.info().get_signer_id().to_vec();

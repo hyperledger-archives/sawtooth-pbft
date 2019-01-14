@@ -193,7 +193,7 @@ impl PbftNode {
         // If this message is for the current sequence number and the node is in the PrePreparing
         // phase, check the block
         if msg.info().get_seq_num() == state.seq_num && state.phase == PbftPhase::PrePreparing {
-            state.switch_phase(PbftPhase::Checking);
+            state.switch_phase(PbftPhase::Checking)?;
 
             // We can also stop the view change timer, since we received a new block and a
             // valid PrePrepare in time
@@ -238,7 +238,7 @@ impl PbftNode {
                     true,
                     2 * state.f + 1,
                 ) {
-                    state.switch_phase(PbftPhase::Committing);
+                    state.switch_phase(PbftPhase::Committing)?;
                     self._broadcast_pbft_message(
                         state.seq_num,
                         PbftMessageType::Commit,
@@ -287,7 +287,7 @@ impl PbftNode {
                         .map_err(|e| {
                             PbftError::InternalError(format!("Failed to commit block: {:?}", e))
                         })?;
-                    state.switch_phase(PbftPhase::Finished);
+                    state.switch_phase(PbftPhase::Finished)?;
                 }
             }
         }
@@ -550,9 +550,7 @@ impl PbftNode {
         state.phase = PbftPhase::Finished;
 
         // Call on_block_commit right away so we're ready to catch up again if necessary
-        self.on_block_commit(BlockId::from(messages[0].get_block().get_block_id()), state);
-
-        Ok(())
+        self.on_block_commit(BlockId::from(messages[0].get_block().get_block_id()), state)
     }
 
     /// Handle a `BlockValid` update from the Validator
@@ -582,13 +580,16 @@ impl PbftNode {
             }
         }?;
 
-        state.switch_phase(PbftPhase::Preparing);
-        self._broadcast_pbft_message(
-            state.seq_num,
-            PbftMessageType::Prepare,
-            block.clone(),
-            state,
-        )?;
+        if state.phase == PbftPhase::Checking {
+            state.switch_phase(PbftPhase::Preparing)?;
+            self._broadcast_pbft_message(
+                state.seq_num,
+                PbftMessageType::Prepare,
+                block.clone(),
+                state,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -598,7 +599,11 @@ impl PbftNode {
     /// necessary view and membership changes, garbage collect the logs, update the commit & idle
     /// timers, and start a new block if this node is the primary.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn on_block_commit(&mut self, block_id: BlockId, state: &mut PbftState) {
+    pub fn on_block_commit(
+        &mut self,
+        block_id: BlockId,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
         debug!("{}: <<<<<< BlockCommit: {:?}", state, block_id);
 
         let is_working_block = match state.working_block {
@@ -611,11 +616,11 @@ impl PbftNode {
                 "{}: Got BlockCommit for a block that isn't the working block",
                 state
             );
-            return;
+            return Ok(());
         }
 
         // Update state to be ready for next block
-        state.switch_phase(PbftPhase::PrePreparing);
+        state.switch_phase(PbftPhase::PrePreparing)?;
         state.seq_num += 1;
 
         // If we already have a BlockNew for the next block, we can make it the working block;
@@ -647,6 +652,8 @@ impl PbftNode {
                 .initialize_block(Some(block_id.clone()))
                 .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
         }
+
+        Ok(())
     }
 
     /// Check the on-chain list of peers; if it has changed, update peers list and return true.
@@ -1581,7 +1588,7 @@ mod tests {
         state0.phase = PbftPhase::Finished;
         state0.working_block = Some(PbftBlock::from(mock_block(1)));
         assert_eq!(state0.seq_num, 1);
-        node.on_block_commit(mock_block_id(1), &mut state0);
+        assert!(node.on_block_commit(mock_block_id(1), &mut state0).is_ok());
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.working_block, None);
         assert_eq!(state0.seq_num, 2);
@@ -1637,7 +1644,7 @@ mod tests {
         assert_eq!(state1.phase, PbftPhase::Finished);
 
         // Spoof the `commit_blocks()` call
-        node1.on_block_commit(mock_block_id(1), &mut state1);
+        assert!(node1.on_block_commit(mock_block_id(1), &mut state1).is_ok());
         assert_eq!(state1.phase, PbftPhase::PrePreparing);
 
         // Make sure the block was actually committed

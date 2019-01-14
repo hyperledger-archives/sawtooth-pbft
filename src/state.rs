@@ -24,6 +24,7 @@ use hex;
 use sawtooth_sdk::consensus::engine::PeerId;
 
 use crate::config::PbftConfig;
+use crate::error::PbftError;
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::PbftBlock;
 use crate::timing::Timeout;
@@ -192,9 +193,9 @@ impl PbftState {
         self.id == self.get_primary_id_at_view(view)
     }
 
-    /// Go to a phase and return new phase, if successfully changed
-    /// Enforces sequential ordering of PBFT phases in normal mode.
-    pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Option<PbftPhase> {
+    /// Switch to the desired phase if it is the next phase of the algorithm; if it is not the next
+    /// phase, return an error
+    pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Result<(), PbftError> {
         let next = match self.phase {
             PbftPhase::PrePreparing => PbftPhase::Checking,
             PbftPhase::Checking => PbftPhase::Preparing,
@@ -204,11 +205,13 @@ impl PbftState {
         };
         if desired_phase == next {
             debug!("{}: Changing to {:?}", self, desired_phase);
-            self.phase = desired_phase.clone();
-            Some(desired_phase)
+            self.phase = desired_phase;
+            Ok(())
         } else {
-            debug!("{}: Didn't change to {:?}", self, desired_phase);
-            None
+            Err(PbftError::InternalError(format!(
+                "Node is in {:?} phase; attempted to switch to {:?}",
+                self.phase, desired_phase
+            )))
         }
     }
 
@@ -268,20 +271,22 @@ mod tests {
 
     /// Make sure that a normal PBFT cycle works properly
     /// `PrePreparing` => `Checking` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
-    /// Also make sure that no illegal phase changes are allowed to happen
-    /// (e.g. `PrePreparing` => `Finished`)
+    /// and that invalid phase changes are detected
     #[test]
-    fn phase_changes() {
+    fn valid_phase_changes() {
         let config = mock_config(4);
         let mut state = PbftState::new(vec![0], 0, &config);
 
-        assert!(state.switch_phase(PbftPhase::Checking).is_some());
-        assert!(state.switch_phase(PbftPhase::Preparing).is_some());
-        assert!(state.switch_phase(PbftPhase::Committing).is_some());
-        assert!(state.switch_phase(PbftPhase::Finished).is_some());
-        assert!(state.switch_phase(PbftPhase::PrePreparing).is_some());
+        // Valid changes
+        assert!(state.switch_phase(PbftPhase::Checking).is_ok());
+        assert!(state.switch_phase(PbftPhase::Preparing).is_ok());
+        assert!(state.switch_phase(PbftPhase::Committing).is_ok());
+        assert!(state.switch_phase(PbftPhase::Finished).is_ok());
+        assert!(state.switch_phase(PbftPhase::PrePreparing).is_ok());
 
-        assert!(state.switch_phase(PbftPhase::Finished).is_none());
-        assert!(state.switch_phase(PbftPhase::Preparing).is_none());
+        // Invalid changes
+        assert!(state.switch_phase(PbftPhase::Committing).is_err());
+        assert!(state.switch_phase(PbftPhase::Finished).is_err());
+        assert!(state.switch_phase(PbftPhase::PrePreparing).is_err());
     }
 }
