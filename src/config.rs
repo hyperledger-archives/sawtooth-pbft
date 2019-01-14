@@ -86,9 +86,9 @@ impl PbftConfig {
 /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
 ///
 /// # Panics
-/// + If the `sawtooth.consensus.pbft.peers` setting is not provided
-/// + If settings loading fails entirely
+/// + If settings loading fails
 /// + If block duration is greater than the faulty primary timeout
+/// + If the `sawtooth.consensus.pbft.peers` setting is not provided or is invalid
 pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig {
     let mut config = PbftConfig::default();
 
@@ -209,6 +209,9 @@ fn merge_millis_setting_if_set(
 }
 
 /// Get the peers as a Vec<PeerId> from settings
+///
+/// # Panics
+/// + If the `sawtooth.consenus.pbft.peers` setting is unset or invalid
 pub fn get_peers_from_settings<S: std::hash::BuildHasher>(
     settings: &HashMap<String, String, S>,
 ) -> Vec<PeerId> {
