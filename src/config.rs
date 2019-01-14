@@ -105,7 +105,7 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
                 String::from("sawtooth.consensus.pbft.max_log_size"),
             ],
         )
-        .expect("Failed to get on-chain settings");
+        .unwrap_or_else(|err| panic!("Failed to load on-chain settings due to error: {:?}", err));
 
     // Get the peers associated with this node (including ourselves). Panic if it is not provided;
     // the network cannot function without this setting.
@@ -137,7 +137,10 @@ pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig 
 
     // Check to make sure block_duration < faulty_primary_timeout
     if config.block_duration >= config.faulty_primary_timeout {
-        panic!("Block duration must be less than the view change timeout");
+        panic!(
+            "Block duration ({:?}) must be less than the faulty primary timeout ({:?})",
+            config.block_duration, config.faulty_primary_timeout
+        );
     }
 
     // Get various integer constants
@@ -211,16 +214,22 @@ pub fn get_peers_from_settings<S: std::hash::BuildHasher>(
 ) -> Vec<PeerId> {
     let peers_setting_value = settings
         .get("sawtooth.consensus.pbft.peers")
-        .expect("'sawtooth.consensus.pbft.peers' must be set to use PBFT");
+        .expect("'sawtooth.consensus.pbft.peers' is empty; this setting must exist to use PBFT");
 
-    warn!("Peers setting: {:?}", peers_setting_value);
-
-    let peers: Vec<String> = serde_json::from_str(peers_setting_value)
-        .expect("Invalid value at 'sawtooth.consensus.pbft.peers'");
+    let peers: Vec<String> = serde_json::from_str(peers_setting_value).unwrap_or_else(|err| {
+        panic!(
+            "Unable to parse value at 'sawtooth.consensus.pbft.peers' due to error: {:?}",
+            err
+        )
+    });
 
     peers
         .into_iter()
-        .map(|s| hex::decode(s).expect("PeerId is not valid hex"))
+        .map(|s| {
+            hex::decode(s).unwrap_or_else(|err| {
+                panic!("Unable to parse PeerId from string due to error: {:?}", err)
+            })
+        })
         .collect()
 }
 
