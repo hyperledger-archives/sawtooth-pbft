@@ -175,9 +175,9 @@ impl PbftNode {
             for block in mismatched_blocks {
                 self.service
                     .fail_block(block.get_block_id().to_vec())
-                    .map_err(|err| {
-                        PbftError::InternalError(format!("Couldn't fail block: {}", err))
-                    })?;
+                    .unwrap_or_else(|err| {
+                        error!("Couldn't fail block {:?} due to error: {:?}", block, err)
+                    });
             }
             self.start_view_change(state, state.view + 1)?;
             return Ok(());
@@ -452,9 +452,9 @@ impl PbftNode {
                 debug!("Consensus seal passed verification");
             }
             Err(err) => {
-                self.service.fail_block(block.block_id).map_err(|err| {
-                    PbftError::InternalError(format!("Couldn't fail block: {}", err))
-                })?;
+                self.service
+                    .fail_block(block.block_id)
+                    .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
                 self.start_view_change(state, state.view + 1)?;
                 return Err(PbftError::InternalError(format!(
                     "Consensus seal failed verification; failed block and started view change - \
