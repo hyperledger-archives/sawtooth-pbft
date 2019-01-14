@@ -149,27 +149,17 @@ impl ParsedMessage {
         if !from_self {
             verify_sha512(&message.content, &message.header.content_sha512)?;
         }
-        // This complex parsing is due to the fact that proto3 doesn't have any way of requiring
-        // fields, so a `PbftNewView` can get parsed as a `PbftMessage` that doesn't have the
-        // `block` field defined. So, we try parsing a PbftMessage first, and if that fails or has
-        // a NewView message type, then try parsing it as a new view message; if that fails, then
-        // it's probably a bad message.
-        let parsed_message = protobuf::parse_from_bytes::<PbftMessage>(&message.content)
-            .ok()
-            .and_then(|m| {
-                let msg_type = m.get_info().get_msg_type();
-                if msg_type == "NewView" {
-                    None
-                } else {
-                    Some(PbftMessageWrapper::Message(m))
-                }
-            })
-            .or_else(|| {
+
+        let parsed_message = match message.header.message_type.as_str() {
+            "NewView" => PbftMessageWrapper::NewView(
                 protobuf::parse_from_bytes::<PbftNewView>(&message.content)
-                    .ok()
-                    .and_then(|m| Some(PbftMessageWrapper::NewView(m)))
-            })
-            .ok_or_else(|| PbftError::InternalError("Couldn't parse message!".into()))?;
+                    .map_err(PbftError::SerializationError)?,
+            ),
+            _ => PbftMessageWrapper::Message(
+                protobuf::parse_from_bytes::<PbftMessage>(&message.content)
+                    .map_err(PbftError::SerializationError)?,
+            ),
+        };
 
         Ok(Self {
             header_bytes: message.header_bytes,
@@ -181,11 +171,12 @@ impl ParsedMessage {
     }
 
     /// Constructs a `ParsedMessage` from the given serialized `PbftMessage`
-    pub fn from_bytes(message: Vec<u8>) -> Result<Self, PbftError> {
-        let peer_message = PeerMessage {
+    pub fn from_bytes(message: Vec<u8>, message_type: PbftMessageType) -> Result<Self, PbftError> {
+        let mut peer_message = PeerMessage {
             content: message,
             ..Default::default()
         };
+        peer_message.header.message_type = String::from(message_type);
 
         Self::from_peer_message(peer_message, true)
     }

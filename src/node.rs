@@ -1041,7 +1041,7 @@ impl PbftNode {
             .unwrap_or_else(|err| error!("Couldn't broadcast: {}", err));
 
         // Send to self
-        let parsed_message = ParsedMessage::from_bytes(msg)?;
+        let parsed_message = ParsedMessage::from_bytes(msg, msg_type)?;
 
         self.on_peer_message(parsed_message, state)
     }
