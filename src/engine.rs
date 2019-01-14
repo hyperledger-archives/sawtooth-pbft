@@ -45,6 +45,8 @@ impl Engine for PbftEngine {
         mut service: Box<Service>,
         startup_state: StartupState,
     ) -> Result<(), Error> {
+        info!("Startup state received from validator: {:?}", startup_state);
+
         let StartupState {
             chain_head,
             peers: _peers,
@@ -54,6 +56,8 @@ impl Engine for PbftEngine {
         // Load on-chain settings
         let config = config::load_pbft_config(chain_head.block_id.clone(), &mut *service);
 
+        info!("PBFT config loaded: {:?}", config);
+
         let mut pbft_state = get_storage(&config.storage, || {
             PbftState::new(
                 local_peer_info.peer_id.clone(),
@@ -61,13 +65,13 @@ impl Engine for PbftEngine {
                 &config,
             )
         })
-        .expect("Couldn't load state!");
+        .unwrap_or_else(|err| panic!("Failed to load state due to error: {}", err));
+
+        info!("PBFT state created: {}", **pbft_state.read());
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
 
         let mut node = PbftNode::new(&config, service, pbft_state.read().is_primary());
-
-        debug!("Starting state: {:#?}", **pbft_state.read());
 
         node.start_faulty_primary_timeout(&mut pbft_state.write());
 
@@ -75,6 +79,8 @@ impl Engine for PbftEngine {
         loop {
             let incoming_message = updates.recv_timeout(config.message_timeout);
             let state = &mut **pbft_state.write();
+
+            trace!("{} received message {:?}", state, incoming_message);
 
             match handle_update(&mut node, incoming_message, state) {
                 Ok(again) => {
@@ -86,9 +92,7 @@ impl Engine for PbftEngine {
             }
 
             working_ticker.tick(|| {
-                if let Err(e) = node.try_publish(state) {
-                    error!("{}", e);
-                }
+                log_any_error(node.try_publish(state));
 
                 // Every so often, check to see if the faulty primary timeout has expired; initiate
                 // ViewChange if necessary
@@ -142,20 +146,26 @@ fn handle_update(
 
             if signer_id != sender_id {
                 return Err(PbftError::InternalError(format!(
-                    "Mismatch between sender ID ({:?}) and signer ID ({:?})!",
-                    sender_id, signer_id
+                    "Mismatch between sender ID ({:?}) and signer ID ({:?}) of peer message: {:?}",
+                    sender_id, signer_id, parsed_message
                 )));
             }
 
             node.on_peer_message(parsed_message, state)?
         }
-        Ok(Update::Shutdown) => return Ok(false),
-        Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
-            debug!("Received PeerConnected/PeerDisconnected message");
+        Ok(Update::Shutdown) => {
+            info!("Received shutdown; stopping PBFT");
+            return Ok(false);
+        }
+        Ok(Update::PeerConnected(info)) => {
+            info!("Received PeerConnected message with peer info: {:?}", info);
+        }
+        Ok(Update::PeerDisconnected(id)) => {
+            info!("Received PeerDisconnected for peer ID: {:?}", id);
         }
         Err(RecvTimeoutError::Timeout) => {}
         Err(RecvTimeoutError::Disconnected) => {
-            error!("Disconnected from validator");
+            error!("Disconnected from validator; stopping PBFT");
             return Ok(false);
         }
     }
