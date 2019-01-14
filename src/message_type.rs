@@ -105,7 +105,8 @@ impl ParsedMessage {
 
     /// Returns the `PbftBlock` for this message's wrapped `PbftMessage`.
     ///
-    /// Panics if it encounters a new view message, as that should never happen.
+    /// # Panics
+    /// + If the wrapped message is a `NewView`, which doesn't contain a block
     pub fn get_block(&self) -> &PbftBlock {
         match &self.message {
             PbftMessageWrapper::Message(m) => m.get_block(),
@@ -117,7 +118,8 @@ impl ParsedMessage {
 
     /// Returns the wrapped `PbftMessage`.
     ///
-    /// Panics if it encounters a new view message, as that should never happen.
+    /// # Panics
+    /// + If the wrapped message is a `NewView`, not a regular message
     pub fn get_pbft_message(&self) -> &PbftMessage {
         match &self.message {
             PbftMessageWrapper::Message(m) => m,
@@ -129,7 +131,8 @@ impl ParsedMessage {
 
     /// Returns the wrapped `PbftNewView`.
     ///
-    /// Panics if it encounters a regular message, as that should never happen.
+    /// # Panics
+    /// + If the wrapped message is a regular message, not a `NewView`
     pub fn get_new_view_message(&self) -> &PbftNewView {
         match &self.message {
             PbftMessageWrapper::Message(_) => {
