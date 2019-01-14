@@ -44,7 +44,7 @@ pub fn verify_sha512(content: &[u8], content_hash: &[u8]) -> Result<(), PbftErro
 
     if computed_sha512 != content_hash {
         Err(PbftError::InternalError(format!(
-            "Hash verification failed! Content: `{:?}`, Hash: `{:?}`",
+            "Hash verification failed - Content: `{:?}`, Hash: `{:?}`",
             content, content_hash
         )))
     } else {
