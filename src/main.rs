@@ -82,7 +82,7 @@ fn main() {
         process::exit(1)
     });
 
-    warn!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
+    info!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
 
     let pbft_engine = engine::PbftEngine::new();
 
