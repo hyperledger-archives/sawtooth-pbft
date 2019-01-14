@@ -23,7 +23,7 @@ use std::convert::From;
 use hex;
 use itertools::Itertools;
 use protobuf::{Message, RepeatedField};
-use sawtooth_sdk::consensus::engine::{Block, BlockId, Error as EngineError, PeerId};
+use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId};
 use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
@@ -170,17 +170,21 @@ impl PbftNode {
             .collect::<Vec<_>>();
 
         if !mismatched_blocks.is_empty() {
-            warn!("When checking PrePrepare {:?}, found PrePrepare(s) with same view and seq num but mismatched block(s): {:?}", msg, mismatched_blocks);
             mismatched_blocks.push(msg.get_block().clone());
-            for block in mismatched_blocks {
+            mismatched_blocks.iter().for_each(|block| {
                 self.service
                     .fail_block(block.get_block_id().to_vec())
                     .unwrap_or_else(|err| {
                         error!("Couldn't fail block {:?} due to error: {:?}", block, err)
                     });
-            }
+            });
             self.start_view_change(state, state.view + 1)?;
-            return Ok(());
+            return Err(PbftError::InternalError(format!(
+                "When checking PrePrepare with block {:?}, found PrePrepare(s) with same view and \
+                 seq num but mismatched block(s): {:?}",
+                msg.get_block(),
+                mismatched_blocks,
+            )));
         }
 
         // Add message to the log
@@ -401,11 +405,15 @@ impl PbftNode {
                 );
                 return Ok(());
             }
-            Err(e) => {
+            Err(err) => {
                 if let PbftMode::ViewChanging(v) = state.mode {
-                    warn!("NewView message is invalid, got error: {:?}, Starting new view change to view {}", e, v + 1);
                     self.start_view_change(state, v + 1)?;
-                    return Ok(());
+                    return Err(PbftError::InternalError(format!(
+                        "NewView failed verification; starting new view change to view {} - \
+                         Error was: {}",
+                        v + 1,
+                        err
+                    )));
                 }
             }
             Ok(_) => {
@@ -419,9 +427,12 @@ impl PbftNode {
 
         // Initialize a new block if necessary
         if state.is_primary() && state.working_block.is_none() {
-            self.service
-                .initialize_block(None)
-                .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+            self.service.initialize_block(None).map_err(|err| {
+                PbftError::InternalError(format!(
+                    "Couldn't initialize block due to error: {:?}",
+                    err
+                ))
+            })?;
         }
 
         state.reset_to_start();
@@ -1006,14 +1017,10 @@ impl PbftNode {
                 info!("{}: Publishing block {:?}", state, block_id);
                 Ok(())
             }
-            Err(EngineError::BlockNotReady) => {
-                debug!("{}: Block not ready", state);
-                Ok(())
-            }
-            Err(err) => {
-                error!("Couldn't finalize block: {}", err);
-                Err(PbftError::InternalError("Couldn't finalize block!".into()))
-            }
+            Err(err) => Err(PbftError::InternalError(format!(
+                "Couldn't finalize block due to error: {:?}",
+                err
+            ))),
         }
     }
 
