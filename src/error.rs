@@ -33,10 +33,10 @@ pub enum PbftError {
     SerializationError(ProtobufError),
 
     /// Too many or too few messages recieved so far (expected, got)
-    WrongNumMessages(PbftMessageType, usize, usize),
+    WrongNumMessages(PbftMessageType, u64, u64),
 
     /// Too many or too few consenus seals found (expected, got)
-    WrongNumSeals(usize, usize),
+    WrongNumSeals(u64, u64),
 
     /// The blocks don't match but should
     MismatchedBlocks(Vec<PbftBlock>),
@@ -45,7 +45,7 @@ pub enum PbftError {
     MessageMismatch(PbftMessageType),
 
     /// The message is in a different view than this node is
-    ViewMismatch(usize, usize),
+    ViewMismatch(u64, u64),
 
     /// Internal PBFT error (description)
     InternalError(String),

@@ -24,7 +24,7 @@ use hex;
 use sawtooth_sdk::consensus::engine::PeerId;
 
 use crate::config::PbftConfig;
-use crate::message_type::PbftMessageType;
+use crate::error::PbftError;
 use crate::protos::pbft_message::PbftBlock;
 use crate::timing::Timeout;
 
@@ -42,7 +42,7 @@ pub enum PbftPhase {
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum PbftMode {
     Normal,
-    // Contains the view number of the view this node is attempting to change to
+    /// Contains the view number of the view this node is attempting to change to
     ViewChanging(u64),
 }
 
@@ -92,10 +92,9 @@ pub struct PbftState {
     pub id: PeerId,
 
     /// The node's current sequence number
-    /// Always starts at 0; representative of an unknown sequence number.
     pub seq_num: u64,
 
-    /// The current view (where the primary's ID is p = v mod network_node_ids.len())
+    /// The current view
     pub view: u64,
 
     /// Current phase of the algorithm
@@ -115,7 +114,7 @@ pub struct PbftState {
     pub faulty_primary_timeout: Timeout,
 
     /// When view changing, timer is used to make sure a valid NewView message is sent by the new
-    /// primary in a timely manner. If not, this node will start a different view change
+    /// primary in a timely manner. If not, this node will start a different view change.
     pub view_change_timeout: Timeout,
 
     /// The duration of the view change timeout; when a view change is initiated for view v + 1,
@@ -123,6 +122,7 @@ pub struct PbftState {
     /// node starts a change to view v + 2, the timeout will be `2 * view_change_duration`; etc.
     pub view_change_duration: Duration,
 
+    /// How many blocks to commit before forcing a view change for fairness
     pub forced_view_change_period: u64,
 
     /// The current block this node is working on
@@ -145,7 +145,7 @@ impl PbftState {
         PbftState {
             id,
             seq_num: head_block_num + 1,
-            view: 0, // Node ID 0 is default primary
+            view: 0,
             phase: PbftPhase::PrePreparing,
             mode: PbftMode::Normal,
             f,
@@ -158,31 +158,15 @@ impl PbftState {
         }
     }
 
-    pub fn peers(&self) -> &Vec<PeerId> {
-        &self.peer_ids
-    }
-
-    /// Check to see what type of message this node is expecting or sending, based on the current
-    /// phase
-    pub fn check_msg_type(&self) -> PbftMessageType {
-        match self.phase {
-            PbftPhase::PrePreparing => PbftMessageType::PrePrepare,
-            PbftPhase::Checking => PbftMessageType::Prepare,
-            PbftPhase::Preparing => PbftMessageType::Prepare,
-            PbftPhase::Committing => PbftMessageType::Commit,
-            PbftPhase::Finished => PbftMessageType::Unset,
-        }
-    }
-
     /// Obtain the ID for the primary node in the network
     pub fn get_primary_id(&self) -> PeerId {
-        let primary_index = (self.view % (self.peer_ids.len() as u64)) as usize;
+        let primary_index = (self.view as usize) % self.peer_ids.len();
         self.peer_ids[primary_index].clone()
     }
 
     /// Obtain the ID for the primary node at the specified view
     pub fn get_primary_id_at_view(&self, view: u64) -> PeerId {
-        let primary_index = (view % (self.peer_ids.len() as u64)) as usize;
+        let primary_index = (view as usize) % self.peer_ids.len();
         self.peer_ids[primary_index].clone()
     }
 
@@ -196,9 +180,9 @@ impl PbftState {
         self.id == self.get_primary_id_at_view(view)
     }
 
-    /// Go to a phase and return new phase, if successfully changed
-    /// Enforces sequential ordering of PBFT phases in normal mode.
-    pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Option<PbftPhase> {
+    /// Switch to the desired phase if it is the next phase of the algorithm; if it is not the next
+    /// phase, return an error
+    pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Result<(), PbftError> {
         let next = match self.phase {
             PbftPhase::PrePreparing => PbftPhase::Checking,
             PbftPhase::Checking => PbftPhase::Preparing,
@@ -208,11 +192,13 @@ impl PbftState {
         };
         if desired_phase == next {
             debug!("{}: Changing to {:?}", self, desired_phase);
-            self.phase = desired_phase.clone();
-            Some(desired_phase)
+            self.phase = desired_phase;
+            Ok(())
         } else {
-            debug!("{}: Didn't change to {:?}", self, desired_phase);
-            None
+            Err(PbftError::InternalError(format!(
+                "Node is in {:?} phase; attempted to switch to {:?}",
+                self.phase, desired_phase
+            )))
         }
     }
 
@@ -263,29 +249,28 @@ mod tests {
         assert_eq!(state0.f, 1);
         assert_eq!(state1.f, 1);
 
-        assert_eq!(state0.check_msg_type(), PbftMessageType::PrePrepare);
-        assert_eq!(state1.check_msg_type(), PbftMessageType::PrePrepare);
-
         assert_eq!(state0.get_primary_id(), state0.peer_ids[0]);
         assert_eq!(state1.get_primary_id(), state1.peer_ids[0]);
     }
 
     /// Make sure that a normal PBFT cycle works properly
     /// `PrePreparing` => `Checking` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
-    /// Also make sure that no illegal phase changes are allowed to happen
-    /// (e.g. `PrePreparing` => `Finished`)
+    /// and that invalid phase changes are detected
     #[test]
-    fn phase_changes() {
+    fn valid_phase_changes() {
         let config = mock_config(4);
         let mut state = PbftState::new(vec![0], 0, &config);
 
-        assert!(state.switch_phase(PbftPhase::Checking).is_some());
-        assert!(state.switch_phase(PbftPhase::Preparing).is_some());
-        assert!(state.switch_phase(PbftPhase::Committing).is_some());
-        assert!(state.switch_phase(PbftPhase::Finished).is_some());
-        assert!(state.switch_phase(PbftPhase::PrePreparing).is_some());
+        // Valid changes
+        assert!(state.switch_phase(PbftPhase::Checking).is_ok());
+        assert!(state.switch_phase(PbftPhase::Preparing).is_ok());
+        assert!(state.switch_phase(PbftPhase::Committing).is_ok());
+        assert!(state.switch_phase(PbftPhase::Finished).is_ok());
+        assert!(state.switch_phase(PbftPhase::PrePreparing).is_ok());
 
-        assert!(state.switch_phase(PbftPhase::Finished).is_none());
-        assert!(state.switch_phase(PbftPhase::Preparing).is_none());
+        // Invalid changes
+        assert!(state.switch_phase(PbftPhase::Committing).is_err());
+        assert!(state.switch_phase(PbftPhase::Finished).is_err());
+        assert!(state.switch_phase(PbftPhase::PrePreparing).is_err());
     }
 }

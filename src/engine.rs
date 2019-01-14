@@ -64,7 +64,6 @@ impl Engine for PbftEngine {
         .expect("Couldn't load state!");
 
         let mut working_ticker = timing::Ticker::new(config.block_duration);
-        let mut backlog_ticker = timing::Ticker::new(config.message_timeout);
 
         let mut node = PbftNode::new(&config, service, pbft_state.read().is_primary());
 
@@ -95,7 +94,7 @@ impl Engine for PbftEngine {
                 // ViewChange if necessary
                 if node.check_faulty_primary_timeout_expired(state) {
                     warn!("Faulty primary timeout expired; proposing view change");
-                    handle_pbft_result(node.propose_view_change(state, state.view + 1));
+                    handle_pbft_result(node.start_view_change(state, state.view + 1));
                 }
 
                 // Check the view change timeout if the node is view changing so we can start a new
@@ -106,14 +105,12 @@ impl Engine for PbftEngine {
                             "View change timeout expired; proposing view change for view {}",
                             v + 1
                         );
-                        handle_pbft_result(node.propose_view_change(state, v + 1));
+                        handle_pbft_result(node.start_view_change(state, v + 1));
                     }
                 }
             });
 
-            backlog_ticker.tick(|| {
-                handle_pbft_result(node.retry_backlog(state));
-            })
+            handle_pbft_result(node.retry_backlog(state));
         }
 
         Ok(())
@@ -138,9 +135,9 @@ fn handle_update(
         Ok(Update::BlockValid(block_id)) => node.on_block_valid(&block_id, state)?,
         Ok(Update::BlockInvalid(_)) => {
             warn!("{}: BlockInvalid received, starting view change", state);
-            node.propose_view_change(state, state.view + 1)?
+            node.start_view_change(state, state.view + 1)?
         }
-        Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state),
+        Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state)?,
         Ok(Update::PeerMessage(message, sender_id)) => {
             let parsed_message = ParsedMessage::from_peer_message(message, false)?;
             let signer_id = parsed_message.info().get_signer_id().to_vec();
