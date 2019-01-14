@@ -424,6 +424,9 @@ impl PbftNode {
         // Update view
         state.view = new_view.get_info().get_view();
         state.view_change_timeout.stop();
+        state.reset_to_start();
+
+        info!("{}: Updated to view {}", state, state.view);
 
         // Initialize a new block if necessary
         if state.is_primary() && state.working_block.is_none() {
@@ -434,8 +437,6 @@ impl PbftNode {
                 ))
             })?;
         }
-
-        state.reset_to_start();
 
         Ok(())
     }
