@@ -1054,12 +1054,12 @@ impl PbftNode {
 
     /// Retry messages from the `PrePrepare` backlog
     pub fn retry_backlog(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
-        let mut peer_res = Ok(());
         if let Some(msg) = self.msg_log.pop_backlog() {
             debug!("{}: Popped PrePrepare ({:?}) from backlog", state, msg);
-            peer_res = self.on_peer_message(msg, state);
+            self.on_peer_message(msg, state)
+        } else {
+            Ok(())
         }
-        peer_res
     }
 
     // ---------- Methods for communication between nodes ----------
