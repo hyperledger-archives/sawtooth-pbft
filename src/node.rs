@@ -356,7 +356,7 @@ impl PbftNode {
                 state.id.clone(),
             ));
 
-            new_view.set_view_changes(Self::signed_votes_from_messages(messages));
+            new_view.set_view_changes(Self::signed_votes_from_messages(messages.as_slice()));
 
             let msg_bytes = new_view
                 .write_to_bytes()
@@ -598,7 +598,6 @@ impl PbftNode {
     /// A block was sucessfully committed; update state to be ready for the next block, make any
     /// necessary view and membership changes, garbage collect the logs, update the commit & idle
     /// timers, and start a new block if this node is the primary.
-    #[allow(clippy::needless_pass_by_value)]
     pub fn on_block_commit(
         &mut self,
         block_id: BlockId,
@@ -649,7 +648,7 @@ impl PbftNode {
                 state, block_id
             );
             self.service
-                .initialize_block(Some(block_id.clone()))
+                .initialize_block(Some(block_id))
                 .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
         }
 
@@ -688,8 +687,7 @@ impl PbftNode {
     // ---------- Methods for building & verifying proofs and signed messages from other nodes ----------
 
     /// Generate a `protobuf::RepeatedField` of signed votes from a list of parsed messages
-    #[allow(clippy::needless_pass_by_value)]
-    fn signed_votes_from_messages(msgs: Vec<&ParsedMessage>) -> RepeatedField<PbftSignedVote> {
+    fn signed_votes_from_messages(msgs: &[&ParsedMessage]) -> RepeatedField<PbftSignedVote> {
         RepeatedField::from(
             msgs.iter()
                 .map(|m| {
@@ -745,7 +743,7 @@ impl PbftNode {
 
         seal.set_summary(summary);
         seal.set_previous_id(BlockId::from(messages[0].get_block().get_block_id()));
-        seal.set_previous_commit_votes(Self::signed_votes_from_messages(messages));
+        seal.set_previous_commit_votes(Self::signed_votes_from_messages(messages.as_slice()));
 
         seal.write_to_bytes().map_err(PbftError::SerializationError)
     }
@@ -1697,7 +1695,7 @@ mod tests {
             0,
             vec![1],
         ));
-        new_view.set_view_changes(PbftNode::signed_votes_from_messages(msgs));
+        new_view.set_view_changes(PbftNode::signed_votes_from_messages(msgs.as_slice()));
 
         node1
             .on_peer_message(ParsedMessage::from_new_view_message(new_view), &mut state1)
