@@ -40,9 +40,6 @@ pub enum PbftError {
     /// Internal PBFT error (description)
     InternalError(String),
 
-    /// Timed out waiting for a message
-    Timeout,
-
     /// There is no working block; no operations can be performed
     NoWorkingBlock,
 
@@ -58,7 +55,6 @@ impl Error for PbftError {
             MismatchedBlocks(_) => "MismatchedBlocks",
             ViewMismatch(_, _) => "ViewMismatch",
             InternalError(_) => "InternalError",
-            Timeout => "Timeout",
             NoWorkingBlock => "NoWorkingBlock",
             NotFromPrimary => "NotFromPrimary",
         }
@@ -76,7 +72,6 @@ impl fmt::Display for PbftError {
                 "Mismatched blocks: {:?}",
                 blocks.iter().map(|block| hex::encode(block.get_block_id()))
             ),
-            PbftError::Timeout => write!(f, "Timed out"),
             PbftError::InternalError(description) => write!(f, "{}", description),
             PbftError::NoWorkingBlock => write!(f, "There is no working block"),
             PbftError::NotFromPrimary => write!(

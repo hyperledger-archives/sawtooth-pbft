@@ -1342,11 +1342,8 @@ mod tests {
         ParsedMessage::from_pbft_message(pbft_msg)
     }
 
-    fn handle_pbft_err(e: PbftError) {
-        match e {
-            PbftError::Timeout => (),
-            _ => panic!("{}", e),
-        }
+    fn panic_with_err(e: PbftError) {
+        panic!("{}", e);
     }
 
     /// Make sure that receiving a `BlockNew` update works as expected for block #1
@@ -1366,7 +1363,7 @@ mod tests {
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         node1
             .on_block_new(mock_block(1), &mut state1)
-            .unwrap_or_else(handle_pbft_err);
+            .unwrap_or_else(panic_with_err);
         assert_eq!(state1.phase, PbftPhase::PrePreparing);
         assert_eq!(state1.working_block, Some(PbftBlock::from(mock_block(1))));
     }
@@ -1500,13 +1497,13 @@ mod tests {
         node0
             .msg_log
             .add_message(block_new, &state0)
-            .unwrap_or_else(handle_pbft_err);
+            .unwrap_or_else(panic_with_err);
 
         // Add PrePrepare to log
         let valid_msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, mock_block(1), vec![0]);
         node0
             .handle_pre_prepare(valid_msg.clone(), &mut state0)
-            .unwrap_or_else(handle_pbft_err);
+            .unwrap_or_else(panic_with_err);
 
         // Verify it worked
         assert!(node0.msg_log.log_has_required_msgs(
@@ -1544,13 +1541,13 @@ mod tests {
         let block = mock_block(1);
         node1
             .on_block_new(block.clone(), &mut state1)
-            .unwrap_or_else(handle_pbft_err);
+            .unwrap_or_else(panic_with_err);
 
         // Receive a PrePrepare
         let msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, block.clone(), vec![0]);
         node1
             .on_peer_message(msg, &mut state1)
-            .unwrap_or_else(handle_pbft_err);
+            .unwrap_or_else(panic_with_err);
 
         assert_eq!(state1.phase, PbftPhase::Preparing);
         assert_eq!(state1.seq_num, 1);
@@ -1566,7 +1563,7 @@ mod tests {
             let msg = mock_msg(PbftMessageType::Prepare, 0, 1, block.clone(), vec![peer]);
             node1
                 .on_peer_message(msg, &mut state1)
-                .unwrap_or_else(handle_pbft_err);
+                .unwrap_or_else(panic_with_err);
         }
 
         // Receive 3 `Commit` messages
@@ -1575,7 +1572,7 @@ mod tests {
             let msg = mock_msg(PbftMessageType::Commit, 0, 1, block.clone(), vec![peer]);
             node1
                 .on_peer_message(msg, &mut state1)
-                .unwrap_or_else(handle_pbft_err);
+                .unwrap_or_else(panic_with_err);
         }
         assert_eq!(state1.phase, PbftPhase::Finished);
 
@@ -1621,7 +1618,7 @@ mod tests {
 
             node1
                 .on_peer_message(mock_view_change(1, 0, vec![peer], peer == 1), &mut state1)
-                .unwrap_or_else(handle_pbft_err);
+                .unwrap_or_else(panic_with_err);
         }
 
         // Receive `NewView` message
@@ -1643,7 +1640,7 @@ mod tests {
 
         node1
             .on_peer_message(ParsedMessage::from_new_view_message(new_view), &mut state1)
-            .unwrap_or_else(handle_pbft_err);
+            .unwrap_or_else(panic_with_err);
 
         assert!(state1.is_primary());
         assert_eq!(state1.view, 1);
@@ -1660,7 +1657,7 @@ mod tests {
         let new_view = state1.view + 1;
         node1
             .start_view_change(&mut state1, new_view)
-            .unwrap_or_else(handle_pbft_err);
+            .unwrap_or_else(panic_with_err);
 
         assert_eq!(state1.mode, PbftMode::ViewChanging(1));
     }

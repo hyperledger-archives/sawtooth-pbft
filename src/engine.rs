@@ -82,7 +82,7 @@ impl Engine for PbftEngine {
                         break;
                     }
                 }
-                Err(err) => handle_pbft_result(Err(err)),
+                Err(err) => log_any_error(Err(err)),
             }
 
             working_ticker.tick(|| {
@@ -94,7 +94,7 @@ impl Engine for PbftEngine {
                 // ViewChange if necessary
                 if node.check_faulty_primary_timeout_expired(state) {
                     warn!("Faulty primary timeout expired; proposing view change");
-                    handle_pbft_result(node.start_view_change(state, state.view + 1));
+                    log_any_error(node.start_view_change(state, state.view + 1));
                 }
 
                 // Check the view change timeout if the node is view changing so we can start a new
@@ -105,12 +105,12 @@ impl Engine for PbftEngine {
                             "View change timeout expired; proposing view change for view {}",
                             v + 1
                         );
-                        handle_pbft_result(node.start_view_change(state, v + 1));
+                        log_any_error(node.start_view_change(state, v + 1));
                     }
                 }
             });
 
-            handle_pbft_result(node.retry_backlog(state));
+            log_any_error(node.retry_backlog(state));
         }
 
         Ok(())
@@ -153,7 +153,7 @@ fn handle_update(
         Ok(Update::PeerConnected(_)) | Ok(Update::PeerDisconnected(_)) => {
             debug!("Received PeerConnected/PeerDisconnected message");
         }
-        Err(RecvTimeoutError::Timeout) => return Err(PbftError::Timeout),
+        Err(RecvTimeoutError::Timeout) => {}
         Err(RecvTimeoutError::Disconnected) => {
             error!("Disconnected from validator");
             return Ok(false);
@@ -163,11 +163,8 @@ fn handle_update(
     Ok(true)
 }
 
-fn handle_pbft_result(res: Result<(), PbftError>) {
+fn log_any_error(res: Result<(), PbftError>) {
     if let Err(e) = res {
-        match e {
-            PbftError::Timeout => (),
-            _ => error!("{}", e),
-        }
+        error!("{}", e)
     }
 }
