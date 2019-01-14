@@ -329,10 +329,10 @@ impl PbftNode {
 
         self.msg_log.add_message(msg.clone(), state)?;
 
-        // Even if we haven't detected a faulty primary yet, start view changing if we've
-        // received f + 1 ViewChange messages for this proposed view (but if we're already
-        // view changing, only do this for a later view); this will prevent starting the
-        // view change too late
+        // Even if the node hasn't detected a faulty primary yet, start view changing if there are
+        // f + 1 ViewChange messages in the log for this proposed view (but if already view
+        // changing, only do this for a later view); this will prevent starting the view change too
+        // late
         if match state.mode {
             PbftMode::ViewChanging(v) => msg_view > v,
             PbftMode::Normal => true,
@@ -349,8 +349,8 @@ impl PbftNode {
             self.start_view_change(state, msg_view)?;
         }
 
-        // If we're the new primary and we have the required 2f ViewChange messages (not
-        // including our own), broadcast the NewView message
+        // If this node is the new primary and the required 2f ViewChange messages (not including
+        // the primary's own) are present in the log, broadcast the NewView message
         let messages = self
             .msg_log
             .get_messages_of_type_view(PbftMessageType::ViewChange, msg_view)
@@ -490,9 +490,9 @@ impl PbftNode {
         self.msg_log
             .add_message(ParsedMessage::from_pbft_message(msg.clone()), state)?;
 
-        // We can use this block's seal to commit the next block (i.e. catch-up) if it's the block
-        // after the one we're waiting for and we haven't already told the validator to commit the
-        // block we're waiting for
+        // This block's seal can be used to commit the next block (i.e. catch-up) if it's the block
+        // after the one this node is waiting for and the node hasn't already told the validator to
+        // commit the block it's waiting for
         if block.block_num == state.seq_num + 1 && state.phase != PbftPhase::Finished {
             self.catchup(state, &block)?;
         } else if block.block_num == state.seq_num {
@@ -555,7 +555,7 @@ impl PbftNode {
                     Ok(msgs)
                 })?;
 
-        // Update our view if necessary
+        // Update view if necessary
         let view = messages[0].info().get_view();
         if view > state.view {
             info!("Updating view from {} to {}", state.view, view);
@@ -605,6 +605,7 @@ impl PbftNode {
             None => false,
         };
 
+        // Ignore this BlockCommit if the node isn't waiting for it
         if state.phase != PbftPhase::Finished || !is_working_block {
             return Ok(());
         }
@@ -613,7 +614,7 @@ impl PbftNode {
         state.switch_phase(PbftPhase::PrePreparing)?;
         state.seq_num += 1;
 
-        // If we already have a BlockNew for the next block, we can make it the working block;
+        // If the node already has a BlockNew for the next block, make it the working block;
         // otherwise just set the working block to None
         state.working_block = self
             .msg_log
@@ -621,8 +622,8 @@ impl PbftNode {
             .first()
             .map(|msg| msg.get_block().clone());
 
-        // Increment the view if we need to force a view change for fairness or if membership
-        // has changed
+        // Increment the view if a view change must be forced for fairness or if membership has
+        // changed
         if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
             state.view += 1;
         }
@@ -634,19 +635,26 @@ impl PbftNode {
         state.faulty_primary_timeout.start();
 
         if state.is_primary() && state.working_block.is_none() {
-            info!(
-                "{}: Initializing block with previous ID {:?}",
-                state, block_id
-            );
+            info!("{}: Initializing block on top of {:?}", state, block_id);
             self.service
                 .initialize_block(Some(block_id))
-                .unwrap_or_else(|err| error!("Couldn't initialize block: {}", err));
+                .map_err(|err| {
+                    PbftError::InternalError(format!(
+                        "Couldn't initialize block due to error: {:?}",
+                        err
+                    ))
+                })?;
         }
 
         Ok(())
     }
 
     /// Check the on-chain list of peers; if it has changed, update peers list and return true.
+    ///
+    /// # Panics
+    /// + If the node is unable to query the validator for on-chain settings
+    /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
+    /// + If the network this node is on does not have enough nodes to be Byzantine fault tolernant
     fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) -> bool {
         // Get list of peers from settings
         let settings = self
@@ -825,8 +833,8 @@ impl PbftNode {
             return Err(PbftError::NotFromPrimary);
         }
 
-        // Verify each individual vote, and extract the signer ID from each ViewChange that
-        // it contains so we can verify the IDs themselves
+        // Verify each individual vote and extract the signer ID from each ViewChange so the IDs
+        // can be verified
         let voter_ids =
             new_view
                 .get_view_changes()
@@ -847,9 +855,9 @@ impl PbftNode {
                     Ok(ids)
                 })?;
 
-        // All of the votes must come from known peers, and the new primary can't
-        // explicitly vote itself, since broacasting the NewView is an implicit vote. Check
-        // that the votes we've received are a subset of "peers - primary".
+        // All of the votes must come from known peers, and the primary can't explicitly vote
+        // itself, since broacasting the NewView is an implicit vote. Check that the votes received
+        // are from a subset of "peers - primary".
         let peer_ids: HashSet<_> = state
             .peer_ids
             .iter()
@@ -869,7 +877,7 @@ impl PbftNode {
             )));
         }
 
-        // Check that we've received 2f votes, since the primary vote is implicit
+        // Check that the NewView contains 2f votes (primary vote is implicit, so total of 2f + 1)
         if (voter_ids.len() as u64) < 2 * state.f {
             return Err(PbftError::InternalError(format!(
                 "NewView needs {} votes, but only {} found",
@@ -882,13 +890,17 @@ impl PbftNode {
     }
 
     /// Verify the consensus seal from the current block that proves the previous block
+    ///
+    /// # Panics
+    /// + If the node is unable to query the validator for on-chain settings
+    /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
     fn verify_consensus_seal(
         &mut self,
         block: &Block,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        // We don't publish a consensus seal until block 1, so we don't verify it
-        // until block 2
+        // Since block 0 is genesis, block 1 is the first that can be verified with a seal; this
+        // means that the node won't see a seal until block 2
         if block.block_num < 2 {
             return Ok(());
         }
@@ -919,8 +931,8 @@ impl PbftNode {
             )));
         }
 
-        // Verify each individual vote, and extract the signer ID from each PbftMessage that
-        // it contains, so that we can do some sanity checks on those IDs.
+        // Verify each individual vote and extract the signer ID from each PbftMessage so the IDs
+        // can be verified
         let voter_ids =
             seal.get_previous_commit_votes()
                 .iter()
@@ -940,10 +952,10 @@ impl PbftNode {
                     Ok(ids)
                 })?;
 
-        // All of the votes must come from known peers, and the primary can't explicitly
-        // vote itself, since publishing a block is an implicit vote. Check that the votes
-        // we've received are a subset of "peers - primary". We need to use the list of
-        // peers from the block we're verifying the seal for, since it may have changed.
+        // All of the votes must come from known peers, and the primary can't explicitly vote
+        // itself, since publishing a block is an implicit vote. Check that the votes received are
+        // from a subset of "peers - primary". Use the list of peers from the block this seal
+        // verifies, since it may have changed.
         let settings = self
             .service
             .get_settings(
@@ -971,7 +983,7 @@ impl PbftNode {
             )));
         }
 
-        // Check that we've received 2f votes, since the primary vote is implicit
+        // Check that the seal contains 2f votes (primary vote is implicit, so total of 2f + 1)
         if (voter_ids.len() as u64) < 2 * state.f {
             return Err(PbftError::InternalError(format!(
                 "Consensus seal needs {} votes, but only {} found",
@@ -1117,6 +1129,9 @@ impl PbftNode {
     ///
     /// Update state to reflect that the node is now in the process of this view change, start the
     /// view change timeout, and broadcast a view change message
+    ///
+    /// # Panics
+    /// + If the view change timeout overflows
     pub fn start_view_change(&mut self, state: &mut PbftState, view: u64) -> Result<(), PbftError> {
         // Do not send messages again if we are already in the midst of this or a later view change
         if match state.mode {
