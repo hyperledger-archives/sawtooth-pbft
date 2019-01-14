@@ -34,9 +34,6 @@ pub enum PbftError {
     /// The blocks don't match but should
     MismatchedBlocks(Vec<PbftBlock>),
 
-    /// The message is in a different view than this node is
-    ViewMismatch(u64, u64),
-
     /// Internal PBFT error (description)
     InternalError(String),
 
@@ -53,7 +50,6 @@ impl Error for PbftError {
         match self {
             SerializationError(_) => "SerializationError",
             MismatchedBlocks(_) => "MismatchedBlocks",
-            ViewMismatch(_, _) => "ViewMismatch",
             InternalError(_) => "InternalError",
             NoWorkingBlock => "NoWorkingBlock",
             NotFromPrimary => "NotFromPrimary",
@@ -66,7 +62,6 @@ impl fmt::Display for PbftError {
         write!(f, "{}: ", self.description())?;
         match self {
             PbftError::SerializationError(pb_err) => pb_err.fmt(f),
-            PbftError::ViewMismatch(exp, got) => write!(f, "View mismatch: {} != {}", exp, got),
             PbftError::MismatchedBlocks(blocks) => write!(
                 f,
                 "Mismatched blocks: {:?}",

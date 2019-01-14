@@ -81,16 +81,16 @@ impl PbftLog {
         // Except for ViewChanges, the message must be for the current view to be accepted
         let msg_type = PbftMessageType::from(msg.info().get_msg_type());
         if msg_type != PbftMessageType::ViewChange && msg.info().get_view() != state.view {
-            error!(
-                "Got message with mismatched view number; {} != {}",
-                msg.info().get_view(),
+            return Err(PbftError::InternalError(format!(
+                "Node is on view {}, but a message for view {} was received",
                 state.view,
-            );
-            return Err(PbftError::ViewMismatch(msg.info().get_view(), state.view));
+                msg.info().get_view(),
+            )));
         }
 
+        trace!("{}: Adding message to log: {:?}", state, msg);
+
         self.messages.insert(msg);
-        trace!("{}", self);
 
         Ok(())
     }
