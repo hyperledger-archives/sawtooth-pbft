@@ -23,22 +23,14 @@ use std::fmt;
 use hex;
 use protobuf::error::ProtobufError;
 
-use crate::protos::pbft_message::PbftBlock;
-
 /// Errors that might occur in a PbftNode
 #[derive(Debug)]
 pub enum PbftError {
     /// An error occured while serializing or deserializing a Protobuf message
     SerializationError(ProtobufError),
 
-    /// The blocks don't match but should
-    MismatchedBlocks(Vec<PbftBlock>),
-
     /// Internal PBFT error (description)
     InternalError(String),
-
-    /// There is no working block; no operations can be performed
-    NoWorkingBlock,
 
     /// The message should only come from the primary, but was sent by a secondary node
     NotFromPrimary,
@@ -49,9 +41,7 @@ impl Error for PbftError {
         use self::PbftError::*;
         match self {
             SerializationError(_) => "SerializationError",
-            MismatchedBlocks(_) => "MismatchedBlocks",
             InternalError(_) => "InternalError",
-            NoWorkingBlock => "NoWorkingBlock",
             NotFromPrimary => "NotFromPrimary",
         }
     }
@@ -62,13 +52,7 @@ impl fmt::Display for PbftError {
         write!(f, "{}: ", self.description())?;
         match self {
             PbftError::SerializationError(pb_err) => pb_err.fmt(f),
-            PbftError::MismatchedBlocks(blocks) => write!(
-                f,
-                "Mismatched blocks: {:?}",
-                blocks.iter().map(|block| hex::encode(block.get_block_id()))
-            ),
             PbftError::InternalError(description) => write!(f, "{}", description),
-            PbftError::NoWorkingBlock => write!(f, "There is no working block"),
             PbftError::NotFromPrimary => write!(
                 f,
                 "Message should be from primary, but was sent by secondary"

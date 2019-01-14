@@ -500,22 +500,18 @@ impl PbftNode {
                 let block_id_matches = block.previous_id == working_block.get_block_id();
 
                 if !block_num_matches || !block_id_matches {
-                    error!(
-                        "Block didn't match for catchup: {:?} {:?}",
+                    return Err(PbftError::InternalError(format!(
+                        "Cancelling catch-up because block ({:?}) does not match working block \
+                         ({:?})",
                         block, working_block
-                    );
-                    return Err(PbftError::MismatchedBlocks(vec![
-                        PbftBlock::from(block.clone()),
-                        working_block.clone(),
-                    ]));
+                    )));
                 }
             }
             None => {
-                error!(
-                    "Trying to catch up, but node does not have block #{} yet",
+                return Err(PbftError::InternalError(format!(
+                    "Cancelling catch-up because node does not have block {}",
                     state.seq_num
-                );
-                return Err(PbftError::NoWorkingBlock);
+                )));
             }
         }
 
