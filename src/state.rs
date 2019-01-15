@@ -32,7 +32,6 @@ use crate::timing::Timeout;
 #[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize)]
 pub enum PbftPhase {
     PrePreparing,
-    Checking,
     Preparing,
     Committing,
     Finished,
@@ -56,7 +55,6 @@ impl fmt::Display for PbftState {
 
         let phase = match self.phase {
             PbftPhase::PrePreparing => "PP",
-            PbftPhase::Checking => "Ch",
             PbftPhase::Preparing => "Pr",
             PbftPhase::Committing => "Co",
             PbftPhase::Finished => "Fi",
@@ -184,8 +182,7 @@ impl PbftState {
     /// phase, return an error
     pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Result<(), PbftError> {
         let next = match self.phase {
-            PbftPhase::PrePreparing => PbftPhase::Checking,
-            PbftPhase::Checking => PbftPhase::Preparing,
+            PbftPhase::PrePreparing => PbftPhase::Preparing,
             PbftPhase::Preparing => PbftPhase::Committing,
             PbftPhase::Committing => PbftPhase::Finished,
             PbftPhase::Finished => PbftPhase::PrePreparing,
@@ -254,7 +251,7 @@ mod tests {
     }
 
     /// Make sure that a normal PBFT cycle works properly
-    /// `PrePreparing` => `Checking` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
+    /// `PrePreparing` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
     /// and that invalid phase changes are detected
     #[test]
     fn valid_phase_changes() {
@@ -262,7 +259,6 @@ mod tests {
         let mut state = PbftState::new(vec![0], 0, &config);
 
         // Valid changes
-        assert!(state.switch_phase(PbftPhase::Checking).is_ok());
         assert!(state.switch_phase(PbftPhase::Preparing).is_ok());
         assert!(state.switch_phase(PbftPhase::Committing).is_ok());
         assert!(state.switch_phase(PbftPhase::Finished).is_ok());

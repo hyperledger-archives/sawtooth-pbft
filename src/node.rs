@@ -191,17 +191,20 @@ impl PbftNode {
         self.msg_log.add_message(msg.clone(), state)?;
 
         // If this message is for the current sequence number and the node is in the PrePreparing
-        // phase, check the block
+        // phase, switch to Preparing
         if msg.info().get_seq_num() == state.seq_num && state.phase == PbftPhase::PrePreparing {
-            state.switch_phase(PbftPhase::Checking)?;
+            state.switch_phase(PbftPhase::Preparing)?;
 
             // We can also stop the view change timer, since we received a new block and a
             // valid PrePrepare in time
             state.faulty_primary_timeout.stop();
 
-            self.service
-                .check_blocks(vec![msg.get_block().clone().block_id])
-                .map_err(|_| PbftError::InternalError(String::from("Failed to check blocks")))?
+            self._broadcast_pbft_message(
+                state.seq_num,
+                PbftMessageType::Prepare,
+                msg.get_block().clone(),
+                state,
+            )?;
         }
 
         Ok(())
@@ -551,46 +554,6 @@ impl PbftNode {
 
         // Call on_block_commit right away so we're ready to catch up again if necessary
         self.on_block_commit(BlockId::from(messages[0].get_block().get_block_id()), state)
-    }
-
-    /// Handle a `BlockValid` update from the Validator
-    ///
-    /// This message arrives after `check_blocks` is called, signifying that the validator has
-    /// successfully checked a block with this `BlockId`. Once a `BlockValid` is received for the
-    /// working block, transition to the Preparing phase.
-    #[allow(clippy::ptr_arg)]
-    pub fn on_block_valid(
-        &mut self,
-        block_id: &BlockId,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        debug!("{}: <<<<<< BlockValid: {:?}", state, block_id);
-        let block = match state.working_block {
-            Some(ref block) => {
-                if &BlockId::from(block.get_block_id()) == block_id {
-                    Ok(block.clone())
-                } else {
-                    warn!("Got BlockValid that doesn't match the working block");
-                    Err(PbftError::NotReadyForMessage)
-                }
-            }
-            None => {
-                warn!("Got BlockValid with no working block");
-                Err(PbftError::NoWorkingBlock)
-            }
-        }?;
-
-        if state.phase == PbftPhase::Checking {
-            state.switch_phase(PbftPhase::Preparing)?;
-            self._broadcast_pbft_message(
-                state.seq_num,
-                PbftMessageType::Prepare,
-                block.clone(),
-                state,
-            )?;
-        }
-
-        Ok(())
     }
 
     /// Handle a `BlockCommit` update from the Validator
@@ -1555,19 +1518,6 @@ mod tests {
             true,
             1
         ));
-        assert_eq!(state0.phase, PbftPhase::Checking);
-    }
-
-    /// Make sure that receiving a `BlockValid` update works as expected
-    #[test]
-    fn block_valid() {
-        let mut node = mock_node(vec![0]);
-        let cfg = mock_config(4);
-        let mut state0 = PbftState::new(vec![0], 0, &cfg);
-        state0.phase = PbftPhase::Checking;
-        state0.working_block = Some(PbftBlock::from(mock_block(1)));
-        node.on_block_valid(&mock_block_id(1), &mut state0)
-            .unwrap_or_else(handle_pbft_err);
         assert_eq!(state0.phase, PbftPhase::Preparing);
     }
 
@@ -1605,16 +1555,13 @@ mod tests {
             .on_peer_message(msg, &mut state1)
             .unwrap_or_else(handle_pbft_err);
 
-        assert_eq!(state1.phase, PbftPhase::Checking);
+        assert_eq!(state1.phase, PbftPhase::Preparing);
         assert_eq!(state1.seq_num, 1);
         if let Some(ref blk) = state1.working_block {
             assert_eq!(BlockId::from(blk.clone().block_id), mock_block_id(1));
         } else {
             panic!("Wrong WorkingBlockOption");
         }
-
-        // Spoof the `check_blocks()` call
-        assert!(node1.on_block_valid(&mock_block_id(1), &mut state1).is_ok());
 
         // Receive 3 `Prepare` messages
         for peer in 0..3 {

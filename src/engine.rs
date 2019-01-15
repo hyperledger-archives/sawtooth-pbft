@@ -132,10 +132,8 @@ fn handle_update(
 ) -> Result<bool, PbftError> {
     match incoming_message {
         Ok(Update::BlockNew(block)) => node.on_block_new(block, state)?,
-        Ok(Update::BlockValid(block_id)) => node.on_block_valid(&block_id, state)?,
-        Ok(Update::BlockInvalid(_)) => {
-            warn!("{}: BlockInvalid received, starting view change", state);
-            node.start_view_change(state, state.view + 1)?
+        Ok(Update::BlockValid(_)) | Ok(Update::BlockInvalid(_)) => {
+            info!("Received BlockValid or BlockInvalid message; ignoring");
         }
         Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state)?,
         Ok(Update::PeerMessage(message, sender_id)) => {
