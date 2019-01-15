@@ -1151,6 +1151,9 @@ impl PbftNode {
 
         state.mode = PbftMode::ViewChanging(view);
 
+        // Stop the faulty primary timeout because it is not needed until after the view change
+        state.faulty_primary_timeout.stop();
+
         // Update the view change timeout and start it
         state.view_change_timeout = Timeout::new(
             state
