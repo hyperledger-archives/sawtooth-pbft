@@ -444,8 +444,8 @@ impl PbftNode {
 
         info!("{}: Updated to view {}", state, state.view);
 
-        // Initialize a new block if necessary
-        if state.is_primary() && state.working_block.is_none() {
+        // Initialize a new block if this node is the new primary
+        if state.is_primary() {
             self.service.initialize_block(None).map_err(|err| {
                 PbftError::ServiceError("Couldn't initialize block after view change".into(), err)
             })?;
