@@ -451,8 +451,8 @@ impl PbftNode {
     ///
     /// The validator has received a new block; verify the block's consensus seal and add the
     /// BlockNew to the message log. If this is the block we are waiting for: set it as the working
-    /// block and broadcast a PrePrepare if this node is the primary. If this is the block after
-    /// the one this node is working on, use it to catch up.
+    /// block and broadcast a PrePrepare if this node is the primary. If this is a future block,
+    /// use it to catch up.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         info!("{}: Got BlockNew: {}", state, block.block_num);
         debug!("Block details: {:?}", block);
@@ -510,10 +510,10 @@ impl PbftNode {
         self.msg_log
             .add_message(ParsedMessage::from_pbft_message(msg.clone()), state)?;
 
-        // This block's seal can be used to commit the next block (i.e. catch-up) if it's the block
-        // after the one this node is waiting for and the node hasn't already told the validator to
-        // commit the block it's waiting for
-        if block.block_num == state.seq_num + 1
+        // This block's seal can be used to commit the block previous to it (i.e. catch-up) if it's
+        // a future block and the node hasn't already told the validator to commit the previous
+        // block
+        if block.block_num > state.seq_num
             && state.phase != PbftPhase::Finishing(block.previous_id.clone())
         {
             self.catchup(state, &block)?;
@@ -540,27 +540,6 @@ impl PbftNode {
             "{}: Attempting to commit block {} using catch-up",
             state, state.seq_num
         );
-
-        match state.working_block {
-            Some(ref working_block) => {
-                let block_num_matches = block.block_num == working_block.get_block_num() + 1;
-                let block_id_matches = block.previous_id == working_block.get_block_id();
-
-                if !block_num_matches || !block_id_matches {
-                    return Err(PbftError::InternalError(format!(
-                        "Cancelling catch-up because block ({:?}) does not match working block \
-                         ({:?})",
-                        block, working_block
-                    )));
-                }
-            }
-            None => {
-                return Err(PbftError::InternalError(format!(
-                    "Cancelling catch-up because node does not have block {}",
-                    state.seq_num
-                )));
-            }
-        }
 
         // Parse messages from the seal
         let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
