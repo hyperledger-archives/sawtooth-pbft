@@ -21,7 +21,7 @@ use std::fmt;
 use std::time::Duration;
 
 use hex;
-use sawtooth_sdk::consensus::engine::PeerId;
+use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
@@ -34,7 +34,8 @@ pub enum PbftPhase {
     PrePreparing,
     Preparing,
     Committing,
-    Finished,
+    // Node is waiting for the BlockCommit with this BlockId
+    Finishing(BlockId),
 }
 
 /// Modes that the PBFT algorithm can possibly be in
@@ -54,10 +55,10 @@ impl fmt::Display for PbftState {
         };
 
         let phase = match self.phase {
-            PbftPhase::PrePreparing => "PP",
-            PbftPhase::Preparing => "Pr",
-            PbftPhase::Committing => "Co",
-            PbftPhase::Finished => "Fi",
+            PbftPhase::PrePreparing => "PP".into(),
+            PbftPhase::Preparing => "Pr".into(),
+            PbftPhase::Committing => "Co".into(),
+            PbftPhase::Finishing(ref id) => format!("Fi {:?}", &hex::encode(id)[..6]),
         };
 
         let wb = match self.working_block {
@@ -181,13 +182,20 @@ impl PbftState {
     /// Switch to the desired phase if it is the next phase of the algorithm; if it is not the next
     /// phase, return an error
     pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Result<(), PbftError> {
-        let next = match self.phase {
-            PbftPhase::PrePreparing => PbftPhase::Preparing,
-            PbftPhase::Preparing => PbftPhase::Committing,
-            PbftPhase::Committing => PbftPhase::Finished,
-            PbftPhase::Finished => PbftPhase::PrePreparing,
+        let is_next_phase = {
+            if let PbftPhase::Finishing(_) = desired_phase {
+                self.phase == PbftPhase::Committing
+            } else {
+                desired_phase
+                    == match self.phase {
+                        PbftPhase::PrePreparing => PbftPhase::Preparing,
+                        PbftPhase::Preparing => PbftPhase::Committing,
+                        PbftPhase::Finishing(_) => PbftPhase::PrePreparing,
+                        _ => panic!("All conditions should be accounted for already"),
+                    }
+            }
         };
-        if desired_phase == next {
+        if is_next_phase {
             debug!("{}: Changing to {:?}", self, desired_phase);
             self.phase = desired_phase;
             Ok(())
@@ -251,7 +259,7 @@ mod tests {
     }
 
     /// Make sure that a normal PBFT cycle works properly
-    /// `PrePreparing` => `Preparing` => `Committing` => `Finished` => `PrePreparing`
+    /// `PrePreparing` => `Preparing` => `Committing` => `Finishing` => `PrePreparing`
     /// and that invalid phase changes are detected
     #[test]
     fn valid_phase_changes() {
@@ -261,12 +269,16 @@ mod tests {
         // Valid changes
         assert!(state.switch_phase(PbftPhase::Preparing).is_ok());
         assert!(state.switch_phase(PbftPhase::Committing).is_ok());
-        assert!(state.switch_phase(PbftPhase::Finished).is_ok());
+        assert!(state
+            .switch_phase(PbftPhase::Finishing(BlockId::new()))
+            .is_ok());
         assert!(state.switch_phase(PbftPhase::PrePreparing).is_ok());
 
         // Invalid changes
         assert!(state.switch_phase(PbftPhase::Committing).is_err());
-        assert!(state.switch_phase(PbftPhase::Finished).is_err());
+        assert!(state
+            .switch_phase(PbftPhase::Finishing(BlockId::new()))
+            .is_err());
         assert!(state.switch_phase(PbftPhase::PrePreparing).is_err());
     }
 }
