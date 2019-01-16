@@ -147,7 +147,7 @@ fn handle_update(
             let signer_id = parsed_message.info().get_signer_id().to_vec();
 
             if signer_id != sender_id {
-                return Err(PbftError::InternalError(format!(
+                return Err(PbftError::InvalidMessage(format!(
                     "Mismatch between sender ID ({:?}) and signer ID ({:?}) of peer message: {:?}",
                     sender_id, signer_id, parsed_message
                 )));

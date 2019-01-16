@@ -37,6 +37,9 @@ pub enum PbftError {
     /// The node detected a faulty primary and started a view change
     FaultyPrimary(String),
 
+    /// An invalid message was received
+    InvalidMessage(String),
+
     /// Internal PBFT error (description)
     InternalError(String),
 
@@ -54,6 +57,7 @@ impl Error for PbftError {
             SerializationError(_, _) => "SerializationError",
             ServiceError(_, _) => "ServiceError",
             FaultyPrimary(_) => "FaultyPrimary",
+            InvalidMessage(_) => "InvalidMessage",
             InternalError(_) => "InternalError",
             NotFromPrimary => "NotFromPrimary",
         }
@@ -71,6 +75,7 @@ impl fmt::Display for PbftError {
                 "Node has detected a faulty primary and started a view change: {}",
                 description
             ),
+            PbftError::InvalidMessage(description) => write!(f, "{}", description),
             PbftError::InternalError(description) => write!(f, "{}", description),
             PbftError::NotFromPrimary => write!(
                 f,

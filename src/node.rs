@@ -780,7 +780,7 @@ impl PbftNode {
         // Verify the message type
         let msg_type = PbftMessageType::from(pbft_message.get_info().get_msg_type());
         if msg_type != expected_type {
-            return Err(PbftError::InternalError(format!(
+            return Err(PbftError::InvalidMessage(format!(
                 "Received a {:?} vote, but expected a {:?}",
                 msg_type, expected_type
             )));
@@ -846,7 +846,7 @@ impl PbftNode {
                 .try_fold(HashSet::new(), |mut ids, vote| {
                     Self::verify_vote(vote, PbftMessageType::ViewChange, |msg| {
                         if msg.get_info().get_view() != new_view.get_info().get_view() {
-                            return Err(PbftError::InternalError(format!(
+                            return Err(PbftError::InvalidMessage(format!(
                                 "ViewChange's view number ({}) doesn't match NewView's view \
                                  number ({})",
                                 msg.get_info().get_view(),
@@ -875,7 +875,7 @@ impl PbftNode {
         );
 
         if !voter_ids.is_subset(&peer_ids) {
-            return Err(PbftError::InternalError(format!(
+            return Err(PbftError::InvalidMessage(format!(
                 "NewView contains vote(s) from invalid IDs: {:?}",
                 voter_ids.difference(&peer_ids).collect::<Vec<_>>()
             )));
@@ -883,7 +883,7 @@ impl PbftNode {
 
         // Check that the NewView contains 2f votes (primary vote is implicit, so total of 2f + 1)
         if (voter_ids.len() as u64) < 2 * state.f {
-            return Err(PbftError::InternalError(format!(
+            return Err(PbftError::InvalidMessage(format!(
                 "NewView needs {} votes, but only {} found",
                 2 * state.f,
                 voter_ids.len()
@@ -910,7 +910,7 @@ impl PbftNode {
         }
 
         if block.payload.is_empty() {
-            return Err(PbftError::InternalError(
+            return Err(PbftError::InvalidMessage(
                 "Block published without a seal".into(),
             ));
         }
@@ -922,7 +922,7 @@ impl PbftNode {
         debug!("Parsed seal: {:?}", seal);
 
         if seal.previous_id != &block.previous_id[..] {
-            return Err(PbftError::InternalError(format!(
+            return Err(PbftError::InvalidMessage(format!(
                 "Seal's previous ID ({}) doesn't match block's previous ID ({})",
                 hex::encode(&seal.previous_id[..3]),
                 hex::encode(&block.previous_id[..3])
@@ -930,7 +930,7 @@ impl PbftNode {
         }
 
         if seal.summary != &block.summary[..] {
-            return Err(PbftError::InternalError(format!(
+            return Err(PbftError::InvalidMessage(format!(
                 "Seal's summary ({:?}) doesn't match block's summary ({:?})",
                 seal.summary, block.summary
             )));
@@ -944,7 +944,7 @@ impl PbftNode {
                 .try_fold(HashSet::new(), |mut ids, vote| {
                     Self::verify_vote(vote, PbftMessageType::Commit, |msg| {
                         if msg.get_block().block_id != seal.previous_id {
-                            return Err(PbftError::InternalError(format!(
+                            return Err(PbftError::InvalidMessage(format!(
                                 "Commit vote's block ID ({:?}) doesn't match seal's previous ID \
                                  ({:?})",
                                 msg.get_block().block_id,
@@ -982,7 +982,7 @@ impl PbftNode {
         );
 
         if !voter_ids.is_subset(&peer_ids) {
-            return Err(PbftError::InternalError(format!(
+            return Err(PbftError::InvalidMessage(format!(
                 "Consensus seal contains vote(s) from invalid ID(s): {:?}",
                 voter_ids.difference(&peer_ids).collect::<Vec<_>>()
             )));
@@ -990,7 +990,7 @@ impl PbftNode {
 
         // Check that the seal contains 2f votes (primary vote is implicit, so total of 2f + 1)
         if (voter_ids.len() as u64) < 2 * state.f {
-            return Err(PbftError::InternalError(format!(
+            return Err(PbftError::InvalidMessage(format!(
                 "Consensus seal needs {} votes, but only {} found",
                 2 * state.f,
                 voter_ids.len()

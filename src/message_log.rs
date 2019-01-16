@@ -81,7 +81,7 @@ impl PbftLog {
         // Except for ViewChanges, the message must be for the current view to be accepted
         let msg_type = PbftMessageType::from(msg.info().get_msg_type());
         if msg_type != PbftMessageType::ViewChange && msg.info().get_view() != state.view {
-            return Err(PbftError::InternalError(format!(
+            return Err(PbftError::InvalidMessage(format!(
                 "Node is on view {}, but a message for view {} was received",
                 state.view,
                 msg.info().get_view(),
