@@ -179,7 +179,7 @@ impl PbftNode {
                     });
             });
             self.start_view_change(state, state.view + 1)?;
-            return Err(PbftError::InternalError(format!(
+            return Err(PbftError::FaultyPrimary(format!(
                 "When checking PrePrepare with block {:?}, found PrePrepare(s) with same view and \
                  seq num but mismatched block(s): {:?}",
                 msg.get_block(),
@@ -410,7 +410,7 @@ impl PbftNode {
             Err(err) => {
                 if let PbftMode::ViewChanging(v) = state.mode {
                     self.start_view_change(state, v + 1)?;
-                    return Err(PbftError::InternalError(format!(
+                    return Err(PbftError::FaultyPrimary(format!(
                         "NewView failed verification; starting new view change to view {} - \
                          Error was: {}",
                         v + 1,
@@ -467,9 +467,8 @@ impl PbftNode {
                     .fail_block(block.block_id)
                     .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
                 self.start_view_change(state, state.view + 1)?;
-                return Err(PbftError::InternalError(format!(
-                    "Consensus seal failed verification; failed block and started view change - \
-                     Error was: {}",
+                return Err(PbftError::FaultyPrimary(format!(
+                    "Consensus seal failed verification - Error was: {}",
                     err
                 )));
             }

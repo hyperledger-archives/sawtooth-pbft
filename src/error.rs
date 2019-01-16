@@ -34,6 +34,9 @@ pub enum PbftError {
     /// An error occurred while making a call to the consensus service (description, `ServError`)
     ServiceError(String, ServError),
 
+    /// The node detected a faulty primary and started a view change
+    FaultyPrimary(String),
+
     /// Internal PBFT error (description)
     InternalError(String),
 
@@ -50,6 +53,7 @@ impl Error for PbftError {
         match self {
             SerializationError(_, _) => "SerializationError",
             ServiceError(_, _) => "ServiceError",
+            FaultyPrimary(_) => "FaultyPrimary",
             InternalError(_) => "InternalError",
             NotFromPrimary => "NotFromPrimary",
         }
@@ -62,6 +66,11 @@ impl fmt::Display for PbftError {
         match self {
             PbftError::SerializationError(desc, pb_err) => write!(f, "{} due to: {}", desc, pb_err),
             PbftError::ServiceError(desc, serv_err) => write!(f, "{} due to: {}", desc, serv_err),
+            PbftError::FaultyPrimary(description) => write!(
+                f,
+                "Node has detected a faulty primary and started a view change: {}",
+                description
+            ),
             PbftError::InternalError(description) => write!(f, "{}", description),
             PbftError::NotFromPrimary => write!(
                 f,
