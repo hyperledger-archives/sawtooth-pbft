@@ -450,9 +450,8 @@ impl PbftNode {
     /// Handle a `BlockNew` update from the Validator
     ///
     /// The validator has received a new block; verify the block's consensus seal and add the
-    /// BlockNew to the message log. If this is the block we are waiting for: set it as the working
-    /// block and broadcast a PrePrepare if this node is the primary. If this is a future block,
-    /// use it to catch up.
+    /// BlockNew to the message log. If this is the block we are waiting for and this node is the
+    /// primary, broadcast a PrePrepare. If this is a future block, use it to catch up.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         info!("{}: Got BlockNew: {}", state, block.block_num);
         debug!("Block details: {:?}", block);
@@ -520,18 +519,11 @@ impl PbftNode {
         };
         if block.block_num > state.seq_num && !is_waiting {
             self.catchup(state, &pbft_block)?;
-        } else if block.block_num == state.seq_num {
-            // This is the block we're waiting for, so we update state
-            state.working_block = Some(msg.get_block().clone());
-
-            debug!("Working block set to {:?}", state.working_block);
-
-            // Send PrePrepare messages if we're the primary
-            if block.signer_id == state.id && state.is_primary() {
-                debug!("Broadcasting PrePrepares");
-                let s = state.seq_num;
-                self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block, state)?;
-            }
+        } else if block.block_num == state.seq_num && state.is_primary() {
+            // This is the next block and this node is the primary; broadcast PrePrepare messages
+            debug!("Broadcasting PrePrepares");
+            let s = state.seq_num;
+            self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block, state)?;
         }
 
         Ok(())
@@ -1455,7 +1447,6 @@ mod tests {
         node0.on_block_new(mock_block(1), &mut state0).unwrap();
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.seq_num, 1);
-        assert_eq!(state0.working_block, Some(PbftBlock::from(mock_block(1))));
 
         // Try the next block
         let mut node1 = mock_node(vec![1]);
@@ -1464,7 +1455,6 @@ mod tests {
             .on_block_new(mock_block(1), &mut state1)
             .unwrap_or_else(panic_with_err);
         assert_eq!(state1.phase, PbftPhase::PrePreparing);
-        assert_eq!(state1.working_block, Some(PbftBlock::from(mock_block(1))));
     }
 
     #[test]
@@ -1488,7 +1478,6 @@ mod tests {
         assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
         assert_eq!(state.f, 1);
         assert_eq!(state.forced_view_change_period, 30);
-        assert_eq!(state.working_block, None);
         assert!(state.is_primary());
 
         // Handle the first block and assert resulting state
@@ -1507,7 +1496,6 @@ mod tests {
         assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
         assert_eq!(state.f, 1);
         assert_eq!(state.forced_view_change_period, 30);
-        assert_eq!(state.working_block, Some(PbftBlock::from(mock_block(1))));
         assert!(state.is_primary());
 
         state.seq_num += 1;
@@ -1525,7 +1513,6 @@ mod tests {
             assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
             assert_eq!(state.f, 1);
             assert_eq!(state.forced_view_change_period, 30);
-            assert_eq!(state.working_block, Some(PbftBlock::from(block)));
             assert!(state.is_primary());
 
             state.seq_num += 1;
@@ -1618,11 +1605,9 @@ mod tests {
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         state0.phase = PbftPhase::Finishing(mock_block_id(1), false);
-        state0.working_block = Some(PbftBlock::from(mock_block(1)));
         assert_eq!(state0.seq_num, 1);
         assert!(node.on_block_commit(mock_block_id(1), &mut state0).is_ok());
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
-        assert_eq!(state0.working_block, None);
         assert_eq!(state0.seq_num, 2);
     }
 
@@ -1647,11 +1632,6 @@ mod tests {
 
         assert_eq!(state1.phase, PbftPhase::Preparing);
         assert_eq!(state1.seq_num, 1);
-        if let Some(ref blk) = state1.working_block {
-            assert_eq!(BlockId::from(blk.clone().block_id), mock_block_id(1));
-        } else {
-            panic!("Wrong WorkingBlockOption");
-        }
 
         // Receive 3 `Prepare` messages
         for peer in 0..3 {
@@ -1764,8 +1744,6 @@ mod tests {
         let mut node0 = mock_node(vec![0]);
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
-        let block0 = mock_block(1);
-        let pbft_block0 = PbftBlock::from(block0);
 
         for i in 0..3 {
             let mut info = PbftMessageInfo::new();
@@ -1783,7 +1761,6 @@ mod tests {
         }
 
         state0.phase = PbftPhase::PrePreparing;
-        state0.working_block = Some(pbft_block0.clone());
 
         node0.try_publish(&mut state0).unwrap();
     }

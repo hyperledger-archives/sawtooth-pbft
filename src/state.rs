@@ -25,7 +25,6 @@ use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
-use crate::protos::pbft_message::PbftBlock;
 use crate::timing::Timeout;
 
 /// Phases of the PBFT algorithm, in `Normal` mode
@@ -61,23 +60,13 @@ impl fmt::Display for PbftState {
             PbftPhase::Finishing(ref id, cu) => format!("Fi {:?}/{}", &hex::encode(id)[..6], cu),
         };
 
-        let wb = match self.working_block {
-            Some(ref block) => format!(
-                "{}/{}",
-                block.block_num,
-                &hex::encode(block.get_block_id())[..6]
-            ),
-            None => String::from("~none~"),
-        };
-
         write!(
             f,
-            "({} {} {}, seq {}, wb {}), Node {}{}",
+            "({} {} {}, seq {}), Node {}{}",
             phase,
             mode,
             self.view,
             self.seq_num,
-            wb,
             ast,
             &hex::encode(self.id.clone())[..6],
         )
@@ -123,9 +112,6 @@ pub struct PbftState {
 
     /// How many blocks to commit before forcing a view change for fairness
     pub forced_view_change_period: u64,
-
-    /// The current block this node is working on
-    pub working_block: Option<PbftBlock>,
 }
 
 impl PbftState {
@@ -153,7 +139,6 @@ impl PbftState {
             view_change_timeout: Timeout::new(config.view_change_duration),
             view_change_duration: config.view_change_duration,
             forced_view_change_period: config.forced_view_change_period,
-            working_block: None,
         }
     }
 
