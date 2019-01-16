@@ -788,13 +788,13 @@ impl PbftNode {
 
         // Verify the signature
         let key = Secp256k1PublicKey::from_hex(&hex::encode(&header.signer_id)).map_err(|err| {
-            PbftError::InternalError(format!(
+            PbftError::SigningError(format!(
                 "Couldn't parse public key from signer ID ({:?}) due to error: {:?}",
                 header.signer_id, err
             ))
         })?;
         let context = create_context("secp256k1").map_err(|err| {
-            PbftError::InternalError(format!("Couldn't create context due to error: {}", err))
+            PbftError::SigningError(format!("Couldn't create context due to error: {}", err))
         })?;
 
         match context.verify(
@@ -804,12 +804,13 @@ impl PbftNode {
         ) {
             Ok(true) => {}
             Ok(false) => {
-                return Err(PbftError::InternalError(
-                    "Vote failed signature verification".into(),
-                ));
+                return Err(PbftError::SigningError(format!(
+                    "Vote ({:?}) failed signature verification",
+                    vote
+                )));
             }
             Err(err) => {
-                return Err(PbftError::InternalError(format!(
+                return Err(PbftError::SigningError(format!(
                     "Error while verifying vote signature: {:?}",
                     err
                 )))

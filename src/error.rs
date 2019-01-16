@@ -34,6 +34,9 @@ pub enum PbftError {
     /// An error occurred while making a call to the consensus service (description, `ServError`)
     ServiceError(String, ServError),
 
+    /// An error occurred while verifying a cryptographic signature
+    SigningError(String),
+
     /// The node detected a faulty primary and started a view change
     FaultyPrimary(String),
 
@@ -56,6 +59,7 @@ impl Error for PbftError {
         match self {
             SerializationError(_, _) => "SerializationError",
             ServiceError(_, _) => "ServiceError",
+            SigningError(_) => "SigningError",
             FaultyPrimary(_) => "FaultyPrimary",
             InvalidMessage(_) => "InvalidMessage",
             InternalError(_) => "InternalError",
@@ -70,6 +74,7 @@ impl fmt::Display for PbftError {
         match self {
             PbftError::SerializationError(desc, pb_err) => write!(f, "{} due to: {}", desc, pb_err),
             PbftError::ServiceError(desc, serv_err) => write!(f, "{} due to: {}", desc, serv_err),
+            PbftError::SigningError(description) => write!(f, "{}", description),
             PbftError::FaultyPrimary(description) => write!(
                 f,
                 "Node has detected a faulty primary and started a view change: {}",
