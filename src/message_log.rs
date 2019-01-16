@@ -190,16 +190,10 @@ impl PbftLog {
     pub fn garbage_collect(&mut self, current_seq_num: u64) {
         // If the max log size has been reached, filter out all old messages
         if self.messages.len() as u64 >= self.max_log_size {
-            self.messages = self
-                .messages
-                .iter()
-                .filter(|ref msg| {
-                    // The node needs to keep messages from the previous sequence number in case it
-                    // needs to build the next consensus seal
-                    msg.info().get_seq_num() >= current_seq_num - 1
-                })
-                .cloned()
-                .collect();
+            // The node needs to keep messages from the previous sequence number in case it
+            // needs to build the next consensus seal
+            self.messages
+                .retain(|msg| msg.info().get_seq_num() >= current_seq_num - 1);
         }
     }
 
