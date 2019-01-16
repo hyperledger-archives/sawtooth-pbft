@@ -292,7 +292,7 @@ impl PbftNode {
                                 err,
                             )
                         })?;
-                    state.switch_phase(PbftPhase::Finishing(block.block_id))?;
+                    state.switch_phase(PbftPhase::Finishing(block.block_id, false))?;
                 }
             }
         }
@@ -515,7 +515,7 @@ impl PbftNode {
         // it is waiting for a commit message, catch-up will have to be done after the message is
         // received)
         let is_waiting = match state.phase {
-            PbftPhase::Finishing(_) => true,
+            PbftPhase::Finishing(_, _) => true,
             _ => false,
         };
         if block.block_num > state.seq_num && !is_waiting {
@@ -586,7 +586,7 @@ impl PbftNode {
                     err,
                 )
             })?;
-        state.phase = PbftPhase::Finishing(messages[0].get_block().block_id.clone());
+        state.phase = PbftPhase::Finishing(messages[0].get_block().block_id.clone(), true);
 
         Ok(())
     }
@@ -603,7 +603,7 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         // Ignore this BlockCommit if the node isn't waiting for it
         if match state.phase {
-            PbftPhase::Finishing(ref expected_id) => &block_id != expected_id,
+            PbftPhase::Finishing(ref expected_id, _) => &block_id != expected_id,
             _ => true,
         } {
             info!(
@@ -620,17 +620,14 @@ impl PbftNode {
             hex::encode(&block_id[..3])
         );
 
+        let is_catching_up = match state.phase {
+            PbftPhase::Finishing(_, true) => true,
+            _ => false,
+        };
+
         // Update state to be ready for next block
         state.switch_phase(PbftPhase::PrePreparing)?;
         state.seq_num += 1;
-
-        // If the node already has a BlockNew for the next block, make it the working block;
-        // otherwise just set the working block to None
-        state.working_block = self
-            .msg_log
-            .get_messages_of_type_seq(PbftMessageType::BlockNew, state.seq_num)
-            .first()
-            .map(|msg| msg.get_block().clone());
 
         // Increment the view if a view change must be forced for fairness or if membership has
         // changed
@@ -656,7 +653,9 @@ impl PbftNode {
         // Restart the faulty primary timeout for the next block
         state.faulty_primary_timeout.start();
 
-        if state.is_primary() && state.working_block.is_none() {
+        // Initialize a new block if this node is the primary and it is not in the process of
+        // catching up
+        if state.is_primary() && !is_catching_up {
             info!("{}: Initializing block on top of {:?}", state, block_id);
             self.service
                 .initialize_block(Some(block_id))
@@ -1618,7 +1617,7 @@ mod tests {
         let mut node = mock_node(vec![0]);
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
-        state0.phase = PbftPhase::Finishing(mock_block_id(1));
+        state0.phase = PbftPhase::Finishing(mock_block_id(1), false);
         state0.working_block = Some(PbftBlock::from(mock_block(1)));
         assert_eq!(state0.seq_num, 1);
         assert!(node.on_block_commit(mock_block_id(1), &mut state0).is_ok());
@@ -1671,7 +1670,7 @@ mod tests {
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(panic_with_err);
         }
-        assert_eq!(state1.phase, PbftPhase::Finishing(mock_block_id(1)));
+        assert_eq!(state1.phase, PbftPhase::Finishing(mock_block_id(1), false));
 
         // Spoof the `commit_blocks()` call
         assert!(node1.on_block_commit(mock_block_id(1), &mut state1).is_ok());
