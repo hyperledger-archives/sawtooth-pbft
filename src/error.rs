@@ -26,8 +26,9 @@ use protobuf::error::ProtobufError;
 /// Errors that might occur in a PbftNode
 #[derive(Debug)]
 pub enum PbftError {
-    /// An error occurred while serializing or deserializing a Protobuf message
-    SerializationError(ProtobufError),
+    /// An error occurred while serializing or deserializing a Protobuf message (description,
+    /// `ProtobufError`)
+    SerializationError(String, ProtobufError),
 
     /// Internal PBFT error (description)
     InternalError(String),
@@ -43,7 +44,7 @@ impl Error for PbftError {
     fn description(&self) -> &str {
         use self::PbftError::*;
         match self {
-            SerializationError(_) => "SerializationError",
+            SerializationError(_, _) => "SerializationError",
             InternalError(_) => "InternalError",
             NotFromPrimary => "NotFromPrimary",
         }
@@ -54,7 +55,7 @@ impl fmt::Display for PbftError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}: ", self.description())?;
         match self {
-            PbftError::SerializationError(pb_err) => pb_err.fmt(f),
+            PbftError::SerializationError(desc, pb_err) => write!(f, "{} due to: {}", desc, pb_err),
             PbftError::InternalError(description) => write!(f, "{}", description),
             PbftError::NotFromPrimary => write!(
                 f,

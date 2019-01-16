@@ -155,12 +155,14 @@ impl ParsedMessage {
 
         let parsed_message = match message.header.message_type.as_str() {
             "NewView" => PbftMessageWrapper::NewView(
-                protobuf::parse_from_bytes::<PbftNewView>(&message.content)
-                    .map_err(PbftError::SerializationError)?,
+                protobuf::parse_from_bytes::<PbftNewView>(&message.content).map_err(|err| {
+                    PbftError::SerializationError("Error parsing PbftNewView".into(), err)
+                })?,
             ),
             _ => PbftMessageWrapper::Message(
-                protobuf::parse_from_bytes::<PbftMessage>(&message.content)
-                    .map_err(PbftError::SerializationError)?,
+                protobuf::parse_from_bytes::<PbftMessage>(&message.content).map_err(|err| {
+                    PbftError::SerializationError("Error parsing PbftMessage".into(), err)
+                })?,
             ),
         };
 

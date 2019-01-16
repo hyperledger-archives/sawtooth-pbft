@@ -373,9 +373,9 @@ impl PbftNode {
 
             trace!("Created NewView message: {:?}", new_view);
 
-            let msg_bytes = new_view
-                .write_to_bytes()
-                .map_err(PbftError::SerializationError)?;
+            let msg_bytes = new_view.write_to_bytes().map_err(|err| {
+                PbftError::SerializationError("Error writing NewView to bytes".into(), err)
+            })?;
 
             self._broadcast_message(PbftMessageType::NewView, msg_bytes, state)?;
         }
@@ -542,16 +542,18 @@ impl PbftNode {
         }
 
         // Parse messages from the seal
-        let seal: PbftSeal =
-            protobuf::parse_from_bytes(&block.payload).map_err(PbftError::SerializationError)?;
+        let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
+            PbftError::SerializationError("Error parsing seal for catch-up".into(), err)
+        })?;
 
         let messages =
             seal.get_previous_commit_votes()
                 .iter()
                 .try_fold(Vec::new(), |mut msgs, v| {
                     msgs.push(ParsedMessage::from_pbft_message(
-                        protobuf::parse_from_bytes(&v.get_message_bytes())
-                            .map_err(PbftError::SerializationError)?,
+                        protobuf::parse_from_bytes(&v.get_message_bytes()).map_err(|err| {
+                            PbftError::SerializationError("Error parsing commit vote".into(), err)
+                        })?,
                     ));
                     Ok(msgs)
                 })?;
@@ -747,7 +749,8 @@ impl PbftNode {
 
         debug!("Seal created: {:?}", seal);
 
-        seal.write_to_bytes().map_err(PbftError::SerializationError)
+        seal.write_to_bytes()
+            .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
     }
 
     /// Verify that a vote matches the expected type, is properly signed, and passes the specified
@@ -763,10 +766,13 @@ impl PbftNode {
     {
         // Parse the message
         let pbft_message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
-            .map_err(PbftError::SerializationError)?;
+            .map_err(|err| {
+                PbftError::SerializationError("Error parsing PbftMessage from vote".into(), err)
+            })?;
         let header: ConsensusPeerMessageHeader =
-            protobuf::parse_from_bytes(&vote.get_header_bytes())
-                .map_err(PbftError::SerializationError)?;
+            protobuf::parse_from_bytes(&vote.get_header_bytes()).map_err(|err| {
+                PbftError::SerializationError("Error parsing header from vote".into(), err)
+            })?;
 
         trace!(
             "Verifying vote with PbftMessage: {:?} and header: {:?}",
@@ -912,8 +918,9 @@ impl PbftNode {
             ));
         }
 
-        let seal: PbftSeal =
-            protobuf::parse_from_bytes(&block.payload).map_err(PbftError::SerializationError)?;
+        let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
+            PbftError::SerializationError("Error parsing seal for verification".into(), err)
+        })?;
 
         debug!("Parsed seal: {:?}", seal);
 
@@ -1166,9 +1173,9 @@ impl PbftNode {
 
         trace!("Created view change message: {:?}", vc_msg);
 
-        let msg_bytes = vc_msg
-            .write_to_bytes()
-            .map_err(PbftError::SerializationError)?;
+        let msg_bytes = vc_msg.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing ViewChange to bytes".into(), err)
+        })?;
 
         self._broadcast_message(PbftMessageType::ViewChange, msg_bytes, state)
     }
