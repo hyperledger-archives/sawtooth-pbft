@@ -22,6 +22,7 @@ use std::fmt;
 
 use hex;
 use protobuf::error::ProtobufError;
+use sawtooth_sdk::consensus::engine::Error as ServError;
 
 /// Errors that might occur in a PbftNode
 #[derive(Debug)]
@@ -29,6 +30,9 @@ pub enum PbftError {
     /// An error occurred while serializing or deserializing a Protobuf message (description,
     /// `ProtobufError`)
     SerializationError(String, ProtobufError),
+
+    /// An error occurred while making a call to the consensus service (description, `ServError`)
+    ServiceError(String, ServError),
 
     /// Internal PBFT error (description)
     InternalError(String),
@@ -45,6 +49,7 @@ impl Error for PbftError {
         use self::PbftError::*;
         match self {
             SerializationError(_, _) => "SerializationError",
+            ServiceError(_, _) => "ServiceError",
             InternalError(_) => "InternalError",
             NotFromPrimary => "NotFromPrimary",
         }
@@ -56,6 +61,7 @@ impl fmt::Display for PbftError {
         write!(f, "{}: ", self.description())?;
         match self {
             PbftError::SerializationError(desc, pb_err) => write!(f, "{} due to: {}", desc, pb_err),
+            PbftError::ServiceError(desc, serv_err) => write!(f, "{} due to: {}", desc, serv_err),
             PbftError::InternalError(description) => write!(f, "{}", description),
             PbftError::NotFromPrimary => write!(
                 f,

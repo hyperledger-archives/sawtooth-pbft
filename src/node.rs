@@ -288,12 +288,14 @@ impl PbftNode {
                     self.service
                         .commit_block(block.block_id.clone())
                         .map_err(|err| {
-                            PbftError::InternalError(format!(
-                                "Failed to commit block {:?} / {:?} due to error: {:?}",
-                                block.block_num,
-                                hex::encode(&block.block_id[..3]),
-                                err
-                            ))
+                            PbftError::ServiceError(
+                                format!(
+                                    "Failed to commit block {:?} / {:?}",
+                                    block.block_num,
+                                    hex::encode(&block.block_id[..3])
+                                ),
+                                err,
+                            )
                         })?;
                     state.switch_phase(PbftPhase::Finished)?;
                 }
@@ -431,10 +433,7 @@ impl PbftNode {
         // Initialize a new block if necessary
         if state.is_primary() && state.working_block.is_none() {
             self.service.initialize_block(None).map_err(|err| {
-                PbftError::InternalError(format!(
-                    "Couldn't initialize block due to error: {:?}",
-                    err
-                ))
+                PbftError::ServiceError("Couldn't initialize block after view change".into(), err)
             })?;
         }
 
@@ -574,12 +573,14 @@ impl PbftNode {
         self.service
             .commit_block(messages[0].get_block().block_id.clone())
             .map_err(|err| {
-                PbftError::InternalError(format!(
-                    "Failed to commit block {:?} / {:?} due to error: {:?}",
-                    messages[0].get_block().block_num,
-                    hex::encode(&messages[0].get_block().block_id[..3]),
-                    err
-                ))
+                PbftError::ServiceError(
+                    format!(
+                        "Failed to commit block with catch-up {:?} / {:?}",
+                        messages[0].get_block().block_num,
+                        hex::encode(&messages[0].get_block().block_id[..3])
+                    ),
+                    err,
+                )
             })?;
         state.phase = PbftPhase::Finished;
 
@@ -642,10 +643,7 @@ impl PbftNode {
             self.service
                 .initialize_block(Some(block_id))
                 .map_err(|err| {
-                    PbftError::InternalError(format!(
-                        "Couldn't initialize block due to error: {:?}",
-                        err
-                    ))
+                    PbftError::ServiceError("Couldn't initialize block after commit".into(), err)
                 })?;
         }
 
@@ -1037,10 +1035,10 @@ impl PbftNode {
                 info!("{}: Publishing block {:?}", state, block_id);
                 Ok(())
             }
-            Err(err) => Err(PbftError::InternalError(format!(
-                "Couldn't finalize block due to error: {:?}",
-                err
-            ))),
+            Err(err) => Err(PbftError::ServiceError(
+                "Couldn't finalize block".into(),
+                err,
+            )),
         }
     }
 
