@@ -146,7 +146,7 @@ impl PbftNode {
 
         // Check that no `PrePrepare`s already exist with this view and sequence number but a
         // different block; if this is violated, the primary is faulty so initiate a view change
-        let mut mismatched_blocks = self
+        let mismatched_blocks = self
             .msg_log
             .get_messages_of_type_seq_view(
                 PbftMessageType::PrePrepare,
@@ -165,14 +165,6 @@ impl PbftNode {
             .collect::<Vec<_>>();
 
         if !mismatched_blocks.is_empty() {
-            mismatched_blocks.push(msg.get_block().clone());
-            mismatched_blocks.iter().for_each(|block| {
-                self.service
-                    .fail_block(block.get_block_id().to_vec())
-                    .unwrap_or_else(|err| {
-                        error!("Couldn't fail block {:?} due to error: {:?}", block, err)
-                    });
-            });
             self.start_view_change(state, state.view + 1)?;
             return Err(PbftError::FaultyPrimary(format!(
                 "When checking PrePrepare with block {:?}, found PrePrepare(s) with same view and \
@@ -470,6 +462,9 @@ impl PbftNode {
         // the log
         if block.block_num != state.seq_num && !self.msg_log.has_block(block.previous_id.as_slice())
         {
+            self.service
+                .fail_block(block.block_id.clone())
+                .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
             return Err(PbftError::InternalError(format!(
                 "Received block {:?} / {:?} but node does not have previous block {:?} / {:?}",
                 block.block_num,
@@ -585,9 +580,9 @@ impl PbftNode {
 
     /// Handle a `BlockCommit` update from the Validator
     ///
-    /// A block was sucessfully committed; update state to be ready for the next block, make any
-    /// necessary view and membership changes, garbage collect the logs, and start a new block if
-    /// this node is the primary.
+    /// A block was sucessfully committed; clean up any uncommitted blocks, update state to be
+    /// ready for the next block, make any necessary view and membership changes, garbage collect
+    /// the logs, and start a new block if this node is the primary.
     pub fn on_block_commit(
         &mut self,
         block_id: BlockId,
@@ -616,6 +611,32 @@ impl PbftNode {
             PbftPhase::Finishing(_, true) => true,
             _ => false,
         };
+
+        // If there are any BlockNew messages in the log at this sequence number for blocks other
+        // than the one that was just committed, reject them
+        let invalid_block_ids = self
+            .msg_log
+            .get_messages_of_type_seq(PbftMessageType::BlockNew, state.seq_num)
+            .iter()
+            .filter_map(|msg| {
+                let this_block_id = msg.get_block().get_block_id();
+                if this_block_id != block_id.as_slice() {
+                    Some(this_block_id.to_vec())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for id in invalid_block_ids {
+            self.service.fail_block(id.clone()).unwrap_or_else(|err| {
+                error!(
+                    "Couldn't fail block {:?} due to error: {:?}",
+                    &hex::encode(id)[..6],
+                    err
+                )
+            });
+        }
 
         // Update state to be ready for next block
         state.switch_phase(PbftPhase::PrePreparing)?;
