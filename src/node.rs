@@ -501,7 +501,7 @@ impl PbftNode {
             debug!("Working block set to {:?}", state.working_block);
 
             // Send PrePrepare messages if we're the primary
-            if state.is_primary() {
+            if block.signer_id == state.id && state.is_primary() {
                 debug!("Broadcasting PrePrepares");
                 let s = state.seq_num;
                 self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block, state)?;
