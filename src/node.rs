@@ -480,7 +480,6 @@ impl PbftNode {
                 self.service
                     .fail_block(block.block_id)
                     .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
-                self.start_view_change(state, state.view + 1)?;
                 return Err(PbftError::FaultyPrimary(format!(
                     "Consensus seal failed verification - Error was: {}",
                     err
