@@ -43,8 +43,8 @@ pub fn verify_sha512(content: &[u8], content_hash: &[u8]) -> Result<(), PbftErro
     let computed_sha512 = hash_sha512(&content);
 
     if computed_sha512 != content_hash {
-        Err(PbftError::InternalError(format!(
-            "Hash verification failed! Content: `{:?}`, Hash: `{:?}`",
+        Err(PbftError::SigningError(format!(
+            "Hash verification failed - Content: `{:?}`, Hash: `{:?}`",
             content, content_hash
         )))
     } else {

@@ -22,74 +22,48 @@ use std::fmt;
 
 use hex;
 use protobuf::error::ProtobufError;
-
-use crate::message_type::PbftMessageType;
-use crate::protos::pbft_message::PbftBlock;
+use sawtooth_sdk::consensus::engine::Error as ServError;
 
 /// Errors that might occur in a PbftNode
 #[derive(Debug)]
 pub enum PbftError {
-    /// An error occured while serializing or deserializing a Protobuf message
-    SerializationError(ProtobufError),
+    /// An error occurred while serializing or deserializing a Protobuf message (description,
+    /// `ProtobufError`)
+    SerializationError(String, ProtobufError),
 
-    /// Too many or too few messages recieved so far (expected, got)
-    WrongNumMessages(PbftMessageType, u64, u64),
+    /// An error occurred while making a call to the consensus service (description, `ServError`)
+    ServiceError(String, ServError),
 
-    /// Too many or too few consenus seals found (expected, got)
-    WrongNumSeals(u64, u64),
+    /// An error occurred while verifying a cryptographic signature
+    SigningError(String),
 
-    /// The blocks don't match but should
-    MismatchedBlocks(Vec<PbftBlock>),
+    /// The node detected a faulty primary and started a view change
+    FaultyPrimary(String),
 
-    /// The message information doesn't match the one this node was expecting
-    MessageMismatch(PbftMessageType),
-
-    /// The message is in a different view than this node is
-    ViewMismatch(u64, u64),
+    /// An invalid message was received
+    InvalidMessage(String),
 
     /// Internal PBFT error (description)
     InternalError(String),
 
-    /// The requested node is not found on the network
-    NodeNotFound,
-
-    /// More than one block matched with the given ID
-    WrongNumBlocks,
-
-    /// Timed out waiting for a message
-    Timeout,
-
-    /// There is no working block; no operations can be performed
-    NoWorkingBlock,
-
-    /// Not ready for this message type
-    NotReadyForMessage,
-
-    /// The message should only come from the primary, but was sent by a secondary node
+    /// The message should only come from the primary, but was sent by a secondary node; this can
+    /// be used in a situation where a typical error would trigger a view change (e.g. an invalid
+    /// NewView message), but if the message isn't actually from the primary a view change
+    /// shouldn't be triggered.
     NotFromPrimary,
-
-    /// Got a PrePrepare without a matching BlockNew
-    NoBlockNew,
 }
 
 impl Error for PbftError {
     fn description(&self) -> &str {
         use self::PbftError::*;
         match self {
-            SerializationError(_) => "SerializationError",
-            WrongNumMessages(_, _, _) => "WrongNumMessages",
-            WrongNumSeals(_, _) => "WrongNumSeals",
-            MismatchedBlocks(_) => "MismatchedBlocks",
-            MessageMismatch(_) => "MessageMismatch",
-            ViewMismatch(_, _) => "ViewMismatch",
+            SerializationError(_, _) => "SerializationError",
+            ServiceError(_, _) => "ServiceError",
+            SigningError(_) => "SigningError",
+            FaultyPrimary(_) => "FaultyPrimary",
+            InvalidMessage(_) => "InvalidMessage",
             InternalError(_) => "InternalError",
-            NodeNotFound => "NodeNotFound",
-            WrongNumBlocks => "WrongNumBlocks",
-            Timeout => "Timeout",
-            NoWorkingBlock => "NoWorkingBlock",
-            NotReadyForMessage => "NotReadyForMessage",
             NotFromPrimary => "NotFromPrimary",
-            NoBlockNew => "NoBlockNew",
         }
     }
 }
@@ -98,35 +72,20 @@ impl fmt::Display for PbftError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}: ", self.description())?;
         match self {
-            PbftError::SerializationError(pb_err) => pb_err.fmt(f),
-            PbftError::WrongNumMessages(t, exp, got) => write!(
+            PbftError::SerializationError(desc, pb_err) => write!(f, "{} due to: {}", desc, pb_err),
+            PbftError::ServiceError(desc, serv_err) => write!(f, "{} due to: {}", desc, serv_err),
+            PbftError::SigningError(description) => write!(f, "{}", description),
+            PbftError::FaultyPrimary(description) => write!(
                 f,
-                "Wrong number of {:?} messages in this sequence (expected {}, got {})",
-                t, exp, got
+                "Node has detected a faulty primary and started a view change: {}",
+                description
             ),
-            PbftError::WrongNumSeals(exp, got) => write!(
-                f,
-                "Wrong number of consensus seals found (expected {}, got {})",
-                exp, got
-            ),
-            PbftError::MessageMismatch(t) => write!(f, "{:?} message mismatch", t),
-            PbftError::ViewMismatch(exp, got) => write!(f, "View mismatch: {} != {}", exp, got),
-            PbftError::MismatchedBlocks(blocks) => write!(
-                f,
-                "Mismatched blocks: {:?}",
-                blocks.iter().map(|block| hex::encode(block.get_block_id()))
-            ),
-            PbftError::NodeNotFound => write!(f, "Couldn't find node in the network"),
-            PbftError::WrongNumBlocks => write!(f, "Incorrect number of blocks"),
-            PbftError::Timeout => write!(f, "Timed out"),
+            PbftError::InvalidMessage(description) => write!(f, "{}", description),
             PbftError::InternalError(description) => write!(f, "{}", description),
-            PbftError::NoWorkingBlock => write!(f, "There is no working block"),
-            PbftError::NotReadyForMessage => write!(f, "Not ready"),
             PbftError::NotFromPrimary => write!(
                 f,
                 "Message should be from primary, but was sent by secondary"
             ),
-            PbftError::NoBlockNew => write!(f, "Got a PrePrepare without a matching BlockNew"),
         }
     }
 }

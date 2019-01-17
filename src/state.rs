@@ -129,9 +129,9 @@ pub struct PbftState {
 
 impl PbftState {
     /// Construct the initial state for a PBFT node
+    ///
     /// # Panics
-    /// Panics if the network this node is on does not have enough nodes to be Byzantine fault
-    /// tolernant.
+    /// + If the network this node is on does not have enough nodes to be Byzantine fault tolernant
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(id: PeerId, head_block_num: u64, config: &PbftConfig) -> Self {
         // Maximum number of faulty nodes in this network. Panic if there are not enough nodes.

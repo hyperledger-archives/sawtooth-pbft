@@ -105,7 +105,8 @@ impl ParsedMessage {
 
     /// Returns the `PbftBlock` for this message's wrapped `PbftMessage`.
     ///
-    /// Panics if it encounters a new view message, as that should never happen.
+    /// # Panics
+    /// + If the wrapped message is a `NewView`, which doesn't contain a block
     pub fn get_block(&self) -> &PbftBlock {
         match &self.message {
             PbftMessageWrapper::Message(m) => m.get_block(),
@@ -117,7 +118,8 @@ impl ParsedMessage {
 
     /// Returns the wrapped `PbftMessage`.
     ///
-    /// Panics if it encounters a new view message, as that should never happen.
+    /// # Panics
+    /// + If the wrapped message is a `NewView`, not a regular message
     pub fn get_pbft_message(&self) -> &PbftMessage {
         match &self.message {
             PbftMessageWrapper::Message(m) => m,
@@ -129,7 +131,8 @@ impl ParsedMessage {
 
     /// Returns the wrapped `PbftNewView`.
     ///
-    /// Panics if it encounters a regular message, as that should never happen.
+    /// # Panics
+    /// + If the wrapped message is a regular message, not a `NewView`
     pub fn get_new_view_message(&self) -> &PbftNewView {
         match &self.message {
             PbftMessageWrapper::Message(_) => {
@@ -149,27 +152,19 @@ impl ParsedMessage {
         if !from_self {
             verify_sha512(&message.content, &message.header.content_sha512)?;
         }
-        // This complex parsing is due to the fact that proto3 doesn't have any way of requiring
-        // fields, so a `PbftNewView` can get parsed as a `PbftMessage` that doesn't have the
-        // `block` field defined. So, we try parsing a PbftMessage first, and if that fails or has
-        // a NewView message type, then try parsing it as a new view message; if that fails, then
-        // it's probably a bad message.
-        let parsed_message = protobuf::parse_from_bytes::<PbftMessage>(&message.content)
-            .ok()
-            .and_then(|m| {
-                let msg_type = m.get_info().get_msg_type();
-                if msg_type == "NewView" {
-                    None
-                } else {
-                    Some(PbftMessageWrapper::Message(m))
-                }
-            })
-            .or_else(|| {
-                protobuf::parse_from_bytes::<PbftNewView>(&message.content)
-                    .ok()
-                    .and_then(|m| Some(PbftMessageWrapper::NewView(m)))
-            })
-            .ok_or_else(|| PbftError::InternalError("Couldn't parse message!".into()))?;
+
+        let parsed_message = match message.header.message_type.as_str() {
+            "NewView" => PbftMessageWrapper::NewView(
+                protobuf::parse_from_bytes::<PbftNewView>(&message.content).map_err(|err| {
+                    PbftError::SerializationError("Error parsing PbftNewView".into(), err)
+                })?,
+            ),
+            _ => PbftMessageWrapper::Message(
+                protobuf::parse_from_bytes::<PbftMessage>(&message.content).map_err(|err| {
+                    PbftError::SerializationError("Error parsing PbftMessage".into(), err)
+                })?,
+            ),
+        };
 
         Ok(Self {
             header_bytes: message.header_bytes,
@@ -181,11 +176,12 @@ impl ParsedMessage {
     }
 
     /// Constructs a `ParsedMessage` from the given serialized `PbftMessage`
-    pub fn from_bytes(message: Vec<u8>) -> Result<Self, PbftError> {
-        let peer_message = PeerMessage {
+    pub fn from_bytes(message: Vec<u8>, message_type: PbftMessageType) -> Result<Self, PbftError> {
+        let mut peer_message = PeerMessage {
             content: message,
             ..Default::default()
         };
+        peer_message.header.message_type = String::from(message_type);
 
         Self::from_peer_message(peer_message, true)
     }
