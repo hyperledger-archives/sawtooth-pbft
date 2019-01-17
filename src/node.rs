@@ -458,8 +458,8 @@ impl PbftNode {
     ///
     /// The validator has received a new block; verify the block's consensus seal and add the
     /// BlockNew to the message log. If this is the block we are waiting for: set it as the working
-    /// block, update the idle & commit timers, and broadcast a PrePrepare if this node is the
-    /// primary. If this is the block after the one this node is working on, use it to catch up.
+    /// block and broadcast a PrePrepare if this node is the primary. If this is the block after
+    /// the one this node is working on, use it to catch up.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         info!("{}: Got BlockNew: {}", state, block.block_num);
         debug!("Block details: {:?}", block);
@@ -603,8 +603,8 @@ impl PbftNode {
     /// Handle a `BlockCommit` update from the Validator
     ///
     /// A block was sucessfully committed; update state to be ready for the next block, make any
-    /// necessary view and membership changes, garbage collect the logs, update the commit & idle
-    /// timers, and start a new block if this node is the primary.
+    /// necessary view and membership changes, garbage collect the logs, and start a new block if
+    /// this node is the primary.
     pub fn on_block_commit(
         &mut self,
         block_id: BlockId,
