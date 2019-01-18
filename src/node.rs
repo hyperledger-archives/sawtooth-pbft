@@ -511,11 +511,14 @@ impl PbftNode {
             .add_message(ParsedMessage::from_pbft_message(msg.clone()), state)?;
 
         // This block's seal can be used to commit the block previous to it (i.e. catch-up) if it's
-        // a future block and the node hasn't already told the validator to commit the previous
-        // block
-        if block.block_num > state.seq_num
-            && state.phase != PbftPhase::Finishing(block.previous_id.clone())
-        {
+        // a future block and the node isn't waiting for a commit message for a previous block (if
+        // it is waiting for a commit message, catch-up will have to be done after the message is
+        // received)
+        let is_waiting = match state.phase {
+            PbftPhase::Finishing(_) => true,
+            _ => false,
+        };
+        if block.block_num > state.seq_num && !is_waiting {
             self.catchup(state, &pbft_block)?;
         } else if block.block_num == state.seq_num {
             // This is the block we're waiting for, so we update state
@@ -633,6 +636,18 @@ impl PbftNode {
 
         // Tell the log to garbage collect if it needs to
         self.msg_log.garbage_collect(state.seq_num);
+
+        // If the node already has a block with a seal that can be used to commit the next one,
+        // perform catch-up
+        let block_option = self
+            .msg_log
+            .get_messages_of_type_seq(PbftMessageType::BlockNew, state.seq_num + 1)
+            .first()
+            .map(|msg| msg.get_block().clone());
+        if let Some(block) = block_option {
+            self.catchup(state, &block)?;
+            return Ok(());
+        }
 
         // Restart the faulty primary timeout for the next block
         state.faulty_primary_timeout.start();
