@@ -465,6 +465,21 @@ impl PbftNode {
             return Ok(());
         }
 
+        // Make sure the node already has the previous block, since the consensus seal can't be
+        // verified without it; the node has the previous block if 1) this block is for the current
+        // sequence number (previous block is already committed), or 2) the previous block is in
+        // the log
+        if block.block_num != state.seq_num && !self.msg_log.has_block(block.previous_id.as_slice())
+        {
+            return Err(PbftError::InternalError(format!(
+                "Received block {:?} / {:?} but node does not have previous block {:?} / {:?}",
+                block.block_num,
+                hex::encode(&block.block_id[..3]),
+                block.block_num - 1,
+                hex::encode(&block.previous_id[..3]),
+            )));
+        }
+
         match self.verify_consensus_seal(&block, state) {
             Ok(_) => {
                 debug!("Consensus seal passed verification");
