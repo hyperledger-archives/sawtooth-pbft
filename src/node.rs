@@ -588,8 +588,7 @@ impl PbftNode {
             })?;
         state.phase = PbftPhase::Finishing(messages[0].get_block().block_id.clone());
 
-        // Call on_block_commit right away so we're ready to catch up again if necessary
-        self.on_block_commit(BlockId::from(messages[0].get_block().get_block_id()), state)
+        Ok(())
     }
 
     /// Handle a `BlockCommit` update from the Validator
@@ -602,19 +601,24 @@ impl PbftNode {
         block_id: BlockId,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        info!(
-            "{}: Got BlockCommit for {:?}",
-            state,
-            hex::encode(&block_id[..3])
-        );
-
         // Ignore this BlockCommit if the node isn't waiting for it
         if match state.phase {
             PbftPhase::Finishing(ref expected_id) => &block_id != expected_id,
             _ => true,
         } {
+            info!(
+                "{}: Igorning BlockCommit for {:?}",
+                state,
+                hex::encode(&block_id[..3])
+            );
             return Ok(());
         }
+
+        info!(
+            "{}: Got BlockCommit for {:?}",
+            state,
+            hex::encode(&block_id[..3])
+        );
 
         // Update state to be ready for next block
         state.switch_phase(PbftPhase::PrePreparing)?;
