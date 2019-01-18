@@ -195,6 +195,10 @@ impl PbftLog {
             self.messages
                 .retain(|msg| msg.info().get_seq_num() >= current_seq_num - 1);
         }
+
+        // Clean out stale PrePrepares
+        self.pre_prepare_backlog
+            .retain(|msg| msg.info().get_seq_num() >= current_seq_num);
     }
 
     /// Push a `PrePrepare` to the backlog
