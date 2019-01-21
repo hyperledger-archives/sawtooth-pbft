@@ -106,6 +106,7 @@ impl From<Block> for PbftBlock {
         pbft_block.set_signer_id(block.signer_id);
         pbft_block.set_block_num(block.block_num);
         pbft_block.set_summary(block.summary);
+        pbft_block.set_seal(block.payload);
         pbft_block
     }
 }

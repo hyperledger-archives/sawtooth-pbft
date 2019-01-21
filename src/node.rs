@@ -516,7 +516,7 @@ impl PbftNode {
         if block.block_num > state.seq_num
             && state.phase != PbftPhase::Finishing(block.previous_id.clone())
         {
-            self.catchup(state, &block)?;
+            self.catchup(state, &pbft_block)?;
         } else if block.block_num == state.seq_num {
             // This is the block we're waiting for, so we update state
             state.working_block = Some(msg.get_block().clone());
@@ -535,14 +535,14 @@ impl PbftNode {
     }
 
     /// Use the given block's consensus seal to verify and commit the block this node is working on
-    fn catchup(&mut self, state: &mut PbftState, block: &Block) -> Result<(), PbftError> {
+    fn catchup(&mut self, state: &mut PbftState, block: &PbftBlock) -> Result<(), PbftError> {
         info!(
             "{}: Attempting to commit block {} using catch-up",
             state, state.seq_num
         );
 
         // Parse messages from the seal
-        let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
+        let seal: PbftSeal = protobuf::parse_from_bytes(block.get_seal()).map_err(|err| {
             PbftError::SerializationError("Error parsing seal for catch-up".into(), err)
         })?;
 

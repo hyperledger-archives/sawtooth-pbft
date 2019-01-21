@@ -25,6 +25,8 @@ message PbftBlock {
   uint64 block_num = 3;
 
   bytes summary = 4;
+
+  bytes seal = 5;
 }
 
 // Represents all common information used in a PBFT message
