@@ -121,7 +121,7 @@ impl PbftNode {
     /// - The message's view matches the node's current view (handled by message log)
     ///
     /// Once a `PrePrepare` for the current sequence number is accepted and added to the log, the
-    /// node node will instruct the validator to validate the block
+    /// node node will switch to the Preparing phase and broadcast a `Prepare` message
     fn handle_pre_prepare(
         &mut self,
         msg: ParsedMessage,
@@ -436,8 +436,8 @@ impl PbftNode {
     /// Handle a `BlockNew` update from the Validator
     ///
     /// The validator has received a new block; verify the block's consensus seal and add the block
-    /// to the log. If this is the block we are waiting for and this node is the primary, broadcast
-    /// a PrePrepare. If this is a future block, use it to catch up.
+    /// to the log. If this is the block the node is waiting for and this node is the primary,
+    /// broadcast a PrePrepare. If this is a future block, use it to catch up.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         info!("{}: Got BlockNew: {}", state, block.block_num);
         debug!("Block details: {:?}", block);
