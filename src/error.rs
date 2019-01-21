@@ -20,7 +20,6 @@
 use std::error::Error;
 use std::fmt;
 
-use hex;
 use protobuf::error::ProtobufError;
 use sawtooth_sdk::consensus::engine::Error as ServError;
 
