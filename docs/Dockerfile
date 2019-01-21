@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y -q --no-install-recommends \
 
 RUN apt-get update && apt-get install -y -q \
     dvipng \
+    latexmk \
     make \
     pkg-config \
     sudo \
@@ -47,7 +48,7 @@ RUN apt-get update && apt-get install -y -q \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install \
-    sphinx==1.5.6 \
+    sphinx \
     sphinxcontrib-httpdomain \
     sphinxcontrib-openapi \
     sphinx_rtd_theme
