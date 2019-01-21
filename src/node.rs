@@ -34,7 +34,7 @@ use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
+    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
 use crate::timing::Timeout;
@@ -115,7 +115,7 @@ impl PbftNode {
     /// A `PrePrepare` message is accepted and added to the log if the following are true:
     /// - The message signature is valid (already verified by validator)
     /// - The message is from the primary
-    /// - There is a matching BlockNew message
+    /// - There is a matching block in the log
     /// - A `PrePrepare` message does not already exist at this view and sequence number with a
     ///   different block
     /// - The message's view matches the node's current view (handled by message log)
@@ -138,8 +138,8 @@ impl PbftNode {
 
         // Check that there is a matching BlockNew message; if not, add the PrePrepare to the
         // backlog because we can't perform consensus until the validator has this block
-        if !self.msg_log.has_block(msg.get_block().get_block_id()) {
-            debug!("No matching BlockNew found for PrePrepare; pushing to backlog");
+        if !self.msg_log.has_block(msg.get_block_id().as_slice()) {
+            debug!("No matching block found for PrePrepare; pushing to backlog");
             self.msg_log.push_backlog(msg);
             return Ok(());
         }
@@ -155,9 +155,9 @@ impl PbftNode {
             )
             .iter()
             .filter_map(|existing_msg| {
-                let block = existing_msg.get_block().clone();
-                if &block != msg.get_block() {
-                    Some(block)
+                let block_id = existing_msg.get_block_id();
+                if block_id != msg.get_block_id() {
+                    Some(block_id)
                 } else {
                     None
                 }
@@ -169,7 +169,7 @@ impl PbftNode {
             return Err(PbftError::FaultyPrimary(format!(
                 "When checking PrePrepare with block {:?}, found PrePrepare(s) with same view and \
                  seq num but mismatched block(s): {:?}",
-                msg.get_block(),
+                hex::encode(&msg.get_block_id()[..3]),
                 mismatched_blocks,
             )));
         }
@@ -189,7 +189,7 @@ impl PbftNode {
             self._broadcast_pbft_message(
                 state.seq_num,
                 PbftMessageType::Prepare,
-                msg.get_block().clone(),
+                msg.get_block_id(),
                 state,
             )?;
         }
@@ -208,7 +208,7 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         let info = msg.info().clone();
-        let block = msg.get_block().clone();
+        let block_id = msg.get_block_id();
 
         self.msg_log.add_message(msg, state)?;
 
@@ -232,7 +232,7 @@ impl PbftNode {
                     self._broadcast_pbft_message(
                         state.seq_num,
                         PbftMessageType::Commit,
-                        block,
+                        block_id,
                         state,
                     )?;
                 }
@@ -252,7 +252,7 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         let info = msg.info().clone();
-        let block = msg.get_block().clone();
+        let block_id = msg.get_block_id();
 
         self.msg_log.add_message(msg, state)?;
 
@@ -272,19 +272,13 @@ impl PbftNode {
                     true,
                     2 * state.f + 1,
                 ) {
-                    self.service
-                        .commit_block(block.block_id.clone())
-                        .map_err(|err| {
-                            PbftError::ServiceError(
-                                format!(
-                                    "Failed to commit block {:?} / {:?}",
-                                    block.block_num,
-                                    hex::encode(&block.block_id[..3])
-                                ),
-                                err,
-                            )
-                        })?;
-                    state.switch_phase(PbftPhase::Finishing(block.block_id, false))?;
+                    self.service.commit_block(block_id.clone()).map_err(|err| {
+                        PbftError::ServiceError(
+                            format!("Failed to commit block {:?}", hex::encode(&block_id[..3])),
+                            err,
+                        )
+                    })?;
+                    state.switch_phase(PbftPhase::Finishing(block_id, false))?;
                 }
             }
         }
@@ -441,9 +435,9 @@ impl PbftNode {
 
     /// Handle a `BlockNew` update from the Validator
     ///
-    /// The validator has received a new block; verify the block's consensus seal and add the
-    /// BlockNew to the message log. If this is the block we are waiting for and this node is the
-    /// primary, broadcast a PrePrepare. If this is a future block, use it to catch up.
+    /// The validator has received a new block; verify the block's consensus seal and add the block
+    /// to the log. If this is the block we are waiting for and this node is the primary, broadcast
+    /// a PrePrepare. If this is a future block, use it to catch up.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         info!("{}: Got BlockNew: {}", state, block.block_num);
         debug!("Block details: {:?}", block);
@@ -489,20 +483,8 @@ impl PbftNode {
             }
         }
 
-        // Create PBFT message for BlockNew and add it to the log
-        let mut msg = PbftMessage::new();
-        msg.set_info(PbftMessageInfo::new_from(
-            PbftMessageType::BlockNew,
-            state.view,
-            block.block_num,
-            state.id.clone(),
-        ));
-
-        let pbft_block = PbftBlock::from(block.clone());
-        msg.set_block(pbft_block.clone());
-
-        self.msg_log
-            .add_message(ParsedMessage::from_pbft_message(msg.clone()), state)?;
+        // Add block to the log
+        self.msg_log.add_block(block.clone());
 
         // This block's seal can be used to commit the block previous to it (i.e. catch-up) if it's
         // a future block and the node isn't waiting for a commit message for a previous block (if
@@ -513,26 +495,26 @@ impl PbftNode {
             _ => false,
         };
         if block.block_num > state.seq_num && !is_waiting {
-            self.catchup(state, &pbft_block)?;
+            self.catchup(state, &block)?;
         } else if block.block_num == state.seq_num && state.is_primary() {
             // This is the next block and this node is the primary; broadcast PrePrepare messages
             debug!("Broadcasting PrePrepares");
             let s = state.seq_num;
-            self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block, state)?;
+            self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, block.block_id, state)?;
         }
 
         Ok(())
     }
 
     /// Use the given block's consensus seal to verify and commit the block this node is working on
-    fn catchup(&mut self, state: &mut PbftState, block: &PbftBlock) -> Result<(), PbftError> {
+    fn catchup(&mut self, state: &mut PbftState, block: &Block) -> Result<(), PbftError> {
         info!(
             "{}: Attempting to commit block {} using catch-up",
             state, state.seq_num
         );
 
         // Parse messages from the seal
-        let seal: PbftSeal = protobuf::parse_from_bytes(block.get_seal()).map_err(|err| {
+        let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
             PbftError::SerializationError("Error parsing seal for catch-up".into(), err)
         })?;
 
@@ -560,20 +542,20 @@ impl PbftNode {
             self.msg_log.add_message(message.clone(), state)?;
         }
 
-        // Commit the new block using one of the parsed messages and skip straight to Finishing
+        // Commit the block and skip straight to Finished
         self.service
-            .commit_block(messages[0].get_block().block_id.clone())
+            .commit_block(block.previous_id.clone())
             .map_err(|err| {
                 PbftError::ServiceError(
                     format!(
                         "Failed to commit block with catch-up {:?} / {:?}",
-                        messages[0].get_block().block_num,
-                        hex::encode(&messages[0].get_block().block_id[..3])
+                        block.block_num - 1,
+                        hex::encode(&block.previous_id[..3])
                     ),
                     err,
                 )
             })?;
-        state.phase = PbftPhase::Finishing(messages[0].get_block().block_id.clone(), true);
+        state.phase = PbftPhase::Finishing(block.previous_id.clone(), true);
 
         Ok(())
     }
@@ -612,16 +594,15 @@ impl PbftNode {
             _ => false,
         };
 
-        // If there are any BlockNew messages in the log at this sequence number for blocks other
-        // than the one that was just committed, reject them
+        // If there are any blocks in the log at this sequence number other than the one that was
+        // just committed, reject them
         let invalid_block_ids = self
             .msg_log
-            .get_messages_of_type_seq(PbftMessageType::BlockNew, state.seq_num)
+            .get_blocks(state.seq_num)
             .iter()
-            .filter_map(|msg| {
-                let this_block_id = msg.get_block().get_block_id();
-                if this_block_id != block_id.as_slice() {
-                    Some(this_block_id.to_vec())
+            .filter_map(|block| {
+                if block.block_id != block_id {
+                    Some(block.block_id.clone())
                 } else {
                     None
                 }
@@ -655,9 +636,10 @@ impl PbftNode {
         // perform catch-up
         let block_option = self
             .msg_log
-            .get_messages_of_type_seq(PbftMessageType::BlockNew, state.seq_num + 1)
+            .get_blocks(state.seq_num + 1)
             .first()
-            .map(|msg| msg.get_block().clone());
+            .cloned()
+            .cloned();
         if let Some(block) = block_option {
             self.catchup(state, &block)?;
             return Ok(());
@@ -772,7 +754,7 @@ impl PbftNode {
         let mut seal = PbftSeal::new();
 
         seal.set_summary(summary);
-        seal.set_previous_id(BlockId::from(messages[0].get_block().get_block_id()));
+        seal.set_previous_id(messages[0].get_block_id());
         seal.set_previous_commit_votes(Self::signed_votes_from_messages(messages.as_slice()));
 
         debug!("Seal created: {:?}", seal);
@@ -975,12 +957,11 @@ impl PbftNode {
                 .iter()
                 .try_fold(HashSet::new(), |mut ids, vote| {
                     Self::verify_vote(vote, PbftMessageType::Commit, |msg| {
-                        if msg.get_block().block_id != seal.previous_id {
+                        if msg.block_id != seal.previous_id {
                             return Err(PbftError::InvalidMessage(format!(
                                 "Commit vote's block ID ({:?}) doesn't match seal's previous ID \
                                  ({:?})",
-                                msg.get_block().block_id,
-                                seal.previous_id
+                                msg.block_id, seal.previous_id
                             )));
                         }
                         Ok(())
@@ -1106,7 +1087,7 @@ impl PbftNode {
         &mut self,
         seq_num: u64,
         msg_type: PbftMessageType,
-        block: PbftBlock,
+        block_id: BlockId,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         let mut msg = PbftMessage::new();
@@ -1116,7 +1097,7 @@ impl PbftNode {
             seq_num,
             state.id.clone(),
         ));
-        msg.set_block(block);
+        msg.set_block_id(block_id);
 
         trace!("{}: Created PBFT message: {:?}", state, msg);
 
@@ -1382,12 +1363,9 @@ mod tests {
             info.set_seq_num(num - 1);
             info.set_signer_id(vec![i]);
 
-            let mut block = PbftBlock::new();
-            block.set_block_id(head.block_id.clone());
-
             let mut msg = PbftMessage::new();
             msg.set_info(info);
-            msg.set_block(block);
+            msg.set_block_id(head.block_id.clone());
 
             let mut message = ParsedMessage::from_pbft_message(msg);
 
@@ -1449,7 +1427,7 @@ mod tests {
 
         let mut pbft_msg = PbftMessage::new();
         pbft_msg.set_info(info);
-        pbft_msg.set_block(PbftBlock::from(block));
+        pbft_msg.set_block_id(block.block_id);
 
         ParsedMessage::from_pbft_message(pbft_msg)
     }
@@ -1559,12 +1537,9 @@ mod tests {
             info.set_seq_num(6);
             info.set_signer_id(vec![i]);
 
-            let mut block = PbftBlock::new();
-            block.set_block_id(head.block_id.clone());
-
             let mut msg = PbftMessage::new();
             msg.set_info(info);
-            msg.set_block(block);
+            msg.set_block_id(head.block_id.clone());
 
             let mut message = ParsedMessage::from_pbft_message(msg);
 
@@ -1599,12 +1574,8 @@ mod tests {
         let mut node0 = mock_node(vec![0]);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
 
-        // Add BlockNew to log
-        let block_new = mock_msg(PbftMessageType::BlockNew, 0, 1, mock_block(1), vec![0]);
-        node0
-            .msg_log
-            .add_message(block_new, &state0)
-            .unwrap_or_else(panic_with_err);
+        // Add block to the log
+        node0.msg_log.add_block(mock_block(1));
 
         // Add PrePrepare to log
         let valid_msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, mock_block(1), vec![0]);

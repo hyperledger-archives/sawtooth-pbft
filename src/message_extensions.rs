@@ -25,11 +25,11 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use hex;
-use sawtooth_sdk::consensus::engine::{Block, PeerId};
+use sawtooth_sdk::consensus::engine::PeerId;
 
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{
-    PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
+    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
 };
 
 impl Eq for PbftMessage {}
@@ -45,19 +45,10 @@ impl Hash for PbftMessageInfo {
     }
 }
 
-impl Hash for PbftBlock {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.get_block_id().hash(state);
-        self.get_block_num().hash(state);
-        self.get_summary().hash(state);
-        self.get_signer_id().hash(state);
-    }
-}
-
 impl Hash for PbftMessage {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.get_info().hash(state);
-        self.get_block().hash(state);
+        self.get_block_id().hash(state);
     }
 }
 
@@ -96,18 +87,6 @@ impl fmt::Display for PbftMessageInfo {
             self.get_view(),
             &hex::encode(self.get_signer_id())[..6],
         )
-    }
-}
-
-impl From<Block> for PbftBlock {
-    fn from(block: Block) -> Self {
-        let mut pbft_block = PbftBlock::new();
-        pbft_block.set_block_id(block.block_id);
-        pbft_block.set_signer_id(block.signer_id);
-        pbft_block.set_block_num(block.block_num);
-        pbft_block.set_summary(block.summary);
-        pbft_block.set_seal(block.payload);
-        pbft_block
     }
 }
 

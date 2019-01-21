@@ -23,11 +23,11 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use protobuf::Message;
-use sawtooth_sdk::consensus::engine::PeerMessage;
+use sawtooth_sdk::consensus::engine::{BlockId, PeerMessage};
 
 use crate::error::PbftError;
 use crate::hash::verify_sha512;
-use crate::protos::pbft_message::{PbftBlock, PbftMessage, PbftMessageInfo, PbftNewView};
+use crate::protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftNewView};
 
 /// Wrapper enum for all of the possible PBFT-related messages
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,15 +103,15 @@ impl ParsedMessage {
         }
     }
 
-    /// Returns the `PbftBlock` for this message's wrapped `PbftMessage`.
+    /// Returns the `BlockId` for this message's wrapped `PbftMessage`.
     ///
     /// # Panics
-    /// + If the wrapped message is a `NewView`, which doesn't contain a block
-    pub fn get_block(&self) -> &PbftBlock {
+    /// + If the wrapped message is a `NewView`, which doesn't contain a block_id
+    pub fn get_block_id(&self) -> BlockId {
         match &self.message {
-            PbftMessageWrapper::Message(m) => m.get_block(),
+            PbftMessageWrapper::Message(m) => m.get_block_id().to_vec(),
             PbftMessageWrapper::NewView(_) => {
-                panic!("ParsedPeerMessage.get_block found a new view message!")
+                panic!("ParsedPeerMessage.get_block_id found a new view message!")
             }
         }
     }
@@ -196,7 +196,6 @@ pub enum PbftMessageType {
     Commit,
 
     /// Auxiliary PBFT messages
-    BlockNew,
     NewView,
     ViewChange,
 
@@ -209,7 +208,6 @@ impl fmt::Display for PbftMessageType {
             PbftMessageType::PrePrepare => "PP",
             PbftMessageType::Prepare => "Pr",
             PbftMessageType::Commit => "Co",
-            PbftMessageType::BlockNew => "BN",
             PbftMessageType::NewView => "NV",
             PbftMessageType::ViewChange => "VC",
             PbftMessageType::Unset => "Un",
@@ -224,7 +222,6 @@ impl<'a> From<&'a str> for PbftMessageType {
             "PrePrepare" => PbftMessageType::PrePrepare,
             "Prepare" => PbftMessageType::Prepare,
             "Commit" => PbftMessageType::Commit,
-            "BlockNew" => PbftMessageType::BlockNew,
             "NewView" => PbftMessageType::NewView,
             "ViewChange" => PbftMessageType::ViewChange,
             _ => {

@@ -15,20 +15,6 @@
 
 syntax = "proto3";
 
-// PBFT-specific block information (don't need to keep sending the whole payload
-// around the network)
-message PbftBlock {
-  bytes block_id = 1;
-
-  bytes signer_id = 2;
-
-  uint64 block_num = 3;
-
-  bytes summary = 4;
-
-  bytes seal = 5;
-}
-
 // Represents all common information used in a PBFT message
 message PbftMessageInfo {
   // Type of the message
@@ -50,8 +36,8 @@ message PbftMessage {
   // Message information
   PbftMessageInfo info = 1;
 
-  // The actual message
-  PbftBlock block = 2;
+  // The block this message is for
+  bytes block_id = 2;
 }
 
 // A message sent by the new primary to signify that the new view should be
