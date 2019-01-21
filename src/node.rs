@@ -387,15 +387,29 @@ impl PbftNode {
 
     /// Handle a `NewView` message
     ///
-    /// When a `NewView` is received, first verify that it is valid. If the NewView is invalid,
-    /// start a new view change for the next view; if the NewView is valid, update the view and the
-    /// node's state.
+    /// When a `NewView` is received, first check that the node is expecting it and verify that it
+    /// is valid. If the NewView is invalid, start a new view change for the next view; if the
+    /// NewView is valid, update the view and the node's state.
     fn handle_new_view(
         &mut self,
         msg: &ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         let new_view = msg.get_new_view_message();
+
+        // Make sure this is a NewView that the node is expecting; if this isn't enforced, a faulty
+        // node could send an invalid NewView message to arbitrarily initiate a view change across
+        // the network
+        if match state.mode {
+            PbftMode::ViewChanging(v) => v != new_view.get_info().get_view(),
+            _ => true,
+        } {
+            warn!(
+                "Received NewView message ({:?}) for a view that this node is not changing to",
+                new_view.get_info().get_view(),
+            );
+            return Ok(());
+        }
 
         match self.verify_new_view(new_view, state) {
             Err(PbftError::NotFromPrimary) => {
@@ -466,7 +480,6 @@ impl PbftNode {
                 self.service
                     .fail_block(block.block_id)
                     .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
-                self.start_view_change(state, state.view + 1)?;
                 return Err(PbftError::FaultyPrimary(format!(
                     "Consensus seal failed verification - Error was: {}",
                     err
@@ -501,7 +514,7 @@ impl PbftNode {
             debug!("Working block set to {:?}", state.working_block);
 
             // Send PrePrepare messages if we're the primary
-            if state.is_primary() {
+            if block.signer_id == state.id && state.is_primary() {
                 debug!("Broadcasting PrePrepares");
                 let s = state.seq_num;
                 self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, pbft_block, state)?;
@@ -1150,6 +1163,9 @@ impl PbftNode {
         info!("{}: Starting change to view {}", state, view);
 
         state.mode = PbftMode::ViewChanging(view);
+
+        // Stop the faulty primary timeout because it is not needed until after the view change
+        state.faulty_primary_timeout.stop();
 
         // Update the view change timeout and start it
         state.view_change_timeout = Timeout::new(
