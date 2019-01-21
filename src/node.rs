@@ -813,7 +813,7 @@ impl PbftNode {
                 return Err(PbftError::SigningError(format!(
                     "Error while verifying vote signature: {:?}",
                     err
-                )))
+                )));
             }
         }
 
