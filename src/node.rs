@@ -235,7 +235,7 @@ impl PbftNode {
                 .msg_log
                 .get_first_msg(&info, PbftMessageType::PrePrepare)
             {
-                if self.msg_log.log_has_required_msgs(
+                if self.msg_log.has_required_msgs(
                     PbftMessageType::Prepare,
                     &pre_prep,
                     true,
@@ -279,7 +279,7 @@ impl PbftNode {
                 .msg_log
                 .get_first_msg(&info, PbftMessageType::PrePrepare)
             {
-                if self.msg_log.log_has_required_msgs(
+                if self.msg_log.has_required_msgs(
                     PbftMessageType::Commit,
                     &pre_prep,
                     true,
@@ -338,7 +338,7 @@ impl PbftNode {
         if match state.mode {
             PbftMode::ViewChanging(v) => msg_view > v,
             PbftMode::Normal => true,
-        } && self.msg_log.log_has_required_msgs(
+        } && self.msg_log.has_required_msgs(
             PbftMessageType::ViewChange,
             msg,
             false,
@@ -1600,7 +1600,7 @@ mod tests {
             .unwrap_or_else(panic_with_err);
 
         // Verify it worked
-        assert!(node0.msg_log.log_has_required_msgs(
+        assert!(node0.msg_log.has_required_msgs(
             PbftMessageType::PrePrepare,
             &valid_msg,
             true,

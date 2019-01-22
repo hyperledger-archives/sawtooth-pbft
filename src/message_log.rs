@@ -99,7 +99,7 @@ impl PbftLog {
     /// - The `msg_type`
     /// - Sequence + view number of the provided `ref_msg`
     /// - The block in `ref_msg` (only if `check_block` is `true`)
-    pub fn log_has_required_msgs(
+    pub fn has_required_msgs(
         &self,
         msg_type: PbftMessageType,
         ref_msg: &ParsedMessage,
