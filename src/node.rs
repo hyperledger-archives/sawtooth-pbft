@@ -819,7 +819,7 @@ impl PbftNode {
             Ok(true) => {}
             Ok(false) => {
                 return Err(PbftError::SigningError(format!(
-                    "Vote ({:?}) failed signature verification",
+                    "Vote ({}) failed signature verification",
                     vote
                 )));
             }
@@ -934,7 +934,7 @@ impl PbftNode {
             PbftError::SerializationError("Error parsing seal for verification".into(), err)
         })?;
 
-        debug!("Parsed seal: {:?}", seal);
+        debug!("Parsed seal: {}", seal);
 
         if seal.previous_id != &block.previous_id[..] {
             return Err(PbftError::InvalidMessage(format!(

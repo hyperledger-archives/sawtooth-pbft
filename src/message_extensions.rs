@@ -26,6 +26,7 @@ use std::hash::{Hash, Hasher};
 
 use hex;
 use sawtooth_sdk::consensus::engine::PeerId;
+use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{
@@ -86,6 +87,39 @@ impl fmt::Display for PbftMessageInfo {
             self.get_seq_num(),
             self.get_view(),
             &hex::encode(self.get_signer_id())[..6],
+        )
+    }
+}
+
+impl fmt::Display for PbftSeal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let votes = self
+            .get_previous_commit_votes()
+            .iter()
+            .fold(String::new(), |acc, vote| format!("{}{}, ", acc, vote));
+        write!(
+            f,
+            "PbftSeal(previous_id: {}, summary: {}, votes: {})",
+            hex::encode(self.get_previous_id()),
+            hex::encode(self.get_summary()),
+            votes,
+        )
+    }
+}
+
+impl fmt::Display for PbftSignedVote {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "PbftSignedVote(header: {:?}, message: {:?}, header_bytes: {}, header_signature: {}, \
+             message_bytes: {})",
+            protobuf::parse_from_bytes::<ConsensusPeerMessageHeader>(self.get_header_bytes())
+                .map_err(|_| fmt::Error)?,
+            protobuf::parse_from_bytes::<PbftMessage>(self.get_message_bytes())
+                .map_err(|_| fmt::Error)?,
+            hex::encode(self.get_header_bytes()),
+            hex::encode(self.get_header_signature()),
+            hex::encode(self.get_message_bytes()),
         )
     }
 }
