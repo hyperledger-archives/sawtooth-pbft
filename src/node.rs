@@ -542,7 +542,7 @@ impl PbftNode {
             self.msg_log.add_message(message.clone(), state)?;
         }
 
-        // Commit the block and skip straight to Finished
+        // Commit the block, stop the faulty primary timeout, and skip straight to Finished
         self.service
             .commit_block(block.previous_id.clone())
             .map_err(|err| {
@@ -555,6 +555,7 @@ impl PbftNode {
                     err,
                 )
             })?;
+        state.faulty_primary_timeout.stop();
         state.phase = PbftPhase::Finishing(block.previous_id.clone(), true);
 
         Ok(())
