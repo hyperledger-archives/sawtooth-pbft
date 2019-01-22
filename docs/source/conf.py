@@ -54,7 +54,6 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.imgmath',
     'sphinxcontrib.httpdomain',
-    'sphinxcontrib.openapi',
 ]
 
 # Autodoc settings
