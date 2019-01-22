@@ -476,7 +476,7 @@ impl PbftNode {
                 self.service
                     .fail_block(block.block_id)
                     .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
-                return Err(PbftError::FaultyPrimary(format!(
+                return Err(PbftError::InvalidMessage(format!(
                     "Consensus seal failed verification - Error was: {}",
                     err
                 )));
