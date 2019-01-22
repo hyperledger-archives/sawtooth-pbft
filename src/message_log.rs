@@ -95,6 +95,14 @@ impl PbftLog {
         Ok(())
     }
 
+    /// Check if the log contains a BlockNew message with the specified block ID
+    pub fn has_block(&self, block_id: &[u8]) -> bool {
+        self.messages.iter().any(|msg| {
+            msg.info().get_msg_type() == String::from(PbftMessageType::BlockNew)
+                && msg.get_block().get_block_id() == block_id
+        })
+    }
+
     /// Check if the log contains `required` number of messages that match:
     /// - The `msg_type`
     /// - Sequence + view number of the provided `ref_msg`

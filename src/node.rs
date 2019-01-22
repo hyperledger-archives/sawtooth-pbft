@@ -138,12 +138,7 @@ impl PbftNode {
 
         // Check that there is a matching BlockNew message; if not, add the PrePrepare to the
         // backlog because we can't perform consensus until the validator has this block
-        let block_new_exists = self
-            .msg_log
-            .get_messages_of_type_seq(PbftMessageType::BlockNew, msg.info().get_seq_num())
-            .iter()
-            .any(|block_new_msg| block_new_msg.get_block() == msg.get_block());
-        if !block_new_exists {
+        if !self.msg_log.has_block(msg.get_block().get_block_id()) {
             debug!("No matching BlockNew found for PrePrepare; pushing to backlog");
             self.msg_log.push_backlog(msg);
             return Ok(());
@@ -338,12 +333,10 @@ impl PbftNode {
         if match state.mode {
             PbftMode::ViewChanging(v) => msg_view > v,
             PbftMode::Normal => true,
-        } && self.msg_log.has_required_msgs(
-            PbftMessageType::ViewChange,
-            msg,
-            false,
-            state.f + 1,
-        ) {
+        } && self
+            .msg_log
+            .has_required_msgs(PbftMessageType::ViewChange, msg, false, state.f + 1)
+        {
             warn!(
                 "{}: Received f + 1 ViewChange messages; starting early view change",
                 state
@@ -1600,12 +1593,9 @@ mod tests {
             .unwrap_or_else(panic_with_err);
 
         // Verify it worked
-        assert!(node0.msg_log.has_required_msgs(
-            PbftMessageType::PrePrepare,
-            &valid_msg,
-            true,
-            1
-        ));
+        assert!(node0
+            .msg_log
+            .has_required_msgs(PbftMessageType::PrePrepare, &valid_msg, true, 1));
         assert_eq!(state0.phase, PbftPhase::Preparing);
     }
 
