@@ -47,7 +47,7 @@ impl fmt::Display for PbftPhase {
                 PbftPhase::Preparing => "Preparing".into(),
                 PbftPhase::Committing => "Committing".into(),
                 PbftPhase::Finishing(ref id, cu) => {
-                    format!("Finishing {}/{}", &hex::encode(id)[..6], cu)
+                    format!("Finishing {}/{}", &hex::encode(id), cu)
                 }
             },
         )

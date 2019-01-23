@@ -169,7 +169,7 @@ impl PbftNode {
             return Err(PbftError::FaultyPrimary(format!(
                 "When checking PrePrepare with block {:?}, found PrePrepare(s) with same view and \
                  seq num but mismatched block(s): {:?}",
-                hex::encode(&msg.get_block_id()[..3]),
+                hex::encode(&msg.get_block_id()),
                 mismatched_blocks,
             )));
         }
@@ -274,7 +274,7 @@ impl PbftNode {
                 ) {
                     self.service.commit_block(block_id.clone()).map_err(|err| {
                         PbftError::ServiceError(
-                            format!("Failed to commit block {:?}", hex::encode(&block_id[..3])),
+                            format!("Failed to commit block {:?}", hex::encode(&block_id)),
                             err,
                         )
                     })?;
@@ -467,9 +467,9 @@ impl PbftNode {
             return Err(PbftError::InternalError(format!(
                 "Received block {:?} / {:?} but node does not have previous block {:?} / {:?}",
                 block.block_num,
-                hex::encode(&block.block_id[..3]),
+                hex::encode(&block.block_id),
                 block.block_num - 1,
-                hex::encode(&block.previous_id[..3]),
+                hex::encode(&block.previous_id),
             )));
         }
 
@@ -555,7 +555,7 @@ impl PbftNode {
                     format!(
                         "Failed to commit block with catch-up {:?} / {:?}",
                         block.block_num - 1,
-                        hex::encode(&block.previous_id[..3])
+                        hex::encode(&block.previous_id)
                     ),
                     err,
                 )
@@ -584,16 +584,12 @@ impl PbftNode {
             info!(
                 "{}: Igorning BlockCommit for {}",
                 state,
-                hex::encode(&block_id[..3])
+                hex::encode(&block_id)
             );
             return Ok(());
         }
 
-        info!(
-            "{}: Got BlockCommit for {}",
-            state,
-            hex::encode(&block_id[..3])
-        );
+        info!("{}: Got BlockCommit for {}", state, hex::encode(&block_id));
 
         let is_catching_up = match state.phase {
             PbftPhase::Finishing(_, true) => true,
@@ -619,7 +615,7 @@ impl PbftNode {
             self.service.fail_block(id.clone()).unwrap_or_else(|err| {
                 error!(
                     "Couldn't fail block {:?} due to error: {:?}",
-                    &hex::encode(id)[..6],
+                    &hex::encode(id),
                     err
                 )
             });
@@ -949,8 +945,8 @@ impl PbftNode {
         if seal.previous_id != &block.previous_id[..] {
             return Err(PbftError::InvalidMessage(format!(
                 "Seal's previous ID ({}) doesn't match block's previous ID ({})",
-                hex::encode(&seal.previous_id[..3]),
-                hex::encode(&block.previous_id[..3])
+                hex::encode(&seal.previous_id),
+                hex::encode(&block.previous_id)
             )));
         }
 

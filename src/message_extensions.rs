@@ -86,7 +86,7 @@ impl fmt::Display for PbftMessageInfo {
             PbftMessageType::from(self.get_msg_type()),
             self.get_seq_num(),
             self.get_view(),
-            &hex::encode(self.get_signer_id())[..6],
+            &hex::encode(self.get_signer_id()),
         )
     }
 }
