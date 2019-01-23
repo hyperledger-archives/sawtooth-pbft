@@ -23,6 +23,10 @@ pipeline {
         }
     }
 
+    triggers {
+        cron(env.BRANCH_NAME == 'master' ? 'H 3 * * *' : '')
+    }
+
     options {
         timestamps()
         buildDiscarder(logRotator(daysToKeepStr: '31'))
