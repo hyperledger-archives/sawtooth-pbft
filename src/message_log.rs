@@ -19,7 +19,7 @@
 
 #![allow(unknown_lints)]
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::fmt;
 
 use hex;
@@ -41,9 +41,6 @@ pub struct PbftLog {
 
     /// Maximum log size
     max_log_size: u64,
-
-    /// Backlog of `PrePrepare`s that the node has not yet received `BlockNew`s for
-    pre_prepare_backlog: VecDeque<ParsedMessage>,
 }
 
 impl fmt::Display for PbftLog {
@@ -77,7 +74,6 @@ impl PbftLog {
             blocks: HashSet::new(),
             messages: HashSet::new(),
             max_log_size: config.max_log_size,
-            pre_prepare_backlog: VecDeque::new(),
         }
     }
 
@@ -119,6 +115,14 @@ impl PbftLog {
         self.messages.insert(msg);
 
         Ok(())
+    }
+
+    /// Check if the log has a PrePrepare at the node's current view and sequence number that
+    /// matches the given block ID
+    pub fn has_pre_prepare(&self, state: &PbftState, block_id: &[u8]) -> bool {
+        self.get_messages_of_type_seq_view(PbftMessageType::PrePrepare, state.seq_num, state.view)
+            .iter()
+            .any(|msg| msg.get_block_id() == block_id)
     }
 
     /// Check if the log contains `required` number of messages that match:
@@ -224,20 +228,6 @@ impl PbftLog {
             self.blocks
                 .retain(|block| block.block_num >= current_seq_num);
         }
-
-        // Clean out stale PrePrepares
-        self.pre_prepare_backlog
-            .retain(|msg| msg.info().get_seq_num() >= current_seq_num);
-    }
-
-    /// Push a `PrePrepare` to the backlog
-    pub fn push_backlog(&mut self, msg: ParsedMessage) {
-        self.pre_prepare_backlog.push_back(msg);
-    }
-
-    /// Pop the next `PrePrepare` from the backlog
-    pub fn pop_backlog(&mut self) -> Option<ParsedMessage> {
-        self.pre_prepare_backlog.pop_front()
     }
 }
 

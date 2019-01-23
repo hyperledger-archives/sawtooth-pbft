@@ -115,13 +115,14 @@ impl PbftNode {
     /// A `PrePrepare` message is accepted and added to the log if the following are true:
     /// - The message signature is valid (already verified by validator)
     /// - The message is from the primary
-    /// - There is a matching block in the log
     /// - A `PrePrepare` message does not already exist at this view and sequence number with a
     ///   different block
     /// - The message's view matches the node's current view (handled by message log)
     ///
     /// Once a `PrePrepare` for the current sequence number is accepted and added to the log, the
-    /// node node will switch to the Preparing phase and broadcast a `Prepare` message
+    /// node will check if it already has the block this `PrePrepare` is for in its log; if it
+    /// does, it will switch to the `Preparing` phase and broadcast a `Prepare` message, otherwise
+    /// it will wait until the block is received.
     fn handle_pre_prepare(
         &mut self,
         msg: ParsedMessage,
@@ -133,14 +134,6 @@ impl PbftNode {
                 "Got PrePrepare from a secondary node {:?}; ignoring message",
                 msg.info().get_signer_id()
             );
-            return Ok(());
-        }
-
-        // Check that there is a matching BlockNew message; if not, add the PrePrepare to the
-        // backlog because we can't perform consensus until the validator has this block
-        if !self.msg_log.has_block(msg.get_block_id().as_slice()) {
-            debug!("No matching block found for PrePrepare; pushing to backlog");
-            self.msg_log.push_backlog(msg);
             return Ok(());
         }
 
@@ -176,6 +169,13 @@ impl PbftNode {
 
         // Add message to the log
         self.msg_log.add_message(msg.clone(), state)?;
+
+        // Check if there is a matching block in the log; if not, the node will have to wait until
+        // the block is received from the validator
+        if !self.msg_log.has_block(msg.get_block_id().as_slice()) {
+            debug!("No matching block found for PrePrepare; waiting for block");
+            return Ok(());
+        }
 
         // If this message is for the current sequence number and the node is in the PrePreparing
         // phase, switch to Preparing
@@ -437,7 +437,8 @@ impl PbftNode {
     ///
     /// The validator has received a new block; verify the block's consensus seal and add the block
     /// to the log. If this is the block the node is waiting for and this node is the primary,
-    /// broadcast a PrePrepare. If this is a future block, use it to catch up.
+    /// broadcast a PrePrepare; if the node isn't the primary but it already has the PrePrepare for
+    /// this block, switch to `Preparing`. If this is a future block, use it to catch up.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         info!(
             "{}: Got BlockNew: {} / {}",
@@ -501,11 +502,38 @@ impl PbftNode {
         };
         if block.block_num > state.seq_num && !is_waiting {
             self.catchup(state, &block)?;
-        } else if block.block_num == state.seq_num && state.is_primary() {
-            // This is the next block and this node is the primary; broadcast PrePrepare messages
-            info!("Broadcasting PrePrepares");
-            let s = state.seq_num;
-            self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, block.block_id, state)?;
+        } else if block.block_num == state.seq_num {
+            if state.is_primary() {
+                // This is the next block and this node is the primary; broadcast PrePrepare
+                // messages
+                info!("Broadcasting PrePrepares");
+                let s = state.seq_num;
+                self._broadcast_pbft_message(
+                    s,
+                    PbftMessageType::PrePrepare,
+                    block.block_id,
+                    state,
+                )?;
+            } else {
+                // Check if there is already a matching PrePrepare for this block and that the node
+                // is in the PrePreparing phase; if so, switch to Preparing
+                if self.msg_log.has_pre_prepare(state, &block.block_id)
+                    && state.phase == PbftPhase::PrePreparing
+                {
+                    state.switch_phase(PbftPhase::Preparing)?;
+
+                    // We can also stop the view change timer, since we received a new block and a
+                    // valid PrePrepare in time
+                    state.faulty_primary_timeout.stop();
+
+                    self._broadcast_pbft_message(
+                        state.seq_num,
+                        PbftMessageType::Prepare,
+                        block.block_id,
+                        state,
+                    )?;
+                }
+            }
         }
 
         Ok(())
@@ -1075,16 +1103,6 @@ impl PbftNode {
     /// Check to see if the view change timeout has expired
     pub fn check_view_change_timeout_expired(&mut self, state: &mut PbftState) -> bool {
         state.view_change_timeout.check_expired()
-    }
-
-    /// Retry messages from the `PrePrepare` backlog
-    pub fn retry_backlog(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
-        if let Some(msg) = self.msg_log.pop_backlog() {
-            debug!("{}: Popped PrePrepare ({:?}) from backlog", state, msg);
-            self.on_peer_message(msg, state)
-        } else {
-            Ok(())
-        }
     }
 
     // ---------- Methods for communication between nodes ----------

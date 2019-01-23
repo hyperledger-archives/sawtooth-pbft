@@ -113,8 +113,6 @@ impl Engine for PbftEngine {
                     }
                 }
             });
-
-            log_any_error(node.retry_backlog(state));
         }
 
         Ok(())
