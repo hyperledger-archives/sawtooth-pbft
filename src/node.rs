@@ -575,7 +575,7 @@ impl PbftNode {
             self.msg_log.add_message(message.clone(), state)?;
         }
 
-        // Commit the block, stop the faulty primary timeout, and skip straight to Finished
+        // Commit the block, stop the faulty primary timeout, and skip straight to Finishing
         self.service
             .commit_block(block.previous_id.clone())
             .map_err(|err| {
