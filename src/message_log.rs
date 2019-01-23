@@ -23,6 +23,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt;
 
 use hex;
+use sawtooth_sdk::consensus::engine::Block;
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
@@ -32,6 +33,9 @@ use crate::state::PbftState;
 
 /// Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
+    /// All blocks received from the validator that have not been garbage collected
+    blocks: HashSet<Block>,
+
     /// All messages accepted by the node that have not been garbage collected
     messages: HashSet<ParsedMessage>,
 
@@ -70,10 +74,32 @@ impl PbftLog {
     /// Create a new, empty `PbftLog` with the `max_log_size` specified in the `config`
     pub fn new(config: &PbftConfig) -> Self {
         PbftLog {
+            blocks: HashSet::new(),
             messages: HashSet::new(),
             max_log_size: config.max_log_size,
             pre_prepare_backlog: VecDeque::new(),
         }
+    }
+
+    /// Add a `Block` to the log
+    pub fn add_block(&mut self, block: Block) {
+        trace!("Adding block to log: {:?}", block);
+        self.blocks.insert(block);
+    }
+
+    /// Get all `Block`s in the message log with the specified block number
+    pub fn get_blocks(&self, block_num: u64) -> Vec<&Block> {
+        self.blocks
+            .iter()
+            .filter(|block| block.block_num == block_num)
+            .collect()
+    }
+
+    /// Check if the log contains a block with the specified block ID
+    pub fn has_block(&self, block_id: &[u8]) -> bool {
+        self.blocks
+            .iter()
+            .any(|block| block.block_id.as_slice() == block_id)
     }
 
     /// Add a parsed PBFT message to the log
@@ -98,12 +124,12 @@ impl PbftLog {
     /// Check if the log contains `required` number of messages that match:
     /// - The `msg_type`
     /// - Sequence + view number of the provided `ref_msg`
-    /// - The block in `ref_msg` (only if `check_block` is `true`)
-    pub fn log_has_required_msgs(
+    /// - The block_id in `ref_msg` (only if `check_block_id` is `true`)
+    pub fn has_required_msgs(
         &self,
         msg_type: PbftMessageType,
         ref_msg: &ParsedMessage,
-        check_block: bool,
+        check_block_id: bool,
         required: u64,
     ) -> bool {
         let msgs = self.get_messages_of_type_seq_view(
@@ -112,9 +138,9 @@ impl PbftLog {
             ref_msg.info().get_view(),
         );
 
-        let msgs = if check_block {
+        let msgs = if check_block_id {
             msgs.iter()
-                .filter(|msg| msg.get_block() == ref_msg.get_block())
+                .filter(|msg| msg.get_block_id() == ref_msg.get_block_id())
                 .cloned()
                 .collect()
         } else {
@@ -194,6 +220,9 @@ impl PbftLog {
             // needs to build the next consensus seal
             self.messages
                 .retain(|msg| msg.info().get_seq_num() >= current_seq_num - 1);
+
+            self.blocks
+                .retain(|block| block.block_num >= current_seq_num);
         }
 
         // Clean out stale PrePrepares
@@ -216,8 +245,7 @@ impl PbftLog {
 mod tests {
     use super::*;
     use crate::config;
-    use crate::hash::hash_sha256;
-    use crate::protos::pbft_message::{PbftBlock, PbftMessage};
+    use crate::protos::pbft_message::PbftMessage;
     use sawtooth_sdk::consensus::engine::PeerId;
 
     /// Create a PbftMessage, given its type, view, sequence number, and who it's from
@@ -226,7 +254,6 @@ mod tests {
         view: u64,
         seq_num: u64,
         signer_id: PeerId,
-        block_signer_id: PeerId,
     ) -> ParsedMessage {
         let mut info = PbftMessageInfo::new();
         info.set_msg_type(String::from(msg_type));
@@ -234,16 +261,9 @@ mod tests {
         info.set_seq_num(seq_num);
         info.set_signer_id(Vec::<u8>::from(signer_id.clone()));
 
-        let mut pbft_block = PbftBlock::new();
-        pbft_block.set_block_id(hash_sha256(
-            format!("I'm a block with block num {}", seq_num).as_bytes(),
-        ));
-        pbft_block.set_signer_id(Vec::<u8>::from(block_signer_id));
-        pbft_block.set_block_num(seq_num);
-
         let mut msg = PbftMessage::new();
         msg.set_info(info);
-        msg.set_block(pbft_block);
+        msg.set_block_id(vec![]);
 
         ParsedMessage::from_pbft_message(msg)
     }
@@ -260,13 +280,7 @@ mod tests {
         let mut log = PbftLog::new(&cfg);
         let state = PbftState::new(vec![], 0, &cfg);
 
-        let msg = make_msg(
-            PbftMessageType::PrePrepare,
-            0,
-            1,
-            get_peer_id(&cfg, 0),
-            get_peer_id(&cfg, 0),
-        );
+        let msg = make_msg(PbftMessageType::PrePrepare, 0, 1, get_peer_id(&cfg, 0));
 
         log.add_message(msg.clone(), &state).unwrap();
 
@@ -285,44 +299,19 @@ mod tests {
         let state = PbftState::new(vec![], 0, &cfg);
 
         for seq in 1..5 {
-            let msg = make_msg(
-                PbftMessageType::BlockNew,
-                0,
-                seq,
-                get_peer_id(&cfg, 0),
-                get_peer_id(&cfg, 0),
-            );
-            log.add_message(msg.clone(), &state).unwrap();
+            log.add_block(Block::default());
 
-            let msg = make_msg(
-                PbftMessageType::PrePrepare,
-                0,
-                seq,
-                get_peer_id(&cfg, 0),
-                get_peer_id(&cfg, 0),
-            );
+            let msg = make_msg(PbftMessageType::PrePrepare, 0, seq, get_peer_id(&cfg, 0));
             log.add_message(msg.clone(), &state).unwrap();
 
             for peer in 0..4 {
-                let msg = make_msg(
-                    PbftMessageType::Prepare,
-                    0,
-                    seq,
-                    get_peer_id(&cfg, peer),
-                    get_peer_id(&cfg, 0),
-                );
+                let msg = make_msg(PbftMessageType::Prepare, 0, seq, get_peer_id(&cfg, peer));
 
                 log.add_message(msg.clone(), &state).unwrap();
             }
 
             for peer in 0..4 {
-                let msg = make_msg(
-                    PbftMessageType::Commit,
-                    0,
-                    seq,
-                    get_peer_id(&cfg, peer),
-                    get_peer_id(&cfg, 0),
-                );
+                let msg = make_msg(PbftMessageType::Commit, 0, seq, get_peer_id(&cfg, peer));
 
                 log.add_message(msg.clone(), &state).unwrap();
             }
@@ -333,7 +322,6 @@ mod tests {
 
         for old in 1..3 {
             for msg_type in &[
-                PbftMessageType::BlockNew,
                 PbftMessageType::PrePrepare,
                 PbftMessageType::Prepare,
                 PbftMessageType::Commit,
@@ -345,9 +333,13 @@ mod tests {
             }
         }
 
-        for msg_type in vec![PbftMessageType::BlockNew, PbftMessageType::PrePrepare] {
-            assert_eq!(log.get_messages_of_type_seq_view(msg_type, 4, 0).len(), 1);
-        }
+        assert!(log.blocks.is_empty());
+
+        assert_eq!(
+            log.get_messages_of_type_seq_view(PbftMessageType::PrePrepare, 4, 0)
+                .len(),
+            1
+        );
 
         for msg_type in vec![PbftMessageType::Prepare, PbftMessageType::Commit] {
             assert_eq!(log.get_messages_of_type_seq_view(msg_type, 4, 0).len(), 4);
