@@ -64,21 +64,21 @@ pub enum PbftMode {
 
 impl fmt::Display for PbftState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let ast = if self.is_primary() { "*" } else { " " };
-        let mode = match self.mode {
-            PbftMode::Normal => String::from("N"),
-            PbftMode::ViewChanging(v) => format!("V{}", v),
+        let is_primary = if self.is_primary() { " *" } else { "" };
+        let phase = if let PbftMode::ViewChanging(v) = self.mode {
+            format!("V({})", v)
+        } else {
+            match self.phase {
+                PbftPhase::PrePreparing => "PP".into(),
+                PbftPhase::Preparing => "Pr".into(),
+                PbftPhase::Committing => "Co".into(),
+                PbftPhase::Finishing(ref id, cu) => format!("Fi({}/{})", hex::encode(&id[..3]), cu),
+            }
         };
-
         write!(
             f,
-            "({} {} {}, seq {}), Node {}{}",
-            self.phase,
-            mode,
-            self.view,
-            self.seq_num,
-            ast,
-            &hex::encode(self.id.clone())[..6],
+            "({}, view {}, seq {}{})",
+            phase, self.view, self.seq_num, is_primary,
         )
     }
 }
