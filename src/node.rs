@@ -474,7 +474,7 @@ impl PbftNode {
             )));
         }
 
-        match self.verify_consensus_seal(&block, state) {
+        match self.verify_consensus_seal_from_block(&block, state) {
             Ok(_) => {
                 trace!("Consensus seal passed verification");
             }
@@ -940,11 +940,7 @@ impl PbftNode {
     }
 
     /// Verify the consensus seal from the current block that proves the previous block
-    ///
-    /// # Panics
-    /// + If the node is unable to query the validator for on-chain settings
-    /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
-    fn verify_consensus_seal(
+    fn verify_consensus_seal_from_block(
         &mut self,
         block: &Block,
         state: &mut PbftState,
@@ -955,6 +951,7 @@ impl PbftNode {
             return Ok(());
         }
 
+        // Parse the seal
         if block.payload.is_empty() {
             return Err(PbftError::InvalidMessage(
                 "Block published without a seal".into(),
@@ -976,6 +973,23 @@ impl PbftNode {
             )));
         }
 
+        // Verify the seal itself
+        self.verify_consensus_seal(&seal, block.signer_id.clone(), state)?;
+
+        Ok(())
+    }
+
+    /// Verify the given consenus seal
+    ///
+    /// # Panics
+    /// + If the node is unable to query the validator for on-chain settings
+    /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
+    fn verify_consensus_seal(
+        &mut self,
+        seal: &PbftSeal,
+        seal_signer_id: PeerId,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
         // Verify each individual vote and extract the signer ID from each PbftMessage so the IDs
         // can be verified
         let voter_ids =
@@ -1011,7 +1025,7 @@ impl PbftNode {
         let peer_ids: HashSet<_> = peers
             .iter()
             .cloned()
-            .filter(|pid| pid != &block.signer_id)
+            .filter(|pid| pid != &seal_signer_id)
             .collect();
 
         trace!(
