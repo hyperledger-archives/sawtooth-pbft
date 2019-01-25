@@ -474,20 +474,17 @@ impl PbftNode {
             )));
         }
 
-        match self.verify_consensus_seal_from_block(&block, state) {
-            Ok(_) => {
-                trace!("Consensus seal passed verification");
-            }
-            Err(err) => {
+        let seal = self
+            .verify_consensus_seal_from_block(&block, state)
+            .map_err(|err| {
                 self.service
-                    .fail_block(block.block_id)
+                    .fail_block(block.block_id.clone())
                     .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
-                return Err(PbftError::InvalidMessage(format!(
+                PbftError::InvalidMessage(format!(
                     "Consensus seal failed verification - Error was: {}",
                     err
-                )));
-            }
-        }
+                ))
+            })?;
 
         // Add block to the log
         self.msg_log.add_block(block.clone());
@@ -501,7 +498,7 @@ impl PbftNode {
             _ => false,
         };
         if block.block_num > state.seq_num && !is_waiting {
-            self.catchup(state, &block)?;
+            self.catchup(state, &seal)?;
         } else if block.block_num == state.seq_num {
             if state.is_primary() {
                 // This is the next block and this node is the primary; broadcast PrePrepare
@@ -539,17 +536,12 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Use the given block's consensus seal to verify and commit the block this node is working on
-    fn catchup(&mut self, state: &mut PbftState, block: &Block) -> Result<(), PbftError> {
+    /// Use the given consensus seal to verify and commit the block this node is working on
+    fn catchup(&mut self, state: &mut PbftState, seal: &PbftSeal) -> Result<(), PbftError> {
         info!(
             "{}: Attempting to commit block {} using catch-up",
             state, state.seq_num
         );
-
-        // Parse messages from the seal
-        let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
-            PbftError::SerializationError("Error parsing seal for catch-up".into(), err)
-        })?;
 
         let messages = seal
             .get_commit_votes()
@@ -577,19 +569,19 @@ impl PbftNode {
 
         // Commit the block, stop the faulty primary timeout, and skip straight to Finishing
         self.service
-            .commit_block(block.previous_id.clone())
+            .commit_block(seal.block_id.clone())
             .map_err(|err| {
                 PbftError::ServiceError(
                     format!(
                         "Failed to commit block with catch-up {:?} / {:?}",
-                        block.block_num - 1,
-                        hex::encode(&block.previous_id)
+                        state.seq_num,
+                        hex::encode(&seal.block_id)
                     ),
                     err,
                 )
             })?;
         state.faulty_primary_timeout.stop();
-        state.phase = PbftPhase::Finishing(block.previous_id.clone(), true);
+        state.phase = PbftPhase::Finishing(seal.block_id.clone(), true);
 
         Ok(())
     }
@@ -671,8 +663,8 @@ impl PbftNode {
             .cloned()
             .cloned();
         if let Some(block) = block_option {
-            self.catchup(state, &block)?;
-            return Ok(());
+            let seal = self.verify_consensus_seal_from_block(&block, state)?;
+            return self.catchup(state, &seal);
         }
 
         // Restart the faulty primary timeout for the next block
@@ -939,16 +931,17 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Verify the consensus seal from the current block that proves the previous block
+    /// Verify the consensus seal from the current block that proves the previous block and return
+    /// the parsed seal
     fn verify_consensus_seal_from_block(
         &mut self,
         block: &Block,
         state: &mut PbftState,
-    ) -> Result<(), PbftError> {
+    ) -> Result<PbftSeal, PbftError> {
         // Since block 0 is genesis, block 1 is the first that can be verified with a seal; this
         // means that the node won't see a seal until block 2
         if block.block_num < 2 {
-            return Ok(());
+            return Ok(PbftSeal::new());
         }
 
         // Parse the seal
@@ -976,7 +969,7 @@ impl PbftNode {
         // Verify the seal itself
         self.verify_consensus_seal(&seal, block.signer_id.clone(), state)?;
 
-        Ok(())
+        Ok(seal)
     }
 
     /// Verify the given consenus seal
