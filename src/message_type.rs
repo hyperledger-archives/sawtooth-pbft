@@ -116,19 +116,6 @@ impl ParsedMessage {
         }
     }
 
-    /// Returns the wrapped `PbftMessage`.
-    ///
-    /// # Panics
-    /// + If the wrapped message is a `NewView`, not a regular message
-    pub fn get_pbft_message(&self) -> &PbftMessage {
-        match &self.message {
-            PbftMessageWrapper::Message(m) => m,
-            PbftMessageWrapper::NewView(_) => {
-                panic!("ParsedPeerMessage.get_pbft_message found a new view message!")
-            }
-        }
-    }
-
     /// Returns the wrapped `PbftNewView`.
     ///
     /// # Panics
