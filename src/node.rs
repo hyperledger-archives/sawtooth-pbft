@@ -742,7 +742,7 @@ impl PbftNode {
     }
 
     /// Build a consensus seal that proves the last block committed by this node
-    fn build_seal(&self, state: &PbftState) -> Result<Vec<u8>, PbftError> {
+    fn build_seal(&self, state: &PbftState) -> Result<PbftSeal, PbftError> {
         trace!("{}: Building seal for block {}", state, state.seq_num - 1);
 
         // The previous block may have been committed in a different view, so the node will need
@@ -782,8 +782,7 @@ impl PbftNode {
 
         trace!("Seal created: {:?}", seal);
 
-        seal.write_to_bytes()
-            .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
+        Ok(seal)
     }
 
     /// Verify that a vote matches the expected type, is properly signed, and passes the specified
@@ -1072,7 +1071,9 @@ impl PbftNode {
         let data = if state.seq_num <= 1 {
             vec![]
         } else {
-            self.build_seal(state)?
+            self.build_seal(state)?.write_to_bytes().map_err(|err| {
+                PbftError::SerializationError("Error writing seal to bytes".into(), err)
+            })?
         };
 
         match self.service.finalize_block(data) {
@@ -1409,7 +1410,11 @@ mod tests {
             node.msg_log.add_message(message, state).unwrap();
         }
 
-        block.payload = node.build_seal(state).unwrap();
+        let seal = node.build_seal(state).unwrap();
+        block.payload = seal
+            .write_to_bytes()
+            .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
+            .unwrap();
 
         block
     }
@@ -1583,7 +1588,10 @@ mod tests {
         }
 
         let seal = node.build_seal(&state).unwrap();
-        block.payload = seal;
+        block.payload = seal
+            .write_to_bytes()
+            .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
+            .unwrap();
 
         node.on_block_new(block, &mut state).unwrap();
     }
