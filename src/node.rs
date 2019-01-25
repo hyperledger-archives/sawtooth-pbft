@@ -34,7 +34,7 @@ use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
-    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
+    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSealResponse, PbftSignedVote,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
 use crate::timing::Timeout;
@@ -104,6 +104,8 @@ impl PbftNode {
             PbftMessageType::Commit => self.handle_commit(msg, state)?,
             PbftMessageType::ViewChange => self.handle_view_change(&msg, state)?,
             PbftMessageType::NewView => self.handle_new_view(&msg, state)?,
+            PbftMessageType::SealRequest => self.handle_seal_request(msg, state)?,
+            PbftMessageType::SealResponse => self.handle_seal_response(&msg, state)?,
             _ => warn!("Received message with unknown type: {:?}", msg_type),
         }
 
@@ -433,6 +435,72 @@ impl PbftNode {
         Ok(())
     }
 
+    /// Handle a `SealRequest` message
+    ///
+    /// A node is requesting a consensus seal for the last block. If the block has already been
+    /// committed by this node, build the seal and send it to the requesting node; if the block has
+    /// not been committed yet, add the request to the log and the node will build/send the seal
+    /// when it's done committing.
+    fn handle_seal_request(
+        &mut self,
+        msg: ParsedMessage,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        if state.seq_num == msg.info().get_seq_num() + 1 {
+            self.send_seal_response(state, &msg.info().get_signer_id().to_vec())
+        } else {
+            self.msg_log.add_message(msg, state)
+        }
+    }
+
+    /// Handle a `SealResponse` message
+    ///
+    /// A node has responded to the seal request by sending a seal for the last block; validate the
+    /// seal and commit the block.
+    fn handle_seal_response(
+        &mut self,
+        msg: &ParsedMessage,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        let seal = msg.get_seal_response().get_seal();
+
+        // If the node has already committed the block, ignore
+        if let PbftPhase::Finishing(_, _) = state.phase {
+            return Ok(());
+        }
+
+        // Make sure that this seal is for a block that the node has at this sequence number
+        if !self
+            .msg_log
+            .get_blocks(state.seq_num)
+            .iter()
+            .any(|block| block.block_id == seal.block_id)
+        {
+            warn!(
+                "Received a seal for a block ({:?}) that the node does not have at its current \
+                 sequence number",
+                hex::encode(&seal.block_id),
+            );
+            return Ok(());
+        }
+
+        // Verify the seal
+        match self.verify_consensus_seal(seal, msg.info().get_signer_id().to_vec(), state) {
+            Ok(_) => {
+                trace!("Consensus seal passed verification");
+            }
+            Err(err) => {
+                return Err(PbftError::InvalidMessage(format!(
+                    "Consensus seal failed verification - Error was: {}",
+                    err
+                )));
+            }
+        }
+
+        // Catch up
+        self.catchup(state, &seal, false)
+    }
+
     /// Handle a `BlockNew` update from the Validator
     ///
     /// The validator has received a new block; verify the block's consensus seal and add the block
@@ -498,7 +566,7 @@ impl PbftNode {
             _ => false,
         };
         if block.block_num > state.seq_num && !is_waiting {
-            self.catchup(state, &seal)?;
+            self.catchup(state, &seal, true)?;
         } else if block.block_num == state.seq_num {
             if state.is_primary() {
                 // This is the next block and this node is the primary; broadcast PrePrepare
@@ -537,7 +605,12 @@ impl PbftNode {
     }
 
     /// Use the given consensus seal to verify and commit the block this node is working on
-    fn catchup(&mut self, state: &mut PbftState, seal: &PbftSeal) -> Result<(), PbftError> {
+    fn catchup(
+        &mut self,
+        state: &mut PbftState,
+        seal: &PbftSeal,
+        catchup_again: bool,
+    ) -> Result<(), PbftError> {
         info!(
             "{}: Attempting to commit block {} using catch-up",
             state, state.seq_num
@@ -581,9 +654,34 @@ impl PbftNode {
                 )
             })?;
         state.faulty_primary_timeout.stop();
-        state.phase = PbftPhase::Finishing(seal.block_id.clone(), true);
+        state.phase = PbftPhase::Finishing(seal.block_id.clone(), catchup_again);
 
         Ok(())
+    }
+
+    /// Request the consensus seal for the next block from the network so the node can finish the
+    /// catch-up process
+    fn request_final_seal(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
+        info!(
+            "{}: Requesting seal to finish catch-up to block {}",
+            state, state.seq_num
+        );
+
+        // The node doesn't know which block that the network decided to commit, so it can't
+        // request the seal for a specific block (hence not including a block ID with this message)
+        let mut seal_request = PbftMessage::new();
+        seal_request.set_info(PbftMessageInfo::new_from(
+            PbftMessageType::SealRequest,
+            state.view,
+            state.seq_num,
+            state.id.clone(),
+        ));
+
+        let msg_bytes = seal_request.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing SealRequest to bytes".into(), err)
+        })?;
+
+        self._broadcast_message(PbftMessageType::SealRequest, msg_bytes, state)
     }
 
     /// Handle a `BlockCommit` update from the Validator
@@ -645,6 +743,20 @@ impl PbftNode {
         state.switch_phase(PbftPhase::PrePreparing)?;
         state.seq_num += 1;
 
+        // If node(s) are waiting for a seal to commit the last block, send it now
+        let requesters = self
+            .msg_log
+            .get_messages_of_type_seq(PbftMessageType::SealRequest, state.seq_num - 1)
+            .iter()
+            .map(|req| req.info().get_signer_id().to_vec())
+            .collect::<Vec<_>>();
+
+        for req in requesters {
+            self.send_seal_response(state, &req).unwrap_or_else(|err| {
+                error!("Failed to send seal response due to: {:?}", err);
+            });
+        }
+
         // Increment the view if a view change must be forced for fairness or if membership has
         // changed
         if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
@@ -664,7 +776,13 @@ impl PbftNode {
             .cloned();
         if let Some(block) = block_option {
             let seal = self.verify_consensus_seal_from_block(&block, state)?;
-            return self.catchup(state, &seal);
+            return self.catchup(state, &seal, true);
+        }
+
+        // If the node is catching up but doesn't have a block with a seal to commit the next one,
+        // it will need to request the seal to commit the last block
+        if is_catching_up {
+            return self.request_final_seal(state);
         }
 
         // Restart the faulty primary timeout for the next block
@@ -672,7 +790,7 @@ impl PbftNode {
 
         // Initialize a new block if this node is the primary and it is not in the process of
         // catching up
-        if state.is_primary() && !is_catching_up {
+        if state.is_primary() {
             info!(
                 "{}: Initializing block on top of {}",
                 state,
@@ -1163,6 +1281,50 @@ impl PbftNode {
         _state: &mut PbftState,
     ) -> Result<(), PbftError> {
         return Ok(());
+    }
+
+    /// Build a consensus seal for the last block this node committed and send it in a
+    /// `SealResponse` message to the node that requested the seal (the `recipient`)
+    #[allow(clippy::ptr_arg)]
+    fn send_seal_response(
+        &mut self,
+        state: &PbftState,
+        recipient: &PeerId,
+    ) -> Result<(), PbftError> {
+        let seal = self.build_seal(state).map_err(|err| {
+            PbftError::InternalError(format!("Failed to build requested seal due to: {}", err))
+        })?;
+
+        // Construct the response
+        let mut seal_response = PbftSealResponse::new();
+        seal_response.set_info(PbftMessageInfo::new_from(
+            PbftMessageType::SealResponse,
+            state.view,
+            state.seq_num,
+            state.id.clone(),
+        ));
+        seal_response.set_seal(seal);
+
+        let msg_bytes = seal_response.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing SealResponse to bytes".into(), err)
+        })?;
+
+        // Send the seal to the requester
+        self.service
+            .send_to(
+                recipient,
+                String::from(PbftMessageType::SealResponse).as_str(),
+                msg_bytes,
+            )
+            .map_err(|err| {
+                PbftError::ServiceError(
+                    format!(
+                        "Failed to send requested seal to {:?}",
+                        hex::encode(recipient)
+                    ),
+                    err,
+                )
+            })
     }
 
     // ---------- Miscellaneous methods ----------

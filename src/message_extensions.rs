@@ -30,11 +30,12 @@ use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{
-    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
+    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSealResponse, PbftSignedVote,
 };
 
 impl Eq for PbftMessage {}
 impl Eq for PbftSeal {}
+impl Eq for PbftSealResponse {}
 impl Eq for PbftNewView {}
 
 impl Hash for PbftMessageInfo {
@@ -59,6 +60,13 @@ impl Hash for PbftSeal {
         for vote in self.get_commit_votes() {
             vote.hash(state);
         }
+    }
+}
+
+impl Hash for PbftSealResponse {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_info().hash(state);
+        self.get_seal().hash(state);
     }
 }
 

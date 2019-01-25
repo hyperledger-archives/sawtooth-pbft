@@ -27,13 +27,14 @@ use sawtooth_sdk::consensus::engine::{BlockId, PeerMessage};
 
 use crate::error::PbftError;
 use crate::hash::verify_sha512;
-use crate::protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftNewView};
+use crate::protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftNewView, PbftSealResponse};
 
 /// Wrapper enum for all of the possible PBFT-related messages
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PbftMessageWrapper {
     Message(PbftMessage),
     NewView(PbftNewView),
+    SealResponse(PbftSealResponse),
 }
 
 /// Container for a received PeerMessage and the PBFT message parsed from it
@@ -65,6 +66,7 @@ impl Hash for ParsedMessage {
         match &self.message {
             PbftMessageWrapper::Message(m) => m.hash(state),
             PbftMessageWrapper::NewView(m) => m.hash(state),
+            PbftMessageWrapper::SealResponse(m) => m.hash(state),
         }
     }
 }
@@ -100,18 +102,22 @@ impl ParsedMessage {
         match &self.message {
             PbftMessageWrapper::Message(m) => &m.get_info(),
             PbftMessageWrapper::NewView(m) => &m.get_info(),
+            PbftMessageWrapper::SealResponse(m) => &m.get_info(),
         }
     }
 
     /// Returns the `BlockId` for this message's wrapped `PbftMessage`.
     ///
     /// # Panics
-    /// + If the wrapped message is a `NewView`, which doesn't contain a block_id
+    /// + If the wrapped message is a `NewView` or `SealResponse`, which don't contain a block_id
     pub fn get_block_id(&self) -> BlockId {
         match &self.message {
             PbftMessageWrapper::Message(m) => m.get_block_id().to_vec(),
             PbftMessageWrapper::NewView(_) => {
                 panic!("ParsedPeerMessage.get_block_id found a new view message!")
+            }
+            PbftMessageWrapper::SealResponse(_) => {
+                panic!("ParsedPeerMessage.get_block_id found a seal response message!")
             }
         }
     }
@@ -119,20 +125,39 @@ impl ParsedMessage {
     /// Returns the wrapped `PbftNewView`.
     ///
     /// # Panics
-    /// + If the wrapped message is a regular message, not a `NewView`
+    /// + If the wrapped message is a regular message or `SealResponse`, not a `NewView`
     pub fn get_new_view_message(&self) -> &PbftNewView {
         match &self.message {
             PbftMessageWrapper::Message(_) => {
                 panic!("ParsedPeerMessage.get_view_change_message found a pbft message!")
             }
             PbftMessageWrapper::NewView(m) => m,
+            PbftMessageWrapper::SealResponse(_) => {
+                panic!("ParsedPeerMessage.get_view_change_message found a seal response message!")
+            }
+        }
+    }
+
+    /// Returns the wrapped `PbftSealResponse`.
+    ///
+    /// # Panics
+    /// + If the wrapped message is a regular message or `NewView`
+    pub fn get_seal_response(&self) -> &PbftSealResponse {
+        match &self.message {
+            PbftMessageWrapper::Message(_) => {
+                panic!("ParsedPeerMessage.get_seal found a pbft message!")
+            }
+            PbftMessageWrapper::NewView(_) => {
+                panic!("ParsedPeerMessage.get_seal found a new view message!")
+            }
+            PbftMessageWrapper::SealResponse(s) => s,
         }
     }
 
     /// Constructs a `ParsedMessage` from the given `PeerMessage`.
     ///
-    /// Attempts to parse the message contents as either a `PbftMessage` or `PbftNewView` and wraps
-    /// that in an internal enum.
+    /// Attempts to parse the message contents as a `PbftMessage`, `PbftNewView`, or
+    /// `PbftSealResponse` and wraps that in an internal enum.
     pub fn from_peer_message(message: PeerMessage, from_self: bool) -> Result<Self, PbftError> {
         // Self-constructed messages aren't signed, since we don't have access to
         // the validator key necessary for signing them.
@@ -141,6 +166,13 @@ impl ParsedMessage {
         }
 
         let parsed_message = match message.header.message_type.as_str() {
+            "SealResponse" => PbftMessageWrapper::SealResponse(
+                protobuf::parse_from_bytes::<PbftSealResponse>(&message.content).map_err(
+                    |err| {
+                        PbftError::SerializationError("Error parsing PbftSealResponse".into(), err)
+                    },
+                )?,
+            ),
             "NewView" => PbftMessageWrapper::NewView(
                 protobuf::parse_from_bytes::<PbftNewView>(&message.content).map_err(|err| {
                     PbftError::SerializationError("Error parsing PbftNewView".into(), err)
@@ -185,6 +217,8 @@ pub enum PbftMessageType {
     /// Auxiliary PBFT messages
     NewView,
     ViewChange,
+    SealRequest,
+    SealResponse,
 
     Unset,
 }
@@ -197,6 +231,8 @@ impl fmt::Display for PbftMessageType {
             PbftMessageType::Commit => "Co",
             PbftMessageType::NewView => "NV",
             PbftMessageType::ViewChange => "VC",
+            PbftMessageType::SealRequest => "Rq",
+            PbftMessageType::SealResponse => "Rs",
             PbftMessageType::Unset => "Un",
         };
         write!(f, "{}", txt)
@@ -211,6 +247,8 @@ impl<'a> From<&'a str> for PbftMessageType {
             "Commit" => PbftMessageType::Commit,
             "NewView" => PbftMessageType::NewView,
             "ViewChange" => PbftMessageType::ViewChange,
+            "SealRequest" => PbftMessageType::SealRequest,
+            "SealResponse" => PbftMessageType::SealResponse,
             _ => {
                 warn!("Unhandled PBFT message type: {}", s);
                 PbftMessageType::Unset

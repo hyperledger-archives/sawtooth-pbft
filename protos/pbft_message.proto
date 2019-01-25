@@ -51,6 +51,15 @@ message PbftNewView {
   repeated PbftSignedVote view_changes = 2;
 }
 
+// A message sent to a node that has requested a seal for finishing catch-up
+message PbftSealResponse {
+  // Message information
+  PbftMessageInfo info = 1;
+
+  // The requested seal
+  PbftSeal seal = 2;
+}
+
 message PbftSignedVote {
   // Serialized ConsensusPeerMessage header
   bytes header_bytes = 1;
