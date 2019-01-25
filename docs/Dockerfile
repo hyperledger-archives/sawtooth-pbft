@@ -50,7 +50,6 @@ RUN apt-get update && apt-get install -y -q \
     && pip3 install \
     sphinx \
     sphinxcontrib-httpdomain \
-    sphinxcontrib-openapi \
     sphinx_rtd_theme
 
 RUN curl -OLsS https://github.com/google/protobuf/releases/download/v3.5.1/protoc-3.5.1-linux-x86_64.zip \
