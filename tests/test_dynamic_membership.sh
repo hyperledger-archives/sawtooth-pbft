@@ -26,7 +26,25 @@ set -eux
 
 # Clean up docker on exit, even if it failed
 function cleanup {
-    echo "Done testing; shutting down all containers"
+    echo "Done testing"
+    echo "Dumping logs"
+    echo "-- Workload --"
+    docker-compose -p ${ISOLATION_ID} -f adhoc/workload.yaml logs
+    echo "-- Alpha --"
+    docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml logs
+    echo "-- Beta --"
+    docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml logs
+    echo "-- Gamma --"
+    docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml logs
+    echo "-- Delta --"
+    docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml logs
+    echo "-- Epsilon --"
+    docker-compose -p ${ISOLATION_ID}-epsilon -f adhoc/node.yaml logs
+    echo "-- Zeta --"
+    docker-compose -p ${ISOLATION_ID}-zeta -f adhoc/node.yaml logs
+    echo "-- Admin --"
+    docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml logs
+    echo "Shutting down all containers"
     docker-compose -p ${ISOLATION_ID} -f adhoc/workload.yaml down --remove-orphans --volumes
     docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml down --remove-orphans --volumes
     docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml down --remove-orphans --volumes
@@ -250,21 +268,3 @@ docker exec $ADMIN bash -c '\
     done; \
   done;'
 echo "All nodes have reached block 30!"
-
-echo "Dumping logs"
-echo "-- Workload --"
-docker-compose -p ${ISOLATION_ID} -f adhoc/workload.yaml logs
-echo "-- Alpha --"
-docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml logs
-echo "-- Beta --"
-docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml logs
-echo "-- Gamma --"
-docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml logs
-echo "-- Delta --"
-docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml logs
-echo "-- Epsilon --"
-docker-compose -p ${ISOLATION_ID}-epsilon -f adhoc/node.yaml logs
-echo "-- Zeta --"
-docker-compose -p ${ISOLATION_ID}-zeta -f adhoc/node.yaml logs
-echo "-- Admin --"
-docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml logs

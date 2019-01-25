@@ -37,6 +37,23 @@ pub enum PbftPhase {
     Finishing(BlockId, bool),
 }
 
+impl fmt::Display for PbftPhase {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                PbftPhase::PrePreparing => "PrePreparing".into(),
+                PbftPhase::Preparing => "Preparing".into(),
+                PbftPhase::Committing => "Committing".into(),
+                PbftPhase::Finishing(ref id, cu) => {
+                    format!("Finishing {}/{}", &hex::encode(id), cu)
+                }
+            },
+        )
+    }
+}
+
 /// Modes that the PBFT algorithm can possibly be in
 #[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum PbftMode {
@@ -47,28 +64,21 @@ pub enum PbftMode {
 
 impl fmt::Display for PbftState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let ast = if self.is_primary() { "*" } else { " " };
-        let mode = match self.mode {
-            PbftMode::Normal => String::from("N"),
-            PbftMode::ViewChanging(v) => format!("V{}", v),
+        let is_primary = if self.is_primary() { " *" } else { "" };
+        let phase = if let PbftMode::ViewChanging(v) = self.mode {
+            format!("V({})", v)
+        } else {
+            match self.phase {
+                PbftPhase::PrePreparing => "PP".into(),
+                PbftPhase::Preparing => "Pr".into(),
+                PbftPhase::Committing => "Co".into(),
+                PbftPhase::Finishing(ref id, cu) => format!("Fi({}/{})", hex::encode(&id[..3]), cu),
+            }
         };
-
-        let phase = match self.phase {
-            PbftPhase::PrePreparing => "PP".into(),
-            PbftPhase::Preparing => "Pr".into(),
-            PbftPhase::Committing => "Co".into(),
-            PbftPhase::Finishing(ref id, cu) => format!("Fi {:?}/{}", &hex::encode(id)[..6], cu),
-        };
-
         write!(
             f,
-            "({} {} {}, seq {}), Node {}{}",
-            phase,
-            mode,
-            self.view,
-            self.seq_num,
-            ast,
-            &hex::encode(self.id.clone())[..6],
+            "({}, view {}, seq {}{})",
+            phase, self.view, self.seq_num, is_primary,
         )
     }
 }
@@ -181,12 +191,12 @@ impl PbftState {
             }
         };
         if is_next_phase {
-            debug!("{}: Changing to {:?}", self, desired_phase);
+            debug!("{}: Changing to {}", self, desired_phase);
             self.phase = desired_phase;
             Ok(())
         } else {
             Err(PbftError::InternalError(format!(
-                "Node is in {:?} phase; attempted to switch to {:?}",
+                "Node is in {} phase; attempted to switch to {}",
                 self.phase, desired_phase
             )))
         }

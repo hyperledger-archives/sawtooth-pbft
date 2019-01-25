@@ -79,7 +79,7 @@ impl PbftNode {
         msg: ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        debug!("{}: Got peer message: {}", state, msg.info());
+        trace!("{}: Got peer message: {}", state, msg.info());
 
         let msg_type = PbftMessageType::from(msg.info().msg_type.as_str());
 
@@ -115,13 +115,14 @@ impl PbftNode {
     /// A `PrePrepare` message is accepted and added to the log if the following are true:
     /// - The message signature is valid (already verified by validator)
     /// - The message is from the primary
-    /// - There is a matching block in the log
     /// - A `PrePrepare` message does not already exist at this view and sequence number with a
     ///   different block
     /// - The message's view matches the node's current view (handled by message log)
     ///
     /// Once a `PrePrepare` for the current sequence number is accepted and added to the log, the
-    /// node node will switch to the Preparing phase and broadcast a `Prepare` message
+    /// node will check if it already has the block this `PrePrepare` is for in its log; if it
+    /// does, it will switch to the `Preparing` phase and broadcast a `Prepare` message, otherwise
+    /// it will wait until the block is received.
     fn handle_pre_prepare(
         &mut self,
         msg: ParsedMessage,
@@ -133,14 +134,6 @@ impl PbftNode {
                 "Got PrePrepare from a secondary node {:?}; ignoring message",
                 msg.info().get_signer_id()
             );
-            return Ok(());
-        }
-
-        // Check that there is a matching BlockNew message; if not, add the PrePrepare to the
-        // backlog because we can't perform consensus until the validator has this block
-        if !self.msg_log.has_block(msg.get_block_id().as_slice()) {
-            debug!("No matching block found for PrePrepare; pushing to backlog");
-            self.msg_log.push_backlog(msg);
             return Ok(());
         }
 
@@ -169,13 +162,20 @@ impl PbftNode {
             return Err(PbftError::FaultyPrimary(format!(
                 "When checking PrePrepare with block {:?}, found PrePrepare(s) with same view and \
                  seq num but mismatched block(s): {:?}",
-                hex::encode(&msg.get_block_id()[..3]),
+                hex::encode(&msg.get_block_id()),
                 mismatched_blocks,
             )));
         }
 
         // Add message to the log
         self.msg_log.add_message(msg.clone(), state)?;
+
+        // Check if there is a matching block in the log; if not, the node will have to wait until
+        // the block is received from the validator
+        if !self.msg_log.has_block(msg.get_block_id().as_slice()) {
+            debug!("No matching block found for PrePrepare; waiting for block");
+            return Ok(());
+        }
 
         // If this message is for the current sequence number and the node is in the PrePreparing
         // phase, switch to Preparing
@@ -274,7 +274,7 @@ impl PbftNode {
                 ) {
                     self.service.commit_block(block_id.clone()).map_err(|err| {
                         PbftError::ServiceError(
-                            format!("Failed to commit block {:?}", hex::encode(&block_id[..3])),
+                            format!("Failed to commit block {:?}", hex::encode(&block_id)),
                             err,
                         )
                     })?;
@@ -323,7 +323,7 @@ impl PbftNode {
             .msg_log
             .has_required_msgs(PbftMessageType::ViewChange, msg, false, state.f + 1)
         {
-            warn!(
+            info!(
                 "{}: Received f + 1 ViewChange messages; starting early view change",
                 state
             );
@@ -412,7 +412,7 @@ impl PbftNode {
                 }
             }
             Ok(_) => {
-                debug!("NewView passed verification");
+                trace!("NewView passed verification");
             }
         }
 
@@ -437,10 +437,16 @@ impl PbftNode {
     ///
     /// The validator has received a new block; verify the block's consensus seal and add the block
     /// to the log. If this is the block the node is waiting for and this node is the primary,
-    /// broadcast a PrePrepare. If this is a future block, use it to catch up.
+    /// broadcast a PrePrepare; if the node isn't the primary but it already has the PrePrepare for
+    /// this block, switch to `Preparing`. If this is a future block, use it to catch up.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
-        info!("{}: Got BlockNew: {}", state, block.block_num);
-        debug!("Block details: {:?}", block);
+        info!(
+            "{}: Got BlockNew: {} / {}",
+            state,
+            block.block_num,
+            hex::encode(&block.block_id)
+        );
+        trace!("Block details: {:?}", block);
 
         if block.block_num < state.seq_num {
             debug!(
@@ -462,21 +468,21 @@ impl PbftNode {
             return Err(PbftError::InternalError(format!(
                 "Received block {:?} / {:?} but node does not have previous block {:?} / {:?}",
                 block.block_num,
-                hex::encode(&block.block_id[..3]),
+                hex::encode(&block.block_id),
                 block.block_num - 1,
-                hex::encode(&block.previous_id[..3]),
+                hex::encode(&block.previous_id),
             )));
         }
 
         match self.verify_consensus_seal(&block, state) {
             Ok(_) => {
-                debug!("Consensus seal passed verification");
+                trace!("Consensus seal passed verification");
             }
             Err(err) => {
                 self.service
                     .fail_block(block.block_id)
                     .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
-                return Err(PbftError::FaultyPrimary(format!(
+                return Err(PbftError::InvalidMessage(format!(
                     "Consensus seal failed verification - Error was: {}",
                     err
                 )));
@@ -496,11 +502,38 @@ impl PbftNode {
         };
         if block.block_num > state.seq_num && !is_waiting {
             self.catchup(state, &block)?;
-        } else if block.block_num == state.seq_num && state.is_primary() {
-            // This is the next block and this node is the primary; broadcast PrePrepare messages
-            debug!("Broadcasting PrePrepares");
-            let s = state.seq_num;
-            self._broadcast_pbft_message(s, PbftMessageType::PrePrepare, block.block_id, state)?;
+        } else if block.block_num == state.seq_num {
+            if state.is_primary() {
+                // This is the next block and this node is the primary; broadcast PrePrepare
+                // messages
+                info!("Broadcasting PrePrepares");
+                let s = state.seq_num;
+                self._broadcast_pbft_message(
+                    s,
+                    PbftMessageType::PrePrepare,
+                    block.block_id,
+                    state,
+                )?;
+            } else {
+                // Check if there is already a matching PrePrepare for this block and that the node
+                // is in the PrePreparing phase; if so, switch to Preparing
+                if self.msg_log.has_pre_prepare(state, &block.block_id)
+                    && state.phase == PbftPhase::PrePreparing
+                {
+                    state.switch_phase(PbftPhase::Preparing)?;
+
+                    // We can also stop the view change timer, since we received a new block and a
+                    // valid PrePrepare in time
+                    state.faulty_primary_timeout.stop();
+
+                    self._broadcast_pbft_message(
+                        state.seq_num,
+                        PbftMessageType::Prepare,
+                        block.block_id,
+                        state,
+                    )?;
+                }
+            }
         }
 
         Ok(())
@@ -542,7 +575,7 @@ impl PbftNode {
             self.msg_log.add_message(message.clone(), state)?;
         }
 
-        // Commit the block and skip straight to Finished
+        // Commit the block, stop the faulty primary timeout, and skip straight to Finished
         self.service
             .commit_block(block.previous_id.clone())
             .map_err(|err| {
@@ -550,11 +583,12 @@ impl PbftNode {
                     format!(
                         "Failed to commit block with catch-up {:?} / {:?}",
                         block.block_num - 1,
-                        hex::encode(&block.previous_id[..3])
+                        hex::encode(&block.previous_id)
                     ),
                     err,
                 )
             })?;
+        state.faulty_primary_timeout.stop();
         state.phase = PbftPhase::Finishing(block.previous_id.clone(), true);
 
         Ok(())
@@ -576,18 +610,14 @@ impl PbftNode {
             _ => true,
         } {
             info!(
-                "{}: Igorning BlockCommit for {:?}",
+                "{}: Igorning BlockCommit for {}",
                 state,
-                hex::encode(&block_id[..3])
+                hex::encode(&block_id)
             );
             return Ok(());
         }
 
-        info!(
-            "{}: Got BlockCommit for {:?}",
-            state,
-            hex::encode(&block_id[..3])
-        );
+        info!("{}: Got BlockCommit for {}", state, hex::encode(&block_id));
 
         let is_catching_up = match state.phase {
             PbftPhase::Finishing(_, true) => true,
@@ -613,7 +643,7 @@ impl PbftNode {
             self.service.fail_block(id.clone()).unwrap_or_else(|err| {
                 error!(
                     "Couldn't fail block {:?} due to error: {:?}",
-                    &hex::encode(id)[..6],
+                    &hex::encode(id),
                     err
                 )
             });
@@ -651,7 +681,11 @@ impl PbftNode {
         // Initialize a new block if this node is the primary and it is not in the process of
         // catching up
         if state.is_primary() && !is_catching_up {
-            info!("{}: Initializing block on top of {:?}", state, block_id);
+            info!(
+                "{}: Initializing block on top of {}",
+                state,
+                hex::encode(&block_id)
+            );
             self.service
                 .initialize_block(Some(block_id))
                 .map_err(|err| {
@@ -718,7 +752,7 @@ impl PbftNode {
     /// Build a consensus seal to be put in the block that matches the `summary` and proves the
     /// last block committed by this node
     fn build_seal(&mut self, state: &PbftState, summary: Vec<u8>) -> Result<Vec<u8>, PbftError> {
-        debug!("{}: Building seal for block {}", state, state.seq_num - 1);
+        trace!("{}: Building seal for block {}", state, state.seq_num - 1);
 
         // The previous block may have been committed in a different view, so the node will need
         // find the view that contains the required 2f Commit messages for building the seal
@@ -757,7 +791,7 @@ impl PbftNode {
         seal.set_previous_id(messages[0].get_block_id());
         seal.set_previous_commit_votes(Self::signed_votes_from_messages(messages.as_slice()));
 
-        debug!("Seal created: {:?}", seal);
+        trace!("Seal created: {:?}", seal);
 
         seal.write_to_bytes()
             .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
@@ -818,7 +852,7 @@ impl PbftNode {
             Ok(true) => {}
             Ok(false) => {
                 return Err(PbftError::SigningError(format!(
-                    "Vote ({:?}) failed signature verification",
+                    "Vote ({}) failed signature verification",
                     vote
                 )));
             }
@@ -883,9 +917,10 @@ impl PbftNode {
             .filter(|pid| pid != &PeerId::from(new_view.get_info().get_signer_id()))
             .collect();
 
-        debug!(
+        trace!(
             "Comparing voter IDs ({:?}) with peer IDs - primary ({:?})",
-            voter_ids, peer_ids
+            voter_ids,
+            peer_ids
         );
 
         if !voter_ids.is_subset(&peer_ids) {
@@ -933,13 +968,13 @@ impl PbftNode {
             PbftError::SerializationError("Error parsing seal for verification".into(), err)
         })?;
 
-        debug!("Parsed seal: {:?}", seal);
+        trace!("Parsed seal: {}", seal);
 
         if seal.previous_id != &block.previous_id[..] {
             return Err(PbftError::InvalidMessage(format!(
                 "Seal's previous ID ({}) doesn't match block's previous ID ({})",
-                hex::encode(&seal.previous_id[..3]),
-                hex::encode(&block.previous_id[..3])
+                hex::encode(&seal.previous_id),
+                hex::encode(&block.previous_id)
             )));
         }
 
@@ -989,9 +1024,10 @@ impl PbftNode {
             .filter(|pid| pid != &block.signer_id)
             .collect();
 
-        debug!(
+        trace!(
             "Comparing voter IDs ({:?}) with on-chain peer IDs - primary ({:?})",
-            voter_ids, peer_ids
+            voter_ids,
+            peer_ids
         );
 
         if !voter_ids.is_subset(&peer_ids) {
@@ -1024,12 +1060,12 @@ impl PbftNode {
             return Ok(());
         }
 
-        debug!("{}: Attempting to summarize block", state);
+        trace!("{}: Attempting to summarize block", state);
 
         let summary = match self.service.summarize_block() {
             Ok(bytes) => bytes,
             Err(err) => {
-                debug!("Couldn't summarize, so not finalizing: {}", err);
+                trace!("Couldn't summarize, so not finalizing: {}", err);
                 return Ok(());
             }
         };
@@ -1044,7 +1080,7 @@ impl PbftNode {
 
         match self.service.finalize_block(data) {
             Ok(block_id) => {
-                info!("{}: Publishing block {:?}", state, block_id);
+                info!("{}: Publishing block {}", state, hex::encode(&block_id));
                 Ok(())
             }
             Err(err) => Err(PbftError::ServiceError(
@@ -1067,16 +1103,6 @@ impl PbftNode {
     /// Check to see if the view change timeout has expired
     pub fn check_view_change_timeout_expired(&mut self, state: &mut PbftState) -> bool {
         state.view_change_timeout.check_expired()
-    }
-
-    /// Retry messages from the `PrePrepare` backlog
-    pub fn retry_backlog(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
-        if let Some(msg) = self.msg_log.pop_backlog() {
-            debug!("{}: Popped PrePrepare ({:?}) from backlog", state, msg);
-            self.on_peer_message(msg, state)
-        } else {
-            Ok(())
-        }
     }
 
     // ---------- Methods for communication between nodes ----------
