@@ -122,9 +122,7 @@ impl PbftNode {
     /// - The message's view matches the node's current view (handled by message log)
     ///
     /// Once a `PrePrepare` for the current sequence number is accepted and added to the log, the
-    /// node will check if it already has the block this `PrePrepare` is for in its log; if it
-    /// does, it will switch to the `Preparing` phase and broadcast a `Prepare` message, otherwise
-    /// it will wait until the block is received.
+    /// node will try to switch to the `Preparing` phase.
     fn handle_pre_prepare(
         &mut self,
         msg: ParsedMessage,
@@ -172,31 +170,9 @@ impl PbftNode {
         // Add message to the log
         self.msg_log.add_message(msg.clone(), state)?;
 
-        // Check if there is a matching block in the log; if not, the node will have to wait until
-        // the block is received from the validator
-        if !self.msg_log.has_block(msg.get_block_id().as_slice()) {
-            debug!("No matching block found for PrePrepare; waiting for block");
-            return Ok(());
-        }
-
-        // If this message is for the current sequence number and the node is in the PrePreparing
-        // phase, switch to Preparing
-        if msg.info().get_seq_num() == state.seq_num && state.phase == PbftPhase::PrePreparing {
-            state.switch_phase(PbftPhase::Preparing)?;
-
-            // We can also stop the view change timer, since we received a new block and a
-            // valid PrePrepare in time
-            state.faulty_primary_timeout.stop();
-
-            self._broadcast_pbft_message(
-                state.seq_num,
-                PbftMessageType::Prepare,
-                msg.get_block_id(),
-                state,
-            )?;
-        }
-
-        Ok(())
+        // If the node is in the PrePreparing phase, this message is for the current sequence
+        // number, and the node already has this block: switch to Preparing
+        self.try_preparing(msg.get_block_id(), state)
     }
 
     /// Handle a `Prepare` message
@@ -580,24 +556,9 @@ impl PbftNode {
                     state,
                 )?;
             } else {
-                // Check if there is already a matching PrePrepare for this block and that the node
-                // is in the PrePreparing phase; if so, switch to Preparing
-                if self.msg_log.has_pre_prepare(state, &block.block_id)
-                    && state.phase == PbftPhase::PrePreparing
-                {
-                    state.switch_phase(PbftPhase::Preparing)?;
-
-                    // We can also stop the view change timer, since we received a new block and a
-                    // valid PrePrepare in time
-                    state.faulty_primary_timeout.stop();
-
-                    self._broadcast_pbft_message(
-                        state.seq_num,
-                        PbftMessageType::Prepare,
-                        block.block_id,
-                        state,
-                    )?;
-                }
+                // If the node is in the PrePreparing phase and it already has a PrePrepare for
+                // this block: switch to Preparing
+                self.try_preparing(block.block_id, state)?;
             }
         }
 
@@ -788,6 +749,18 @@ impl PbftNode {
         // Restart the faulty primary timeout for the next block
         state.faulty_primary_timeout.start();
 
+        // If we already have a block at this sequence number with a valid PrePrepare for it, start
+        // Preparing (there may be multiple blocks, but only one will have a valid PrePrepare)
+        let block_ids = self
+            .msg_log
+            .get_blocks(state.seq_num)
+            .iter()
+            .map(|block| block.block_id.clone())
+            .collect::<Vec<_>>();
+        for id in block_ids {
+            self.try_preparing(id, state)?;
+        }
+
         // Initialize a new block if this node is the primary and it is not in the process of
         // catching up
         if state.is_primary() {
@@ -838,6 +811,26 @@ impl PbftNode {
         }
 
         false
+    }
+
+    /// When the node has a block and a corresponding PrePrepare for its current sequence number,
+    /// and it is in the PrePreparing phase, it can enter the Preparing phase and broadcast its
+    /// Prepare
+    fn try_preparing(&mut self, block_id: BlockId, state: &mut PbftState) -> Result<(), PbftError> {
+        if state.phase == PbftPhase::PrePreparing
+            && self.msg_log.has_block(&block_id)
+            && self.msg_log.has_pre_prepare(state, &block_id)
+        {
+            state.switch_phase(PbftPhase::Preparing)?;
+
+            // We can also stop the view change timer, since we received a new block and a
+            // valid PrePrepare in time
+            state.faulty_primary_timeout.stop();
+
+            self._broadcast_pbft_message(state.seq_num, PbftMessageType::Prepare, block_id, state)?;
+        }
+
+        Ok(())
     }
 
     // ---------- Methods for building & verifying proofs and signed messages from other nodes ----------
