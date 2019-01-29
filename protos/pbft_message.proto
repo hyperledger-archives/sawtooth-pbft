@@ -51,6 +51,15 @@ message PbftNewView {
   repeated PbftSignedVote view_changes = 2;
 }
 
+// A message sent to a node that has requested a seal for finishing catch-up
+message PbftSealResponse {
+  // Message information
+  PbftMessageInfo info = 1;
+
+  // The requested seal
+  PbftSeal seal = 2;
+}
+
 message PbftSignedVote {
   // Serialized ConsensusPeerMessage header
   bytes header_bytes = 1;
@@ -63,13 +72,10 @@ message PbftSignedVote {
 }
 
 message PbftSeal {
-  // ID of the previous block
-  bytes previous_id = 1;
+  // ID of the block this seal verifies
+  bytes block_id = 1;
 
-  // Summary of the current block
-  bytes summary = 2;
-
-  // A list of Commit votes to prove the previous block commit (must contain at
-  // least 2f votes)
-  repeated PbftSignedVote previous_commit_votes = 3;
+  // A list of Commit votes to prove the block commit (must contain at least 2f
+  // votes)
+  repeated PbftSignedVote commit_votes = 2;
 }

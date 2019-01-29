@@ -34,7 +34,7 @@ use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
-    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
+    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSealResponse, PbftSignedVote,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
 use crate::timing::Timeout;
@@ -104,6 +104,8 @@ impl PbftNode {
             PbftMessageType::Commit => self.handle_commit(msg, state)?,
             PbftMessageType::ViewChange => self.handle_view_change(&msg, state)?,
             PbftMessageType::NewView => self.handle_new_view(&msg, state)?,
+            PbftMessageType::SealRequest => self.handle_seal_request(msg, state)?,
+            PbftMessageType::SealResponse => self.handle_seal_response(&msg, state)?,
             _ => warn!("Received message with unknown type: {:?}", msg_type),
         }
 
@@ -433,6 +435,72 @@ impl PbftNode {
         Ok(())
     }
 
+    /// Handle a `SealRequest` message
+    ///
+    /// A node is requesting a consensus seal for the last block. If the block has already been
+    /// committed by this node, build the seal and send it to the requesting node; if the block has
+    /// not been committed yet, add the request to the log and the node will build/send the seal
+    /// when it's done committing.
+    fn handle_seal_request(
+        &mut self,
+        msg: ParsedMessage,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        if state.seq_num == msg.info().get_seq_num() + 1 {
+            self.send_seal_response(state, &msg.info().get_signer_id().to_vec())
+        } else {
+            self.msg_log.add_message(msg, state)
+        }
+    }
+
+    /// Handle a `SealResponse` message
+    ///
+    /// A node has responded to the seal request by sending a seal for the last block; validate the
+    /// seal and commit the block.
+    fn handle_seal_response(
+        &mut self,
+        msg: &ParsedMessage,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        let seal = msg.get_seal_response().get_seal();
+
+        // If the node has already committed the block, ignore
+        if let PbftPhase::Finishing(_, _) = state.phase {
+            return Ok(());
+        }
+
+        // Make sure that this seal is for a block that the node has at this sequence number
+        if !self
+            .msg_log
+            .get_blocks(state.seq_num)
+            .iter()
+            .any(|block| block.block_id == seal.block_id)
+        {
+            warn!(
+                "Received a seal for a block ({:?}) that the node does not have at its current \
+                 sequence number",
+                hex::encode(&seal.block_id),
+            );
+            return Ok(());
+        }
+
+        // Verify the seal
+        match self.verify_consensus_seal(seal, msg.info().get_signer_id().to_vec(), state) {
+            Ok(_) => {
+                trace!("Consensus seal passed verification");
+            }
+            Err(err) => {
+                return Err(PbftError::InvalidMessage(format!(
+                    "Consensus seal failed verification - Error was: {}",
+                    err
+                )));
+            }
+        }
+
+        // Catch up
+        self.catchup(state, &seal, false)
+    }
+
     /// Handle a `BlockNew` update from the Validator
     ///
     /// The validator has received a new block; verify the block's consensus seal and add the block
@@ -474,20 +542,17 @@ impl PbftNode {
             )));
         }
 
-        match self.verify_consensus_seal(&block, state) {
-            Ok(_) => {
-                trace!("Consensus seal passed verification");
-            }
-            Err(err) => {
+        let seal = self
+            .verify_consensus_seal_from_block(&block, state)
+            .map_err(|err| {
                 self.service
-                    .fail_block(block.block_id)
+                    .fail_block(block.block_id.clone())
                     .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
-                return Err(PbftError::InvalidMessage(format!(
+                PbftError::InvalidMessage(format!(
                     "Consensus seal failed verification - Error was: {}",
                     err
-                )));
-            }
-        }
+                ))
+            })?;
 
         // Add block to the log
         self.msg_log.add_block(block.clone());
@@ -501,7 +566,7 @@ impl PbftNode {
             _ => false,
         };
         if block.block_num > state.seq_num && !is_waiting {
-            self.catchup(state, &block)?;
+            self.catchup(state, &seal, true)?;
         } else if block.block_num == state.seq_num {
             if state.is_primary() {
                 // This is the next block and this node is the primary; broadcast PrePrepare
@@ -539,29 +604,29 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Use the given block's consensus seal to verify and commit the block this node is working on
-    fn catchup(&mut self, state: &mut PbftState, block: &Block) -> Result<(), PbftError> {
+    /// Use the given consensus seal to verify and commit the block this node is working on
+    fn catchup(
+        &mut self,
+        state: &mut PbftState,
+        seal: &PbftSeal,
+        catchup_again: bool,
+    ) -> Result<(), PbftError> {
         info!(
             "{}: Attempting to commit block {} using catch-up",
             state, state.seq_num
         );
 
-        // Parse messages from the seal
-        let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
-            PbftError::SerializationError("Error parsing seal for catch-up".into(), err)
-        })?;
-
-        let messages =
-            seal.get_previous_commit_votes()
-                .iter()
-                .try_fold(Vec::new(), |mut msgs, v| {
-                    msgs.push(ParsedMessage::from_pbft_message(
-                        protobuf::parse_from_bytes(&v.get_message_bytes()).map_err(|err| {
-                            PbftError::SerializationError("Error parsing commit vote".into(), err)
-                        })?,
-                    ));
-                    Ok(msgs)
-                })?;
+        let messages = seal
+            .get_commit_votes()
+            .iter()
+            .try_fold(Vec::new(), |mut msgs, v| {
+                msgs.push(ParsedMessage::from_pbft_message(
+                    protobuf::parse_from_bytes(&v.get_message_bytes()).map_err(|err| {
+                        PbftError::SerializationError("Error parsing commit vote".into(), err)
+                    })?,
+                ));
+                Ok(msgs)
+            })?;
 
         // Update view if necessary
         let view = messages[0].info().get_view();
@@ -575,23 +640,48 @@ impl PbftNode {
             self.msg_log.add_message(message.clone(), state)?;
         }
 
-        // Commit the block, stop the faulty primary timeout, and skip straight to Finished
+        // Commit the block, stop the faulty primary timeout, and skip straight to Finishing
         self.service
-            .commit_block(block.previous_id.clone())
+            .commit_block(seal.block_id.clone())
             .map_err(|err| {
                 PbftError::ServiceError(
                     format!(
                         "Failed to commit block with catch-up {:?} / {:?}",
-                        block.block_num - 1,
-                        hex::encode(&block.previous_id)
+                        state.seq_num,
+                        hex::encode(&seal.block_id)
                     ),
                     err,
                 )
             })?;
         state.faulty_primary_timeout.stop();
-        state.phase = PbftPhase::Finishing(block.previous_id.clone(), true);
+        state.phase = PbftPhase::Finishing(seal.block_id.clone(), catchup_again);
 
         Ok(())
+    }
+
+    /// Request the consensus seal for the next block from the network so the node can finish the
+    /// catch-up process
+    fn request_final_seal(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
+        info!(
+            "{}: Requesting seal to finish catch-up to block {}",
+            state, state.seq_num
+        );
+
+        // The node doesn't know which block that the network decided to commit, so it can't
+        // request the seal for a specific block (hence not including a block ID with this message)
+        let mut seal_request = PbftMessage::new();
+        seal_request.set_info(PbftMessageInfo::new_from(
+            PbftMessageType::SealRequest,
+            state.view,
+            state.seq_num,
+            state.id.clone(),
+        ));
+
+        let msg_bytes = seal_request.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing SealRequest to bytes".into(), err)
+        })?;
+
+        self._broadcast_message(PbftMessageType::SealRequest, msg_bytes, state)
     }
 
     /// Handle a `BlockCommit` update from the Validator
@@ -653,6 +743,20 @@ impl PbftNode {
         state.switch_phase(PbftPhase::PrePreparing)?;
         state.seq_num += 1;
 
+        // If node(s) are waiting for a seal to commit the last block, send it now
+        let requesters = self
+            .msg_log
+            .get_messages_of_type_seq(PbftMessageType::SealRequest, state.seq_num - 1)
+            .iter()
+            .map(|req| req.info().get_signer_id().to_vec())
+            .collect::<Vec<_>>();
+
+        for req in requesters {
+            self.send_seal_response(state, &req).unwrap_or_else(|err| {
+                error!("Failed to send seal response due to: {:?}", err);
+            });
+        }
+
         // Increment the view if a view change must be forced for fairness or if membership has
         // changed
         if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
@@ -671,8 +775,14 @@ impl PbftNode {
             .cloned()
             .cloned();
         if let Some(block) = block_option {
-            self.catchup(state, &block)?;
-            return Ok(());
+            let seal = self.verify_consensus_seal_from_block(&block, state)?;
+            return self.catchup(state, &seal, true);
+        }
+
+        // If the node is catching up but doesn't have a block with a seal to commit the next one,
+        // it will need to request the seal to commit the last block
+        if is_catching_up {
+            return self.request_final_seal(state);
         }
 
         // Restart the faulty primary timeout for the next block
@@ -680,7 +790,7 @@ impl PbftNode {
 
         // Initialize a new block if this node is the primary and it is not in the process of
         // catching up
-        if state.is_primary() && !is_catching_up {
+        if state.is_primary() {
             info!(
                 "{}: Initializing block on top of {}",
                 state,
@@ -749,9 +859,8 @@ impl PbftNode {
         )
     }
 
-    /// Build a consensus seal to be put in the block that matches the `summary` and proves the
-    /// last block committed by this node
-    fn build_seal(&mut self, state: &PbftState, summary: Vec<u8>) -> Result<Vec<u8>, PbftError> {
+    /// Build a consensus seal that proves the last block committed by this node
+    fn build_seal(&self, state: &PbftState) -> Result<PbftSeal, PbftError> {
         trace!("{}: Building seal for block {}", state, state.seq_num - 1);
 
         // The previous block may have been committed in a different view, so the node will need
@@ -786,15 +895,12 @@ impl PbftNode {
             })?;
 
         let mut seal = PbftSeal::new();
-
-        seal.set_summary(summary);
-        seal.set_previous_id(messages[0].get_block_id());
-        seal.set_previous_commit_votes(Self::signed_votes_from_messages(messages.as_slice()));
+        seal.set_block_id(messages[0].get_block_id());
+        seal.set_commit_votes(Self::signed_votes_from_messages(messages.as_slice()));
 
         trace!("Seal created: {:?}", seal);
 
-        seal.write_to_bytes()
-            .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
+        Ok(seal)
     }
 
     /// Verify that a vote matches the expected type, is properly signed, and passes the specified
@@ -942,22 +1048,20 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Verify the consensus seal from the current block that proves the previous block
-    ///
-    /// # Panics
-    /// + If the node is unable to query the validator for on-chain settings
-    /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
-    fn verify_consensus_seal(
+    /// Verify the consensus seal from the current block that proves the previous block and return
+    /// the parsed seal
+    fn verify_consensus_seal_from_block(
         &mut self,
         block: &Block,
         state: &mut PbftState,
-    ) -> Result<(), PbftError> {
+    ) -> Result<PbftSeal, PbftError> {
         // Since block 0 is genesis, block 1 is the first that can be verified with a seal; this
         // means that the node won't see a seal until block 2
         if block.block_num < 2 {
-            return Ok(());
+            return Ok(PbftSeal::new());
         }
 
+        // Parse the seal
         if block.payload.is_empty() {
             return Err(PbftError::InvalidMessage(
                 "Block published without a seal".into(),
@@ -970,33 +1074,43 @@ impl PbftNode {
 
         trace!("Parsed seal: {}", seal);
 
-        if seal.previous_id != &block.previous_id[..] {
+        // Make sure this is the correct seal for the previous block
+        if seal.block_id != &block.previous_id[..] {
             return Err(PbftError::InvalidMessage(format!(
-                "Seal's previous ID ({}) doesn't match block's previous ID ({})",
-                hex::encode(&seal.previous_id),
+                "Seal's ID ({}) doesn't match block's previous ID ({})",
+                hex::encode(&seal.block_id),
                 hex::encode(&block.previous_id)
             )));
         }
 
-        if seal.summary != &block.summary[..] {
-            return Err(PbftError::InvalidMessage(format!(
-                "Seal's summary ({:?}) doesn't match block's summary ({:?})",
-                seal.summary, block.summary
-            )));
-        }
+        // Verify the seal itself
+        self.verify_consensus_seal(&seal, block.signer_id.clone(), state)?;
 
+        Ok(seal)
+    }
+
+    /// Verify the given consenus seal
+    ///
+    /// # Panics
+    /// + If the node is unable to query the validator for on-chain settings
+    /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
+    fn verify_consensus_seal(
+        &mut self,
+        seal: &PbftSeal,
+        seal_signer_id: PeerId,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
         // Verify each individual vote and extract the signer ID from each PbftMessage so the IDs
         // can be verified
         let voter_ids =
-            seal.get_previous_commit_votes()
+            seal.get_commit_votes()
                 .iter()
                 .try_fold(HashSet::new(), |mut ids, vote| {
                     Self::verify_vote(vote, PbftMessageType::Commit, |msg| {
-                        if msg.block_id != seal.previous_id {
+                        if msg.block_id != seal.block_id {
                             return Err(PbftError::InvalidMessage(format!(
-                                "Commit vote's block ID ({:?}) doesn't match seal's previous ID \
-                                 ({:?})",
-                                msg.block_id, seal.previous_id
+                                "Commit vote's block ID ({:?}) doesn't match seal's ID ({:?})",
+                                msg.block_id, seal.block_id
                             )));
                         }
                         Ok(())
@@ -1012,7 +1126,7 @@ impl PbftNode {
         let settings = self
             .service
             .get_settings(
-                block.previous_id.clone(),
+                seal.get_block_id().to_vec(),
                 vec![String::from("sawtooth.consensus.pbft.peers")],
             )
             .expect("Couldn't load settings to verify list of votes in consensus seal");
@@ -1021,7 +1135,7 @@ impl PbftNode {
         let peer_ids: HashSet<_> = peers
             .iter()
             .cloned()
-            .filter(|pid| pid != &block.signer_id)
+            .filter(|pid| pid != &seal_signer_id)
             .collect();
 
         trace!(
@@ -1062,20 +1176,22 @@ impl PbftNode {
 
         trace!("{}: Attempting to summarize block", state);
 
-        let summary = match self.service.summarize_block() {
-            Ok(bytes) => bytes,
+        match self.service.summarize_block() {
+            Ok(_) => {}
             Err(err) => {
                 trace!("Couldn't summarize, so not finalizing: {}", err);
                 return Ok(());
             }
-        };
+        }
 
         // We don't publish a consensus seal at block 1, since we never receive any
         // votes on the genesis block. Leave payload blank for the first block.
         let data = if state.seq_num <= 1 {
             vec![]
         } else {
-            self.build_seal(state, summary)?
+            self.build_seal(state)?.write_to_bytes().map_err(|err| {
+                PbftError::SerializationError("Error writing seal to bytes".into(), err)
+            })?
         };
 
         match self.service.finalize_block(data) {
@@ -1165,6 +1281,50 @@ impl PbftNode {
         _state: &mut PbftState,
     ) -> Result<(), PbftError> {
         return Ok(());
+    }
+
+    /// Build a consensus seal for the last block this node committed and send it in a
+    /// `SealResponse` message to the node that requested the seal (the `recipient`)
+    #[allow(clippy::ptr_arg)]
+    fn send_seal_response(
+        &mut self,
+        state: &PbftState,
+        recipient: &PeerId,
+    ) -> Result<(), PbftError> {
+        let seal = self.build_seal(state).map_err(|err| {
+            PbftError::InternalError(format!("Failed to build requested seal due to: {}", err))
+        })?;
+
+        // Construct the response
+        let mut seal_response = PbftSealResponse::new();
+        seal_response.set_info(PbftMessageInfo::new_from(
+            PbftMessageType::SealResponse,
+            state.view,
+            state.seq_num,
+            state.id.clone(),
+        ));
+        seal_response.set_seal(seal);
+
+        let msg_bytes = seal_response.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing SealResponse to bytes".into(), err)
+        })?;
+
+        // Send the seal to the requester
+        self.service
+            .send_to(
+                recipient,
+                String::from(PbftMessageType::SealResponse).as_str(),
+                msg_bytes,
+            )
+            .map_err(|err| {
+                PbftError::ServiceError(
+                    format!(
+                        "Failed to send requested seal to {:?}",
+                        hex::encode(recipient)
+                    ),
+                    err,
+                )
+            })
     }
 
     // ---------- Miscellaneous methods ----------
@@ -1379,7 +1539,6 @@ mod tests {
     fn mock_block_with_seal(num: u64, node: &mut PbftNode, state: &mut PbftState) -> Block {
         let head = mock_block(num - 1);
         let mut block = mock_block(num);
-        block.summary = vec![1, 2, 3];
         let context = create_context("secp256k1").unwrap();
 
         for i in 0..3 {
@@ -1413,7 +1572,11 @@ mod tests {
             node.msg_log.add_message(message, state).unwrap();
         }
 
-        block.payload = node.build_seal(state, vec![1, 2, 3]).unwrap();
+        let seal = node.build_seal(state).unwrap();
+        block.payload = seal
+            .write_to_bytes()
+            .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
+            .unwrap();
 
         block
     }
@@ -1553,7 +1716,6 @@ mod tests {
         state.seq_num = 7;
         let head = mock_block(6);
         let mut block = mock_block(7);
-        block.summary = vec![1, 2, 3];
         let context = create_context("secp256k1").unwrap();
 
         for i in 0..3 {
@@ -1587,8 +1749,11 @@ mod tests {
             node.msg_log.add_message(message, &state).unwrap();
         }
 
-        let seal = node.build_seal(&state, vec![1, 2, 3]).unwrap();
-        block.payload = seal;
+        let seal = node.build_seal(&state).unwrap();
+        block.payload = seal
+            .write_to_bytes()
+            .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
+            .unwrap();
 
         node.on_block_new(block, &mut state).unwrap();
     }
