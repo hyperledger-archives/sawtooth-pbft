@@ -6,8 +6,8 @@ Table of Contents
     :maxdepth: 2
 
     introduction-to-sawtooth-pbft.rst
-    technical-information.rst
-    algorithm-operation.rst
+    architecture.rst
+    on-chain-settings.rst
     installing-and-running-pbft.rst
     glossary.rst
 
