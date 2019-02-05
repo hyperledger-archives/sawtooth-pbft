@@ -911,7 +911,7 @@ impl PbftNode {
             })
             .ok_or_else(|| {
                 PbftError::InternalError(String::from(
-                    "Couldn't find 2f commit messages in the message log for building a seal!",
+                    "Couldn't find 2f commit messages in the message log for building a seal",
                 ))
             })?;
 
