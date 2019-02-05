@@ -52,11 +52,19 @@ impl PbftNode {
     /// Construct a new PBFT node
     ///
     /// If the node is the primary on start-up, it initializes a new block on the chain
-    pub fn new(config: &PbftConfig, service: Box<Service>, is_primary: bool) -> Self {
+    pub fn new(
+        config: &PbftConfig,
+        chain_head: Block,
+        service: Box<Service>,
+        is_primary: bool,
+    ) -> Self {
         let mut n = PbftNode {
             service,
             msg_log: PbftLog::new(config),
         };
+
+        // Add chain head to log
+        n.msg_log.add_block(chain_head);
 
         // Primary initializes a block
         if is_primary {
@@ -1505,14 +1513,14 @@ mod tests {
         }
     }
 
-    /// Create a node, based on a given ID
-    fn mock_node(node_id: PeerId) -> PbftNode {
+    /// Create a node, based on a given ID and chain head
+    fn mock_node(node_id: PeerId, chain_head: Block) -> PbftNode {
         let service: Box<MockService> = Box::new(MockService {
             // Create genesis block (but with actual ID)
             chain: vec![mock_block_id(0)],
         });
         let cfg = mock_config(4);
-        PbftNode::new(&cfg, service, node_id == vec![0])
+        PbftNode::new(&cfg, chain_head, service, node_id == vec![0])
     }
 
     /// Create a deterministic BlockId hash based on a block number
@@ -1525,9 +1533,15 @@ mod tests {
     /// Create a mock Block, including only the BlockId, the BlockId of the previous block, and the
     /// block number
     fn mock_block(num: u64) -> Block {
+        let previous_id = if num == 0 {
+            vec![]
+        } else {
+            mock_block_id(num - 1)
+        };
+
         Block {
             block_id: mock_block_id(num),
-            previous_id: mock_block_id(num - 1),
+            previous_id,
             signer_id: PeerId::from(vec![]),
             block_num: num,
             payload: vec![],
@@ -1629,7 +1643,7 @@ mod tests {
     #[test]
     fn block_new_initial() {
         // NOTE: Special case for primary node
-        let mut node0 = mock_node(vec![0]);
+        let mut node0 = mock_node(vec![0], mock_block(0));
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         node0.on_block_new(mock_block(1), &mut state0).unwrap();
@@ -1637,7 +1651,7 @@ mod tests {
         assert_eq!(state0.seq_num, 1);
 
         // Try the next block
-        let mut node1 = mock_node(vec![1]);
+        let mut node1 = mock_node(vec![1], mock_block(0));
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         node1
             .on_block_new(mock_block(1), &mut state1)
@@ -1647,7 +1661,7 @@ mod tests {
 
     #[test]
     fn block_new_first_10_blocks() {
-        let mut node = mock_node(vec![0]);
+        let mut node = mock_node(vec![0], mock_block(0));
         let cfg = mock_config(4);
         let mut state = PbftState::new(vec![0], 0, &cfg);
 
@@ -1711,9 +1725,8 @@ mod tests {
     #[test]
     fn block_new_consensus() {
         let cfg = mock_config(4);
-        let mut node = mock_node(vec![1]);
-        let mut state = PbftState::new(vec![], 0, &cfg);
-        state.seq_num = 7;
+        let mut node = mock_node(vec![1], mock_block(6));
+        let mut state = PbftState::new(vec![], 6, &cfg);
         let head = mock_block(6);
         let mut block = mock_block(7);
         let context = create_context("secp256k1").unwrap();
@@ -1762,7 +1775,7 @@ mod tests {
     #[test]
     fn test_pre_prepare() {
         let cfg = mock_config(4);
-        let mut node0 = mock_node(vec![0]);
+        let mut node0 = mock_node(vec![0], mock_block(0));
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
 
         // Add block to the log
@@ -1784,7 +1797,7 @@ mod tests {
     /// Make sure that receiving a `BlockCommit` update works as expected
     #[test]
     fn block_commit() {
-        let mut node = mock_node(vec![0]);
+        let mut node = mock_node(vec![0], mock_block(0));
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         state0.phase = PbftPhase::Finishing(mock_block_id(1), false);
@@ -1800,7 +1813,7 @@ mod tests {
         let cfg = mock_config(4);
 
         // Make sure BlockNew is in the log
-        let mut node1 = mock_node(vec![1]);
+        let mut node1 = mock_node(vec![1], mock_block(0));
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         let block = mock_block(1);
         node1
@@ -1859,7 +1872,7 @@ mod tests {
     /// change
     #[test]
     fn view_change() {
-        let mut node1 = mock_node(vec![1]);
+        let mut node1 = mock_node(vec![1], mock_block(0));
         let cfg = mock_config(4);
         let mut state1 = PbftState::new(vec![1], 0, &cfg);
 
@@ -1908,7 +1921,7 @@ mod tests {
     /// Make sure that view changes start correctly
     #[test]
     fn start_view_change() {
-        let mut node1 = mock_node(vec![1]);
+        let mut node1 = mock_node(vec![1], mock_block(0));
         let cfg = mock_config(4);
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         assert_eq!(state1.mode, PbftMode::Normal);
@@ -1924,7 +1937,7 @@ mod tests {
     /// Test that try_publish adds in the consensus seal
     #[test]
     fn try_publish() {
-        let mut node0 = mock_node(vec![0]);
+        let mut node0 = mock_node(vec![0], mock_block(0));
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
 
