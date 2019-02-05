@@ -226,7 +226,7 @@ impl PbftLog {
                 .retain(|msg| msg.info().get_seq_num() >= current_seq_num - 1);
 
             self.blocks
-                .retain(|block| block.block_num >= current_seq_num);
+                .retain(|block| block.block_num >= current_seq_num - 1);
         }
     }
 }
