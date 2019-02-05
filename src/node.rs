@@ -461,19 +461,28 @@ impl PbftNode {
             return Ok(());
         }
 
-        // Make sure that this seal is for a block that the node has at this sequence number
-        if !self
+        // Make sure that this seal is for a block that the node has at this sequence number and
+        // that the seal's previous ID matches the previous ID of the block
+        if let Some(block) = self
             .msg_log
             .get_blocks(state.seq_num)
             .iter()
-            .any(|block| block.block_id == seal.block_id)
+            .find(|block| block.block_id == seal.block_id)
         {
-            warn!(
+            if block.previous_id != seal.previous_id {
+                return Err(PbftError::InvalidMessage(format!(
+                    "Received a seal for block {:?}, but previous IDs do not match: {:?} != {:?}",
+                    hex::encode(&seal.block_id),
+                    hex::encode(&seal.previous_id),
+                    hex::encode(&block.previous_id),
+                )));
+            }
+        } else {
+            return Err(PbftError::InvalidMessage(format!(
                 "Received a seal for a block ({:?}) that the node does not have at its current \
                  sequence number",
                 hex::encode(&seal.block_id),
-            );
-            return Ok(());
+            )));
         }
 
         // Verify the seal
@@ -906,8 +915,24 @@ impl PbftNode {
                 ))
             })?;
 
+        let previous_id = self
+            .msg_log
+            .get_blocks(state.seq_num - 1)
+            .iter()
+            .find_map(|block| {
+                if block.block_id == block_id {
+                    Some(block.previous_id.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                PbftError::InternalError("Log does not have the last committed block".into())
+            })?;
+
         let mut seal = PbftSeal::new();
         seal.set_block_id(block_id);
+        seal.set_previous_id(previous_id);
         seal.set_commit_votes(Self::signed_votes_from_messages(messages.as_slice()));
 
         trace!("Seal created: {:?}", seal);
@@ -1095,6 +1120,28 @@ impl PbftNode {
             )));
         }
 
+        // Make sure the seal's previous ID matches the previous ID of the block it verifies
+        let verified_block = self
+            .msg_log
+            .get_blocks(block.block_num - 1)
+            .iter()
+            .find(|log_block| log_block.block_id == seal.block_id)
+            .cloned()
+            .ok_or_else(|| {
+                PbftError::InternalError(format!(
+                    "Got seal for block {:?}, but block was not found in the log",
+                    seal.block_id,
+                ))
+            })?;
+        if verified_block.previous_id != seal.previous_id {
+            return Err(PbftError::InvalidMessage(format!(
+                "Received a seal for block {:?}, but previous IDs do not match: {:?} != {:?}",
+                hex::encode(&seal.block_id),
+                hex::encode(&seal.previous_id),
+                hex::encode(&verified_block.previous_id)
+            )));
+        }
+
         // Verify the seal itself
         self.verify_consensus_seal(&seal, block.signer_id.clone(), state)?;
 
@@ -1141,7 +1188,7 @@ impl PbftNode {
             state.exponential_retry_max,
             || {
                 self.service.get_settings(
-                    seal.get_block_id().to_vec(),
+                    seal.get_previous_id().to_vec(),
                     vec![String::from("sawtooth.consensus.pbft.peers")],
                 )
             },
