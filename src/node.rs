@@ -870,15 +870,14 @@ impl PbftNode {
             // therefore can't be included in the seal
             .filter(|msg| !msg.from_self)
             .cloned()
-            // Map to (view, msg) pairs
-            .map(|msg| (msg.info().get_view(), msg))
-            // Group messages together by view
+            // Map to ((block_id, view), msg)
+            .map(|msg| ((msg.get_block_id(), msg.info().get_view()), msg))
+            // Group messages together by block and view
             .into_group_map()
             .into_iter()
-            // One and only one view should have the required number of messages, since the block
-            // at this sequence number should only have been committed once and therefore in only
-            // one view
-            .find_map(|(_view, msgs)| {
+            // One and only one block/view should have the required number of messages, since only
+            // one block at this sequence number should have been committed and in only one view
+            .find_map(|((_block_id, _view), msgs)| {
                 if msgs.len() as u64 >= 2 * state.f {
                     Some(msgs)
                 } else {
