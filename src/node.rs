@@ -862,7 +862,7 @@ impl PbftNode {
 
         // The previous block may have been committed in a different view, so the node will need
         // find the view that contains the required 2f Commit messages for building the seal
-        let messages = self
+        let (block_id, messages) = self
             .msg_log
             .get_messages_of_type_seq(PbftMessageType::Commit, state.seq_num - 1)
             .iter()
@@ -877,9 +877,9 @@ impl PbftNode {
             .into_iter()
             // One and only one block/view should have the required number of messages, since only
             // one block at this sequence number should have been committed and in only one view
-            .find_map(|((_block_id, _view), msgs)| {
+            .find_map(|((block_id, _view), msgs)| {
                 if msgs.len() as u64 >= 2 * state.f {
-                    Some(msgs)
+                    Some((block_id, msgs))
                 } else {
                     None
                 }
@@ -891,7 +891,7 @@ impl PbftNode {
             })?;
 
         let mut seal = PbftSeal::new();
-        seal.set_block_id(messages[0].get_block_id());
+        seal.set_block_id(block_id);
         seal.set_commit_votes(Self::signed_votes_from_messages(messages.as_slice()));
 
         trace!("Seal created: {:?}", seal);
