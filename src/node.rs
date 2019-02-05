@@ -80,14 +80,22 @@ impl PbftNode {
     /// Handle a peer message from another PbftNode
     ///
     /// Handle all messages from other nodes. Such messages include `PrePrepare`, `Prepare`,
-    /// `Commit`, `ViewChange`, and `NewView`. If the node is view changing, ignore all messages
-    /// that aren't `ViewChange`s or `NewView`s.
+    /// `Commit`, `ViewChange`, and `NewView`. Make sure the message is from a known peer. If the
+    /// node is view changing, ignore all messages that aren't `ViewChange`s or `NewView`s.
     pub fn on_peer_message(
         &mut self,
         msg: ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         trace!("{}: Got peer message: {}", state, msg.info());
+
+        // Make sure this message is from a known peer
+        if !state.peer_ids.contains(&msg.info().signer_id) {
+            return Err(PbftError::InvalidMessage(format!(
+                "Received message from node ({:?}) that is not a known peer",
+                msg.info().get_signer_id(),
+            )));
+        }
 
         let msg_type = PbftMessageType::from(msg.info().msg_type.as_str());
 
