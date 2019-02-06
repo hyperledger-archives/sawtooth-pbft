@@ -111,6 +111,10 @@ pub struct PbftState {
     /// node will initiate a view change.
     pub faulty_primary_timeout: Timeout,
 
+    /// Timer used to make sure the network doesn't get stuck when it fails to commit a block. If
+    /// it does get stuck, this node will initiate a view change when the timer expires.
+    pub commit_timeout: Timeout,
+
     /// When view changing, timer is used to make sure a valid NewView message is sent by the new
     /// primary in a timely manner. If not, this node will start a different view change.
     pub view_change_timeout: Timeout,
@@ -152,6 +156,7 @@ impl PbftState {
             f,
             peer_ids: config.peers.clone(),
             faulty_primary_timeout: Timeout::new(config.faulty_primary_timeout),
+            commit_timeout: Timeout::new(config.commit_timeout),
             view_change_timeout: Timeout::new(config.view_change_duration),
             view_change_duration: config.view_change_duration,
             exponential_retry_base: config.exponential_retry_base,

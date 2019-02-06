@@ -52,6 +52,11 @@ pub struct PbftConfig {
     /// Should be longer than block_duration
     pub faulty_primary_timeout: Duration,
 
+    /// How long to wait (after Pre-Preparing) for the node to commit the block before starting a
+    /// view change (guarantees liveness by allowing the network to get "unstuck" if something goes
+    // wrong)
+    pub commit_timeout: Duration,
+
     /// When view changing, how long to wait for a valid NewView message before starting a
     /// different view change
     pub view_change_duration: Duration,
@@ -75,6 +80,7 @@ impl PbftConfig {
             exponential_retry_base: Duration::from_millis(100),
             exponential_retry_max: Duration::from_secs(60),
             faulty_primary_timeout: Duration::from_secs(30),
+            commit_timeout: Duration::from_secs(30),
             view_change_duration: Duration::from_secs(5),
             forced_view_change_period: 30,
             max_log_size: 1000,
@@ -88,6 +94,7 @@ impl PbftConfig {
     /// + `sawtooth.consensus.pbft.peers` (required)
     /// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
     /// + `sawtooth.consensus.pbft.faulty_primary_timeout` (optional, default 30s)
+    /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 30s)
     /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
     /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
     /// + `sawtooth.consensus.pbft.message_timeout` (optional, default 10 ms)
@@ -109,6 +116,7 @@ impl PbftConfig {
                         String::from("sawtooth.consensus.pbft.peers"),
                         String::from("sawtooth.consensus.pbft.block_duration"),
                         String::from("sawtooth.consensus.pbft.faulty_primary_timeout"),
+                        String::from("sawtooth.consensus.pbft.commit_timeout"),
                         String::from("sawtooth.consensus.pbft.view_change_duration"),
                         String::from("sawtooth.consensus.pbft.forced_view_change_period"),
                         String::from("sawtooth.consensus.pbft.message_timeout"),
@@ -139,6 +147,11 @@ impl PbftConfig {
             &settings,
             &mut self.faulty_primary_timeout,
             "sawtooth.consensus.pbft.faulty_primary_timeout",
+        );
+        merge_secs_setting_if_set(
+            &settings,
+            &mut self.commit_timeout,
+            "sawtooth.consensus.pbft.commit_timeout",
         );
         merge_secs_setting_if_set(
             &settings,

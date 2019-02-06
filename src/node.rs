@@ -257,6 +257,8 @@ impl PbftNode {
                         )
                     })?;
                     state.switch_phase(PbftPhase::Finishing(block_id, false))?;
+                    // Stop the commit timeout, since the network has agreed to commit the block
+                    state.commit_timeout.stop();
                 }
             }
         }
@@ -827,9 +829,11 @@ impl PbftNode {
         {
             state.switch_phase(PbftPhase::Preparing)?;
 
-            // We can also stop the view change timer, since we received a new block and a
-            // valid PrePrepare in time
+            // Stop view change timer, since a new block and valid PrePrepare were received in time
             state.faulty_primary_timeout.stop();
+
+            // Now start the commit timeout in case something goes wrong
+            state.commit_timeout.start();
 
             self._broadcast_pbft_message(state.seq_num, PbftMessageType::Prepare, block_id, state)?;
         }
@@ -1217,6 +1221,16 @@ impl PbftNode {
         state.faulty_primary_timeout.start();
     }
 
+    /// Check to see if the commit timeout has expired
+    pub fn check_commit_timeout_expired(&mut self, state: &mut PbftState) -> bool {
+        state.commit_timeout.check_expired()
+    }
+
+    /// Start the commit timeout
+    pub fn start_commit_timeout(&self, state: &mut PbftState) {
+        state.commit_timeout.start();
+    }
+
     /// Check to see if the view change timeout has expired
     pub fn check_view_change_timeout_expired(&mut self, state: &mut PbftState) -> bool {
         state.view_change_timeout.check_expired()
@@ -1350,8 +1364,10 @@ impl PbftNode {
 
         state.mode = PbftMode::ViewChanging(view);
 
-        // Stop the faulty primary timeout because it is not needed until after the view change
+        // Stop the faulty primary and commit timeouts because they are not needed until after the
+        // view change
         state.faulty_primary_timeout.stop();
+        state.commit_timeout.stop();
 
         // Update the view change timeout and start it
         state.view_change_timeout = Timeout::new(
