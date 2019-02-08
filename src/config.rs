@@ -71,91 +71,89 @@ impl PbftConfig {
             storage: "memory".into(),
         }
     }
-}
 
-/// Load configuration from on-chain Sawtooth settings.
-///
-/// Configuration loads the following settings:
-/// + `sawtooth.consensus.pbft.peers` (required)
-/// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
-/// + `sawtooth.consensus.pbft.faulty_primary_timeout` (optional, default 30s)
-/// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
-/// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
-/// + `sawtooth.consensus.pbft.message_timeout` (optional, default 10 ms)
-/// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
-/// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
-///
-/// # Panics
-/// + If settings loading fails
-/// + If block duration is greater than the faulty primary timeout
-/// + If the `sawtooth.consensus.pbft.peers` setting is not provided or is invalid
-pub fn load_pbft_config(block_id: BlockId, service: &mut Service) -> PbftConfig {
-    let mut config = PbftConfig::default();
+    /// Load configuration from on-chain Sawtooth settings.
+    ///
+    /// Configuration loads the following settings:
+    /// + `sawtooth.consensus.pbft.peers` (required)
+    /// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
+    /// + `sawtooth.consensus.pbft.faulty_primary_timeout` (optional, default 30s)
+    /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
+    /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
+    /// + `sawtooth.consensus.pbft.message_timeout` (optional, default 10 ms)
+    /// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
+    /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
+    ///
+    /// # Panics
+    /// + If settings loading fails
+    /// + If block duration is greater than the faulty primary timeout
+    /// + If the `sawtooth.consensus.pbft.peers` setting is not provided or is invalid
+    pub fn load_settings(&mut self, block_id: BlockId, service: &mut Service) {
+        let settings: HashMap<String, String> = service
+            .get_settings(
+                block_id,
+                vec![
+                    String::from("sawtooth.consensus.pbft.peers"),
+                    String::from("sawtooth.consensus.pbft.block_duration"),
+                    String::from("sawtooth.consensus.pbft.faulty_primary_timeout"),
+                    String::from("sawtooth.consensus.pbft.view_change_duration"),
+                    String::from("sawtooth.consensus.pbft.forced_view_change_period"),
+                    String::from("sawtooth.consensus.pbft.message_timeout"),
+                    String::from("sawtooth.consensus.pbft.max_log_size"),
+                ],
+            )
+            .unwrap_or_else(|err| {
+                panic!("Failed to load on-chain settings due to error: {:?}", err)
+            });
 
-    let settings: HashMap<String, String> = service
-        .get_settings(
-            block_id,
-            vec![
-                String::from("sawtooth.consensus.pbft.peers"),
-                String::from("sawtooth.consensus.pbft.block_duration"),
-                String::from("sawtooth.consensus.pbft.faulty_primary_timeout"),
-                String::from("sawtooth.consensus.pbft.view_change_duration"),
-                String::from("sawtooth.consensus.pbft.forced_view_change_period"),
-                String::from("sawtooth.consensus.pbft.message_timeout"),
-                String::from("sawtooth.consensus.pbft.max_log_size"),
-            ],
-        )
-        .unwrap_or_else(|err| panic!("Failed to load on-chain settings due to error: {:?}", err));
+        // Get the peers associated with this node (including ourselves). Panic if it is not provided;
+        // the network cannot function without this setting.
+        let peers = get_peers_from_settings(&settings);
 
-    // Get the peers associated with this node (including ourselves). Panic if it is not provided;
-    // the network cannot function without this setting.
-    let peers = get_peers_from_settings(&settings);
+        self.peers = peers;
 
-    config.peers = peers;
+        // Get various durations
+        merge_millis_setting_if_set(
+            &settings,
+            &mut self.block_duration,
+            "sawtooth.consensus.pbft.block_duration",
+        );
+        merge_millis_setting_if_set(
+            &settings,
+            &mut self.message_timeout,
+            "sawtooth.consensus.pbft.message_timeout",
+        );
+        merge_secs_setting_if_set(
+            &settings,
+            &mut self.faulty_primary_timeout,
+            "sawtooth.consensus.pbft.faulty_primary_timeout",
+        );
+        merge_secs_setting_if_set(
+            &settings,
+            &mut self.view_change_duration,
+            "sawtooth.consensus.pbft.view_change_duration",
+        );
 
-    // Get various durations
-    merge_millis_setting_if_set(
-        &settings,
-        &mut config.block_duration,
-        "sawtooth.consensus.pbft.block_duration",
-    );
-    merge_millis_setting_if_set(
-        &settings,
-        &mut config.message_timeout,
-        "sawtooth.consensus.pbft.message_timeout",
-    );
-    merge_secs_setting_if_set(
-        &settings,
-        &mut config.faulty_primary_timeout,
-        "sawtooth.consensus.pbft.faulty_primary_timeout",
-    );
-    merge_secs_setting_if_set(
-        &settings,
-        &mut config.view_change_duration,
-        "sawtooth.consensus.pbft.view_change_duration",
-    );
+        // Check to make sure block_duration < faulty_primary_timeout
+        if self.block_duration >= self.faulty_primary_timeout {
+            panic!(
+                "Block duration ({:?}) must be less than the faulty primary timeout ({:?})",
+                self.block_duration, self.faulty_primary_timeout
+            );
+        }
 
-    // Check to make sure block_duration < faulty_primary_timeout
-    if config.block_duration >= config.faulty_primary_timeout {
-        panic!(
-            "Block duration ({:?}) must be less than the faulty primary timeout ({:?})",
-            config.block_duration, config.faulty_primary_timeout
+        // Get various integer constants
+        merge_setting_if_set(
+            &settings,
+            &mut self.forced_view_change_period,
+            "sawtooth.consensus.pbft.forced_view_change_period",
+        );
+        merge_setting_if_set(
+            &settings,
+            &mut self.max_log_size,
+            "sawtooth.consensus.pbft.max_log_size",
         );
     }
-
-    // Get various integer constants
-    merge_setting_if_set(
-        &settings,
-        &mut config.forced_view_change_period,
-        "sawtooth.consensus.pbft.forced_view_change_period",
-    );
-    merge_setting_if_set(
-        &settings,
-        &mut config.max_log_size,
-        "sawtooth.consensus.pbft.max_log_size",
-    );
-
-    config
 }
 
 fn merge_setting_if_set<T: ::std::str::FromStr>(

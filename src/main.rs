@@ -84,7 +84,9 @@ fn main() {
 
     info!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
 
-    let pbft_engine = engine::PbftEngine::new();
+    let mut pbft_config = config::PbftConfig::default();
+
+    let pbft_engine = engine::PbftEngine::new(pbft_config);
 
     let (driver, _stop) = ZmqDriver::new();
 
