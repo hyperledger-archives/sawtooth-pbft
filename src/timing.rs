@@ -17,6 +17,7 @@
 
 //! Timing-related structures
 
+use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use serde_millis;
@@ -93,6 +94,33 @@ impl Timeout {
     }
 }
 
+/// With exponential backoff, repeatedly try the callback until the result is `Ok`
+pub fn retry_until_ok<T, E, F: FnMut() -> Result<T, E>>(
+    base: Duration,
+    max: Duration,
+    mut callback: F,
+) -> T {
+    let mut delay = base;
+    loop {
+        match callback() {
+            Ok(res) => return res,
+            Err(_) => {
+                sleep(delay);
+                // Only increase delay if it's less than the max
+                if delay < max {
+                    delay = delay
+                        .checked_mul(2)
+                        .unwrap_or(Duration::from_millis(std::u64::MAX));
+                    // Make sure the max isn't exceeded
+                    if delay > max {
+                        delay = max;
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +177,23 @@ mod tests {
 
         t.stop();
         assert_eq!(t.state, TimeoutState::Inactive);
+    }
+
+    /// Retry a function that fails three times and succeeds on the 4th try with the
+    /// `retry_until_ok` method, a 10ms base, and 20ms max; the total time should be 50ms.
+    #[test]
+    fn retry() {
+        let start_time = Instant::now();
+        let vec = vec![Err(()), Err(()), Err(()), Ok(())];
+        let mut iter = vec.iter().cloned();
+        retry_until_ok(Duration::from_millis(10), Duration::from_millis(20), || {
+            iter.next().unwrap()
+        });
+        let end_time = Instant::now();
+        assert_tolerance!(
+            end_time - start_time,
+            Duration::from_millis(50),
+            Duration::from_millis(5)
+        );
     }
 }

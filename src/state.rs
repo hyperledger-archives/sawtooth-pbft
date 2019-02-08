@@ -120,6 +120,12 @@ pub struct PbftState {
     /// node starts a change to view v + 2, the timeout will be `2 * view_change_duration`; etc.
     pub view_change_duration: Duration,
 
+    /// The base time to use for retrying with exponential backoff
+    pub exponential_retry_base: Duration,
+
+    /// The maximum time for retrying with exponential backoff
+    pub exponential_retry_max: Duration,
+
     /// How many blocks to commit before forcing a view change for fairness
     pub forced_view_change_period: u64,
 }
@@ -148,6 +154,8 @@ impl PbftState {
             faulty_primary_timeout: Timeout::new(config.faulty_primary_timeout),
             view_change_timeout: Timeout::new(config.view_change_duration),
             view_change_duration: config.view_change_duration,
+            exponential_retry_base: config.exponential_retry_base,
+            exponential_retry_max: config.exponential_retry_max,
             forced_view_change_period: config.forced_view_change_period,
         }
     }

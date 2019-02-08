@@ -27,6 +27,8 @@ use sawtooth_sdk::consensus::{
 };
 use serde_json;
 
+use crate::timing::retry_until_ok;
+
 /// Contains the initial configuration loaded from on-chain settings, if present, or defaults in
 /// their absence.
 #[derive(Debug)]
@@ -39,6 +41,12 @@ pub struct PbftConfig {
 
     /// How long to wait for a message to arrive
     pub message_timeout: Duration,
+
+    /// The base time to use for retrying with exponential backoff
+    pub exponential_retry_base: Duration,
+
+    /// The maximum time for retrying with exponential backoff
+    pub exponential_retry_max: Duration,
 
     /// How long to wait for the next BlockNew + PrePrepare before determining primary is faulty
     /// Should be longer than block_duration
@@ -64,6 +72,8 @@ impl PbftConfig {
             peers: Vec::new(),
             block_duration: Duration::from_millis(200),
             message_timeout: Duration::from_millis(10),
+            exponential_retry_base: Duration::from_millis(100),
+            exponential_retry_max: Duration::from_secs(60),
             faulty_primary_timeout: Duration::from_secs(30),
             view_change_duration: Duration::from_secs(5),
             forced_view_change_period: 30,
@@ -85,26 +95,28 @@ impl PbftConfig {
     /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
     ///
     /// # Panics
-    /// + If settings loading fails
     /// + If block duration is greater than the faulty primary timeout
     /// + If the `sawtooth.consensus.pbft.peers` setting is not provided or is invalid
     pub fn load_settings(&mut self, block_id: BlockId, service: &mut Service) {
-        let settings: HashMap<String, String> = service
-            .get_settings(
-                block_id,
-                vec![
-                    String::from("sawtooth.consensus.pbft.peers"),
-                    String::from("sawtooth.consensus.pbft.block_duration"),
-                    String::from("sawtooth.consensus.pbft.faulty_primary_timeout"),
-                    String::from("sawtooth.consensus.pbft.view_change_duration"),
-                    String::from("sawtooth.consensus.pbft.forced_view_change_period"),
-                    String::from("sawtooth.consensus.pbft.message_timeout"),
-                    String::from("sawtooth.consensus.pbft.max_log_size"),
-                ],
-            )
-            .unwrap_or_else(|err| {
-                panic!("Failed to load on-chain settings due to error: {:?}", err)
-            });
+        debug!("Getting on-chain settings for config");
+        let settings: HashMap<String, String> = retry_until_ok(
+            self.exponential_retry_base,
+            self.exponential_retry_max,
+            || {
+                service.get_settings(
+                    block_id.clone(),
+                    vec![
+                        String::from("sawtooth.consensus.pbft.peers"),
+                        String::from("sawtooth.consensus.pbft.block_duration"),
+                        String::from("sawtooth.consensus.pbft.faulty_primary_timeout"),
+                        String::from("sawtooth.consensus.pbft.view_change_duration"),
+                        String::from("sawtooth.consensus.pbft.forced_view_change_period"),
+                        String::from("sawtooth.consensus.pbft.message_timeout"),
+                        String::from("sawtooth.consensus.pbft.max_log_size"),
+                    ],
+                )
+            },
+        );
 
         // Get the peers associated with this node (including ourselves). Panic if it is not provided;
         // the network cannot function without this setting.

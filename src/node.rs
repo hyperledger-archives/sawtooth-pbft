@@ -37,7 +37,7 @@ use crate::protos::pbft_message::{
     PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSealResponse, PbftSignedVote,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
-use crate::timing::Timeout;
+use crate::timing::{retry_until_ok, Timeout};
 
 /// Contains the core logic of the PBFT node
 pub struct PbftNode {
@@ -786,14 +786,18 @@ impl PbftNode {
     /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
     /// + If the network this node is on does not have enough nodes to be Byzantine fault tolernant
     fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) -> bool {
-        // Get list of peers from settings
-        let settings = self
-            .service
-            .get_settings(
-                block_id,
-                vec![String::from("sawtooth.consensus.pbft.peers")],
-            )
-            .expect("Couldn't load settings to check for membership updates");
+        // Get list of peers from settings (retry until a valid result is received)
+        trace!("Getting on-chain list of peers to check for membership updates");
+        let settings = retry_until_ok(
+            state.exponential_retry_base,
+            state.exponential_retry_max,
+            || {
+                self.service.get_settings(
+                    block_id.clone(),
+                    vec![String::from("sawtooth.consensus.pbft.peers")],
+                )
+            },
+        );
         let peers = get_peers_from_settings(&settings);
         let new_peers_set: HashSet<PeerId> = peers.iter().cloned().collect();
 
@@ -1116,13 +1120,17 @@ impl PbftNode {
         // itself, since publishing a block is an implicit vote. Check that the votes received are
         // from a subset of "peers - primary". Use the list of peers from the block this seal
         // verifies, since it may have changed.
-        let settings = self
-            .service
-            .get_settings(
-                seal.get_block_id().to_vec(),
-                vec![String::from("sawtooth.consensus.pbft.peers")],
-            )
-            .expect("Couldn't load settings to verify list of votes in consensus seal");
+        trace!("Getting on-chain list of peers to verify seal");
+        let settings = retry_until_ok(
+            state.exponential_retry_base,
+            state.exponential_retry_max,
+            || {
+                self.service.get_settings(
+                    seal.get_block_id().to_vec(),
+                    vec![String::from("sawtooth.consensus.pbft.peers")],
+                )
+            },
+        );
         let peers = get_peers_from_settings(&settings);
 
         let peer_ids: HashSet<_> = peers
