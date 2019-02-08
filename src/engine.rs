@@ -21,7 +21,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
 use sawtooth_sdk::consensus::{engine::*, service::Service};
 
-use crate::config;
+use crate::config::PbftConfig;
 use crate::error::PbftError;
 use crate::message_type::ParsedMessage;
 use crate::node::PbftNode;
@@ -29,12 +29,13 @@ use crate::state::{PbftMode, PbftState};
 use crate::storage::get_storage;
 use crate::timing;
 
-#[derive(Default)]
-pub struct PbftEngine {}
+pub struct PbftEngine {
+    config: PbftConfig,
+}
 
 impl PbftEngine {
-    pub fn new() -> Self {
-        PbftEngine {}
+    pub fn new(config: PbftConfig) -> Self {
+        PbftEngine { config }
     }
 }
 
@@ -54,30 +55,31 @@ impl Engine for PbftEngine {
         } = startup_state;
 
         // Load on-chain settings
-        let config = config::load_pbft_config(chain_head.block_id.clone(), &mut *service);
+        self.config
+            .load_settings(chain_head.block_id.clone(), &mut *service);
 
-        info!("PBFT config loaded: {:?}", config);
+        info!("PBFT config loaded: {:?}", self.config);
 
-        let mut pbft_state = get_storage(&config.storage, || {
+        let mut pbft_state = get_storage(&self.config.storage, || {
             PbftState::new(
                 local_peer_info.peer_id.clone(),
                 chain_head.block_num,
-                &config,
+                &self.config,
             )
         })
         .unwrap_or_else(|err| panic!("Failed to load state due to error: {}", err));
 
         info!("PBFT state created: {}", **pbft_state.read());
 
-        let mut working_ticker = timing::Ticker::new(config.block_duration);
+        let mut working_ticker = timing::Ticker::new(self.config.block_duration);
 
-        let mut node = PbftNode::new(&config, service, pbft_state.read().is_primary());
+        let mut node = PbftNode::new(&self.config, service, pbft_state.read().is_primary());
 
         node.start_faulty_primary_timeout(&mut pbft_state.write());
 
         // Main event loop; keep going until PBFT receives a Shutdown message or is disconnected
         loop {
-            let incoming_message = updates.recv_timeout(config.message_timeout);
+            let incoming_message = updates.recv_timeout(self.config.message_timeout);
             let state = &mut **pbft_state.write();
 
             trace!("{} received message {:?}", state, incoming_message);

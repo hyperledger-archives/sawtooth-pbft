@@ -27,6 +27,7 @@ extern crate log;
 extern crate serde_derive;
 
 use std::process;
+use std::time::Duration;
 
 use clap::{clap_app, crate_version};
 use log4rs::append::console::ConsoleAppender;
@@ -84,7 +85,15 @@ fn main() {
 
     info!("Sawtooth PBFT Engine ({})", env!("CARGO_PKG_VERSION"));
 
-    let pbft_engine = engine::PbftEngine::new();
+    let mut pbft_config = config::PbftConfig::default();
+    if let Some(base) = args.exponential_retry_base {
+        pbft_config.exponential_retry_base = Duration::from_millis(base);
+    }
+    if let Some(max) = args.exponential_retry_max {
+        pbft_config.exponential_retry_max = Duration::from_secs(max);
+    }
+
+    let pbft_engine = engine::PbftEngine::new(pbft_config);
 
     let (driver, _stop) = ZmqDriver::new();
 
@@ -121,7 +130,11 @@ fn parse_args() -> PbftCliArgs {
         (@arg verbose: -v --verbose +multiple
          "increase output verbosity")
         (@arg logconfig: -L --log_config +takes_value
-         "path to logging config file"))
+         "path to logging config file")
+        (@arg exponential_retry_base: -b --exponential_retry_base +takes_value
+         "base timeout for exponential backoff (milliseconds)")
+        (@arg exponential_retry_max: -m --exponential_retry_max +takes_value
+         "max timeout for exponential backoff (seconds)"))
     .get_matches();
 
     let log_config = matches.value_of("logconfig").map(|s| s.into());
@@ -139,15 +152,31 @@ fn parse_args() -> PbftCliArgs {
             .unwrap_or("tcp://localhost:5050"),
     );
 
+    let exponential_retry_base = matches
+        .value_of("exponential_retry_base")
+        .unwrap_or("")
+        .parse::<u64>()
+        .ok();
+    let exponential_retry_max = matches
+        .value_of("exponential_retry_max")
+        .unwrap_or("")
+        .parse::<u64>()
+        .ok();
+
     PbftCliArgs {
         log_config,
         log_level,
         endpoint,
+        exponential_retry_base,
+        exponential_retry_max,
     }
 }
 
+#[derive(Clone)]
 pub struct PbftCliArgs {
     log_config: Option<String>,
     log_level: log::LevelFilter,
     endpoint: String,
+    exponential_retry_base: Option<u64>,
+    exponential_retry_max: Option<u64>,
 }
