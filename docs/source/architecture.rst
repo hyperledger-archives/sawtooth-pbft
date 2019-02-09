@@ -1,17 +1,137 @@
-*****************
-PBFT Architecture
-*****************
+Architecture
+************
 
-The Sawtooth PBFT algorithm provides practical Byzantine fault tolerant (PBFT)
-consensus for Hyperledger Sawtooth. All nodes on the network participate in the
-consensus process by exchanging messages. One node, called the :term:`primary`,
-is the leader. All other nodes are called :term:`secondary nodes <secondaries>`.
+The Sawtooth PBFT algorithm is a voting-based consensus algorithm with Byzantine
+fault tolerance, which ensures `safety and liveness
+<https://en.wikipedia.org/wiki/Liveness#Liveness_and_safety>`__.
+The network can tolerate a certain number of "bad" nodes. As long as this number
+is not exceeded, the network will work properly. In addition, blocks committed
+by nodes are final, so there are no forks in the network.
 
-This section describes the Sawtooth PBFT architecture:
-:ref:`consensus messages <consensus-messages-label>`,
-:ref:`PBFT operation <pbft-operation-label>`
-(initialization, normal mode, and view changing),
-and :ref:`information stored by each node <node-storage-label>`.
+The nodes on the network send many messages to reach consensus, commit blocks,
+and maintain a healthy leader node, called a `primary node`. The network
+switches to a new primary (called a `view change`) at regular intervals, as well
+as when the current primary is faulty.
+
+* The primary node builds and publishes blocks.
+
+* The other nodes (called `secondary nodes`) vote on blocks and the health of
+  the leader.
+
+Sawtooth PBFT runs on each node in the network as a `consensus engine`, a
+separate process that handles consensus-related functionality and communicates
+with the validator through the consensus API.
+
+The following sections describe Sawtooth PBFT architecture:
+
+* :ref:`Network overview <network-overview-label>`: Describes PBFT fault
+  tolerance, view changes, sequence numbers, and the information stored
+  by each node
+
+* :ref:`Consensus messages <consensus-messages-label>`: Explains consensus
+  message structures and message types
+
+* :ref:`Sawtooth PBFT operation <pbft-operation-label>`: Shows how the
+  algorithm handles initialization, normal mode (block processing), and view
+  changes
+
+.. _network-overview-label:
+
+Network Overview
+================
+
+Fault Tolerance
+---------------
+
+A PBFT network consists of nodes that are ordered from 0 to `n-1`, where
+`n` is the total number of nodes in the network. The
+:doc:`on-chain setting <on-chain-settings>` ``sawtooth.consensus.pbft.peers``
+lists all nodes and determines the node order.
+
+The PBFT algorithm guarantees network `safety
+<https://en.wikipedia.org/wiki/Liveness#Liveness_and_safety>`__
+as long as the number of faulty nodes remains below the required percentage.
+The maximum number of faulty nodes that the network can tolerate is determined
+by the formula :math:`f = \frac{n - 1}{3}`. In other words, no more than one
+third of the nodes (rounded down) can be unreachable or dishonest at any given
+time.
+
+For example, a four-node network can tolerate one faulty node. (PBFT requires a
+minimum of four nodes in order to maintain Byzantine fault tolerance.)
+Increasing the size of the network reduces the likelihood that all
+:math:`\frac{n - 1}{3}` nodes would be faulty at the same time.
+
+.. _view-changes-choosing-primary-label:
+
+View Changes: Choosing a New Primary
+------------------------------------
+
+A `view` is the period of time that a given node is the primary, so a `view
+change` means switching to a different primary node. The next primary is
+selected in a round-robin (circular) fashion, according to the order of nodes
+listed in the :doc:`on-chain setting <on-chain-settings>`
+``sawtooth.consensus.pbft.peers``.
+
+In a four-node network, for example, the first node (node 0) is the primary at
+view 0, the second node (node 1) is the primary at view 1, and so on.  When the
+network gets to view 4, it will return to node 0 as the primary.
+
+The algorithm uses the formula `p = v mod n` to determine the next
+primary. In this formula, `p` is the primary, `v` is the view number, and `n` is
+the total number of nodes in the network. For example, if a four-node network is
+at view 7, the formula `7 mod 4` determines that node 3 is the primary.
+
+The Sawtooth PBFT algorithm changes the primary at regular intervals, as well as
+when the secondary nodes determine that the current primary is faulty.
+See :ref:`view-changing-mode-label` for a description of this process.
+
+Sequence Numbers
+----------------
+
+In addition to moving through a series of views, the network moves through a
+series of `sequence numbers`. In Sawtooth PBFT, a node's sequence number is
+the same as the block number of the next block in the chain. For example, a node
+that is on sequence number 10 has already committed block 9 and is evaluating
+block 10.
+
+Also, each message includes a sequence number that indicates which block the
+message is for. For example, a message with sequence number 10 applies to block
+number 10.
+
+.. _node-storage-label:
+
+Information Storage
+-------------------
+
+Each node stores several key pieces of information as part of its state:
+
+* List of nodes in the network (also called "connected peers")
+
+* Current view number, which identifies the primary node
+
+* Current sequence number, which is also the number of the block being processed
+
+* If in normal mode, the step of the algorithm it’s on
+  (see :ref:`normal-mode-label`)
+
+* Log of all blocks it has received
+
+* Log of all messages it has received
+
+.. _network-config-label:
+
+Network Configuration
+---------------------
+
+Sawtooth PBFT configures the network with on-chain settings, which are processed
+by the `Settings transaction processor
+<https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications/settings_transaction_family.html>`__ (or an equivalent).
+
+These settings list each node in the network, set the view-change period (how
+often the primary changes), and specify other items such as the block publishing
+frequency, timeout periods, and message log size.
+For more information, see :doc:`on-chain-settings`.
+
 
 .. _consensus-messages-label:
 
@@ -276,11 +396,8 @@ View changing mode has the following steps:
    operation.
 
 The next primary node is determined by the node ID, in sequential order, based
-based on the order of nodes in the ``sawtooth.consensus.pbft.peers`` on-chain
-setting. The first node on the list has ID 0 and is the first primary for view
-0; the next node has ID 1 and is the second primary for view 1; and so on.
-After all nodes on the list have been the primary, the algorithm returns to
-node 0.
+on the order of nodes in the ``sawtooth.consensus.pbft.peers`` on-chain setting.
+For more information, see :ref:`view-changes-choosing-primary-label`.
 
 
 .. _algorithm-phases-label:
@@ -350,36 +467,6 @@ Sawtooth PBFT defines the following transitions between the algorithm's phases:
 
 - ``Finished`` → ``NotStarted``: Caused by receiving a ``BlockCommit`` update
   for the current working block.
-
-
-.. _node-storage-label:
-
-Node Information Storage
-========================
-
-Each node in a Sawtooth PBFT network keeps track of the following information:
-
-* Its own node ID
-
-* Whether it’s a :term:`primary` or :term:`secondary <secondaries>` node
-
-* Connected peers (from the ``sawtooth.consensus.pbft.peers``
-  :doc:`on-chain setting <on-chain-setting>`)
-
-* Maximum number of faulty nodes allowed in the network (:math:`f`),
-  as calculated from the number of connected peers
-
-* Current sequence number and view number
-
-* Current mode of operation (:ref:`Normal <normal-mode-label>`
-  or :ref:`View Changing <view-changing-mode-label>`)
-
-* Which step of the algorithm it’s on
-
-* Block that it's currently working on (the "current working block")
-
-* Log of every PBFT message it has received, which is used to determine if there
-  are enough matching messages to go to the next step
 
 
 .. Licensed under Creative Commons Attribution 4.0 International License
