@@ -108,6 +108,12 @@ impl Engine for PbftEngine {
                     log_any_error(node.start_view_change(state, state.view + 1));
                 }
 
+                // If the commit timeout has expired, initiate a view change
+                if node.check_commit_timeout_expired(state) {
+                    warn!("Commit timeout expired; proposing view change");
+                    log_any_error(node.start_view_change(state, state.view + 1));
+                }
+
                 // Check the view change timeout if the node is view changing so we can start a new
                 // view change if we don't get a NewView in time
                 if let PbftMode::ViewChanging(v) = state.mode {
