@@ -52,11 +52,19 @@ impl PbftNode {
     /// Construct a new PBFT node
     ///
     /// If the node is the primary on start-up, it initializes a new block on the chain
-    pub fn new(config: &PbftConfig, service: Box<Service>, is_primary: bool) -> Self {
+    pub fn new(
+        config: &PbftConfig,
+        chain_head: Block,
+        service: Box<Service>,
+        is_primary: bool,
+    ) -> Self {
         let mut n = PbftNode {
             service,
             msg_log: PbftLog::new(config),
         };
+
+        // Add chain head to log
+        n.msg_log.add_block(chain_head);
 
         // Primary initializes a block
         if is_primary {
@@ -72,14 +80,22 @@ impl PbftNode {
     /// Handle a peer message from another PbftNode
     ///
     /// Handle all messages from other nodes. Such messages include `PrePrepare`, `Prepare`,
-    /// `Commit`, `ViewChange`, and `NewView`. If the node is view changing, ignore all messages
-    /// that aren't `ViewChange`s or `NewView`s.
+    /// `Commit`, `ViewChange`, and `NewView`. Make sure the message is from a known peer. If the
+    /// node is view changing, ignore all messages that aren't `ViewChange`s or `NewView`s.
     pub fn on_peer_message(
         &mut self,
         msg: ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         trace!("{}: Got peer message: {}", state, msg.info());
+
+        // Make sure this message is from a known peer
+        if !state.peer_ids.contains(&msg.info().signer_id) {
+            return Err(PbftError::InvalidMessage(format!(
+                "Received message from node ({:?}) that is not a known peer",
+                msg.info().get_signer_id(),
+            )));
+        }
 
         let msg_type = PbftMessageType::from(msg.info().msg_type.as_str());
 
@@ -445,19 +461,28 @@ impl PbftNode {
             return Ok(());
         }
 
-        // Make sure that this seal is for a block that the node has at this sequence number
-        if !self
+        // Make sure that this seal is for a block that the node has at this sequence number and
+        // that the seal's previous ID matches the previous ID of the block
+        if let Some(block) = self
             .msg_log
             .get_blocks(state.seq_num)
             .iter()
-            .any(|block| block.block_id == seal.block_id)
+            .find(|block| block.block_id == seal.block_id)
         {
-            warn!(
+            if block.previous_id != seal.previous_id {
+                return Err(PbftError::InvalidMessage(format!(
+                    "Received a seal for block {:?}, but previous IDs do not match: {:?} != {:?}",
+                    hex::encode(&seal.block_id),
+                    hex::encode(&seal.previous_id),
+                    hex::encode(&block.previous_id),
+                )));
+            }
+        } else {
+            return Err(PbftError::InvalidMessage(format!(
                 "Received a seal for a block ({:?}) that the node does not have at its current \
                  sequence number",
                 hex::encode(&seal.block_id),
-            );
-            return Ok(());
+            )));
         }
 
         // Verify the seal
@@ -862,7 +887,7 @@ impl PbftNode {
 
         // The previous block may have been committed in a different view, so the node will need
         // find the view that contains the required 2f Commit messages for building the seal
-        let messages = self
+        let (block_id, messages) = self
             .msg_log
             .get_messages_of_type_seq(PbftMessageType::Commit, state.seq_num - 1)
             .iter()
@@ -870,29 +895,44 @@ impl PbftNode {
             // therefore can't be included in the seal
             .filter(|msg| !msg.from_self)
             .cloned()
-            // Map to (view, msg) pairs
-            .map(|msg| (msg.info().get_view(), msg))
-            // Group messages together by view
+            // Map to ((block_id, view), msg)
+            .map(|msg| ((msg.get_block_id(), msg.info().get_view()), msg))
+            // Group messages together by block and view
             .into_group_map()
             .into_iter()
-            // One and only one view should have the required number of messages, since the block
-            // at this sequence number should only have been committed once and therefore in only
-            // one view
-            .find_map(|(_view, msgs)| {
+            // One and only one block/view should have the required number of messages, since only
+            // one block at this sequence number should have been committed and in only one view
+            .find_map(|((block_id, _view), msgs)| {
                 if msgs.len() as u64 >= 2 * state.f {
-                    Some(msgs)
+                    Some((block_id, msgs))
                 } else {
                     None
                 }
             })
             .ok_or_else(|| {
                 PbftError::InternalError(String::from(
-                    "Couldn't find 2f commit messages in the message log for building a seal!",
+                    "Couldn't find 2f commit messages in the message log for building a seal",
                 ))
             })?;
 
+        let previous_id = self
+            .msg_log
+            .get_blocks(state.seq_num - 1)
+            .iter()
+            .find_map(|block| {
+                if block.block_id == block_id {
+                    Some(block.previous_id.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                PbftError::InternalError("Log does not have the last committed block".into())
+            })?;
+
         let mut seal = PbftSeal::new();
-        seal.set_block_id(messages[0].get_block_id());
+        seal.set_block_id(block_id);
+        seal.set_previous_id(previous_id);
         seal.set_commit_votes(Self::signed_votes_from_messages(messages.as_slice()));
 
         trace!("Seal created: {:?}", seal);
@@ -1080,6 +1120,28 @@ impl PbftNode {
             )));
         }
 
+        // Make sure the seal's previous ID matches the previous ID of the block it verifies
+        let verified_block = self
+            .msg_log
+            .get_blocks(block.block_num - 1)
+            .iter()
+            .find(|log_block| log_block.block_id == seal.block_id)
+            .cloned()
+            .ok_or_else(|| {
+                PbftError::InternalError(format!(
+                    "Got seal for block {:?}, but block was not found in the log",
+                    seal.block_id,
+                ))
+            })?;
+        if verified_block.previous_id != seal.previous_id {
+            return Err(PbftError::InvalidMessage(format!(
+                "Received a seal for block {:?}, but previous IDs do not match: {:?} != {:?}",
+                hex::encode(&seal.block_id),
+                hex::encode(&seal.previous_id),
+                hex::encode(&verified_block.previous_id)
+            )));
+        }
+
         // Verify the seal itself
         self.verify_consensus_seal(&seal, block.signer_id.clone(), state)?;
 
@@ -1126,7 +1188,7 @@ impl PbftNode {
             state.exponential_retry_max,
             || {
                 self.service.get_settings(
-                    seal.get_block_id().to_vec(),
+                    seal.get_previous_id().to_vec(),
                     vec![String::from("sawtooth.consensus.pbft.peers")],
                 )
             },
@@ -1506,14 +1568,14 @@ mod tests {
         }
     }
 
-    /// Create a node, based on a given ID
-    fn mock_node(node_id: PeerId) -> PbftNode {
+    /// Create a node, based on a given ID and chain head
+    fn mock_node(node_id: PeerId, chain_head: Block) -> PbftNode {
         let service: Box<MockService> = Box::new(MockService {
             // Create genesis block (but with actual ID)
             chain: vec![mock_block_id(0)],
         });
         let cfg = mock_config(4);
-        PbftNode::new(&cfg, service, node_id == vec![0])
+        PbftNode::new(&cfg, chain_head, service, node_id == vec![0])
     }
 
     /// Create a deterministic BlockId hash based on a block number
@@ -1526,9 +1588,15 @@ mod tests {
     /// Create a mock Block, including only the BlockId, the BlockId of the previous block, and the
     /// block number
     fn mock_block(num: u64) -> Block {
+        let previous_id = if num == 0 {
+            vec![]
+        } else {
+            mock_block_id(num - 1)
+        };
+
         Block {
             block_id: mock_block_id(num),
-            previous_id: mock_block_id(num - 1),
+            previous_id,
             signer_id: PeerId::from(vec![]),
             block_num: num,
             payload: vec![],
@@ -1630,7 +1698,7 @@ mod tests {
     #[test]
     fn block_new_initial() {
         // NOTE: Special case for primary node
-        let mut node0 = mock_node(vec![0]);
+        let mut node0 = mock_node(vec![0], mock_block(0));
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         node0.on_block_new(mock_block(1), &mut state0).unwrap();
@@ -1638,7 +1706,7 @@ mod tests {
         assert_eq!(state0.seq_num, 1);
 
         // Try the next block
-        let mut node1 = mock_node(vec![1]);
+        let mut node1 = mock_node(vec![1], mock_block(0));
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         node1
             .on_block_new(mock_block(1), &mut state1)
@@ -1648,7 +1716,7 @@ mod tests {
 
     #[test]
     fn block_new_first_10_blocks() {
-        let mut node = mock_node(vec![0]);
+        let mut node = mock_node(vec![0], mock_block(0));
         let cfg = mock_config(4);
         let mut state = PbftState::new(vec![0], 0, &cfg);
 
@@ -1712,9 +1780,8 @@ mod tests {
     #[test]
     fn block_new_consensus() {
         let cfg = mock_config(4);
-        let mut node = mock_node(vec![1]);
-        let mut state = PbftState::new(vec![], 0, &cfg);
-        state.seq_num = 7;
+        let mut node = mock_node(vec![1], mock_block(6));
+        let mut state = PbftState::new(vec![], 6, &cfg);
         let head = mock_block(6);
         let mut block = mock_block(7);
         let context = create_context("secp256k1").unwrap();
@@ -1763,7 +1830,7 @@ mod tests {
     #[test]
     fn test_pre_prepare() {
         let cfg = mock_config(4);
-        let mut node0 = mock_node(vec![0]);
+        let mut node0 = mock_node(vec![0], mock_block(0));
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
 
         // Add block to the log
@@ -1785,7 +1852,7 @@ mod tests {
     /// Make sure that receiving a `BlockCommit` update works as expected
     #[test]
     fn block_commit() {
-        let mut node = mock_node(vec![0]);
+        let mut node = mock_node(vec![0], mock_block(0));
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         state0.phase = PbftPhase::Finishing(mock_block_id(1), false);
@@ -1801,7 +1868,7 @@ mod tests {
         let cfg = mock_config(4);
 
         // Make sure BlockNew is in the log
-        let mut node1 = mock_node(vec![1]);
+        let mut node1 = mock_node(vec![1], mock_block(0));
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         let block = mock_block(1);
         node1
@@ -1860,7 +1927,7 @@ mod tests {
     /// change
     #[test]
     fn view_change() {
-        let mut node1 = mock_node(vec![1]);
+        let mut node1 = mock_node(vec![1], mock_block(0));
         let cfg = mock_config(4);
         let mut state1 = PbftState::new(vec![1], 0, &cfg);
 
@@ -1909,7 +1976,7 @@ mod tests {
     /// Make sure that view changes start correctly
     #[test]
     fn start_view_change() {
-        let mut node1 = mock_node(vec![1]);
+        let mut node1 = mock_node(vec![1], mock_block(0));
         let cfg = mock_config(4);
         let mut state1 = PbftState::new(vec![], 0, &cfg);
         assert_eq!(state1.mode, PbftMode::Normal);
@@ -1925,7 +1992,7 @@ mod tests {
     /// Test that try_publish adds in the consensus seal
     #[test]
     fn try_publish() {
-        let mut node0 = mock_node(vec![0]);
+        let mut node0 = mock_node(vec![0], mock_block(0));
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
 
