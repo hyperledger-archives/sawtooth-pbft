@@ -65,7 +65,9 @@ echo "Building PBFT engine"
 docker network create pbft_validators_${ISOLATION_ID} || true
 docker network create pbft_rest_apis_${ISOLATION_ID} || true
 docker volume create --name=pbft_shared_data_${ISOLATION_ID} || true
-docker-compose -f adhoc/node.yaml run --rm pbft cargo build
+if [ ! -f ./target/debug/pbft-engine ]; then
+  docker-compose -f adhoc/node.yaml run --rm pbft cargo build
+fi
 
 echo "Starting initial network"
 docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml up -d
