@@ -29,9 +29,6 @@ transaction family
 - | ``sawtooth.consensus.pbft.block_duration`` (optional, default 200 ms)
   | How often to try to publish a block
 
-- | ``sawtooth.consensus.pbft.checkpoint_period`` (optional, default 100 blocks)
-  | How many committed blocks in between each checkpoint
-
 - | ``sawtooth.consensus.pbft.commit_timeout`` (optional, default 4000 ms)
   | How long to wait between block commits before deeming a primary node faulty
 
