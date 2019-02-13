@@ -178,7 +178,6 @@ services:
       - ..:/project/sawtooth-pbft
       - cargo-registry:/root/.cargo/registry
       - cargo-git:/root/.cargo/git
-      - cargo-target:/project/sawtooth-pbft/target
     working_dir: /project/sawtooth-pbft/
     command: ./target/debug/pbft-engine --connect tcp://validator-0:5050 -vv
     stop_signal: SIGKILL
@@ -192,7 +191,6 @@ services:
       - ..:/project/sawtooth-pbft
       - cargo-registry:/root/.cargo/registry
       - cargo-git:/root/.cargo/git
-      - cargo-target:/project/sawtooth-pbft/target
     working_dir: /project/sawtooth-pbft/
     command: ./target/debug/pbft-engine --connect tcp://validator-1:5050 -vv
     stop_signal: SIGKILL
@@ -206,7 +204,6 @@ services:
       - ..:/project/sawtooth-pbft
       - cargo-registry:/root/.cargo/registry
       - cargo-git:/root/.cargo/git
-      - cargo-target:/project/sawtooth-pbft/target
     working_dir: /project/sawtooth-pbft/
     command: ./target/debug/pbft-engine --connect tcp://validator-2:5050 -vv
     stop_signal: SIGKILL
@@ -220,7 +217,6 @@ services:
       - ..:/project/sawtooth-pbft
       - cargo-registry:/root/.cargo/registry
       - cargo-git:/root/.cargo/git
-      - cargo-target:/project/sawtooth-pbft/target
     working_dir: /project/sawtooth-pbft/
     command: ./target/debug/pbft-engine --connect tcp://validator-3:5050 -vv
     stop_signal: SIGKILL
