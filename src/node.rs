@@ -727,8 +727,7 @@ impl PbftNode {
             });
         }
 
-        // Update state to be ready for next block
-        state.switch_phase(PbftPhase::PrePreparing)?;
+        // Update sequence number
         state.seq_num += 1;
 
         // If node(s) are waiting for a seal to commit the last block, send it now
@@ -773,8 +772,9 @@ impl PbftNode {
             return self.request_final_seal(state);
         }
 
-        // Restart the faulty primary timeout for the next block
-        state.faulty_primary_timeout.start();
+        // Restart to the beginning of the algorithm (Normal mode, PrePreparing phase) and start
+        // the faulty primary timeout for the next block
+        state.reset_to_start();
 
         // If we already have a block at this sequence number with a valid PrePrepare for it, start
         // Preparing (there may be multiple blocks, but only one will have a valid PrePrepare)
