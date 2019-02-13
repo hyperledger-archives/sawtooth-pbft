@@ -103,7 +103,7 @@ pipeline {
 
         stage('Run liveness tests') {
             steps {
-                sh 'docker-compose -f tests/test_liveness.yaml up --abort-on-container-exit --exit-code-from test-pbft-engine'
+                sh './bin/run_docker_test tests/test_liveness.yaml'
             }
         }
 

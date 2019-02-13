@@ -23,7 +23,7 @@ volumes:
 
 services:
 
-  test-pbft-engine:
+  test-liveness:
     image: sawtooth-pbft-test:$ISOLATION_ID
     build:
       context: .
