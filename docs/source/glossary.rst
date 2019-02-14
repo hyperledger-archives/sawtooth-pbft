@@ -38,13 +38,6 @@ Glossary
     all client requests into blocks and sends them through the Consensus API to
     the consensus algorithm.
 
-  Checkpoint
-    Mode when log messages can be garbage collected. Checkpointing is triggered
-    when a certain number of blocks have been committed.
-
-  Checkpoint period
-    How many blocks are published in between each checkpoint.
-
   Consensus seal
     Proof that a block underwent consensus.
 
@@ -58,12 +51,6 @@ Glossary
   Working block
     The block that has been initialized but not finalized, and is currently
     being committed to.
-
-  Low water mark
-    The sequence number of the last stable checkpoint.
-
-  High water mark
-    Low water mark plus the desired maximum size of nodes’ message logs.
 
   View
     The period of time of PBFT when the current primary is in charge. The view

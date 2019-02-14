@@ -10,7 +10,7 @@ is the leader. All other nodes are called :term:`secondary nodes <secondaries>`.
 This section describes the Sawtooth PBFT architecture:
 :ref:`consensus messages <consensus-messages-label>`,
 :ref:`PBFT operation <pbft-operation-label>`
-(initialization, normal mode, view changing, and checkpointing),
+(initialization, normal mode, and view changing),
 and :ref:`information stored by each node <node-storage-label>`.
 
 .. _consensus-messages-label:
@@ -71,7 +71,7 @@ consensus messages.
      bytes signer_id = 4;
    }
 
-   // A generic PBFT message (PrePrepare, Prepare, Commit, Checkpoint)
+   // A generic PBFT message (PrePrepare, Prepare, Commit)
    message PbftMessage {
      // Message information
      PbftMessageInfo info = 1;
@@ -84,12 +84,7 @@ consensus messages.
    message PbftViewChange {
      // Message information
      PbftMessageInfo info = 1;
-
-     // Set of `2f + 1` checkpoint messages, proving correctness of stable
-     // checkpoint mentioned in info's `sequence_number`
-     repeated PbftMessage checkpoint_messages = 2;
    }
-
 
 Message Types
 -------------
@@ -107,10 +102,6 @@ A Sawtooth PBFT message has one of the following types:
   received for the current working block. This message is used to determine if
   there is consensus for committing the current working block.
 
-* ``Checkpoint``: Sent by any node that has approved the specified number of
-  blocks in a single checkpoint period. Sufficient ``Checkpoint`` messages will
-  trigger Checkpointing mode (garbage collection for log messages).
-
 * ``ViewChange``: Sent by any node that suspects that the primary node is
   faulty. Sufficient ``ViewChange`` messages will trigger a view change.
 
@@ -121,15 +112,20 @@ PBFT Operation
 ==============
 
 The Sawtooth PBFT algorithm starts with initialization, then operates in one of
-three modes:
+two modes:
 
 * :ref:`Normal mode <normal-mode-label>` for processing blocks
 
 * :ref:`View Changing mode <view-changing-mode-label>` for switching to a
   different primary node
 
-* :ref:`Checkpointing mode <checkpointing-mode-label>` for log message garbage
-  collection
+.. note::
+
+   The original PBFT algorithm also defines a Checkpointing (garbage collection)
+   mode to prune log messages after a certain number of blocks have been
+   committed. Sawtooth PBFT does not implement checkpointing. Instead, it uses
+   the on-chain setting ``sawtooth.consensus.pbft.max_log_size`` to trigger
+   log pruning on each node.
 
 
 Initialization
@@ -143,7 +139,7 @@ When the Sawtooth PBFT consensus engine starts, it does the following:
 
 * Creates the message log, with all fields empty
 
-* Establishes timers and counters for checkpoint periods and block durations,
+* Establishes timers and counters for block durations and view changes,
   based on the on-chain settings
 
 
@@ -179,10 +175,8 @@ Normal Mode
 -----------
 
 In Normal mode, nodes check blocks and approve them to be committed to the
-blockchain. The Sawtooth PBFT algorithm usually operates in normal mode unless
-a view change is necessary (such as when the primary node is faulty) or the
-checkpoint period expires (which triggers garbage collection for the log
-messages).
+blockchain. The Sawtooth PBFT algorithm usually operates in normal mode unless a
+:ref:`view change <view-changing-mode-label>` is necessary.
 
 Normal mode includes the following steps:
 
@@ -205,8 +199,6 @@ Normal mode includes the following steps:
       corresponding fields of the original ``BlockNew`` block
     - The view in ``PrePrepare`` message corresponds to this node’s current view
     - This message hasn’t already been accepted with a different ``summary``
-    - The sequence number is within the sequential bounds of the log (low and
-      high water marks)
 
    If the ``PrePrepare`` is invalid, the node starts a view change.
 
@@ -274,8 +266,8 @@ agree (send their own ``ViewChange`` messages).
 View changing mode has the following steps:
 
 1. Any node who decides the primary is faulty sends a ``ViewChange`` message to
-   all nodes. This message contain the node’s current sequence number, its
-   current view, and proof of the previous checkpoint.
+   all nodes. This message contains the node’s current sequence number (block
+   number) and  its current view.
 
 #. After sending the ``ViewChange`` message, the node enters View Changing mode.
 
@@ -289,34 +281,6 @@ setting. The first node on the list has ID 0 and is the first primary for view
 0; the next node has ID 1 and is the second primary for view 1; and so on.
 After all nodes on the list have been the primary, the algorithm returns to
 node 0.
-
-
-.. _checkpointing-mode-label:
-
-Checkpointing Mode
-------------------
-
-After each node has approved a certain number of blocks to be committed
-(as defined by the ``checkpoint_period``), the node's log messages can be
-pruned. By default, the ``checkpoint_period`` is 100 blocks, but it can be
-changed with the ``sawtooth.consensus.pbft.checkpoint_period``
-:ref:`on-chain setting <pbft-on-chain-settings-label>`.
-
-Checkpointing mode has the following steps:
-
-1. When a node reaches a checkpoint, it broadcasts a ``Checkpoint`` message
-   and enters ``Checkpointing`` mode. The message contains the sequence number
-   for the current checkpoint period.
-
-#. When a node has :math:`2f + 1` matching ``Checkpoint`` messages from other
-   nodes, the checkpoint is considered *stable* for that node. The node begins
-   garbage collection for its log messages.
-
-#. The node discards all log entries for the previous checkpoint period (for
-   messages with a sequence number less than the one in the ``Checkpoint``
-   message). It also removes all previous checkpoints.
-
-#. After garbage collection is complete, the node resumes Normal operation.
 
 
 .. _algorithm-phases-label:
@@ -338,9 +302,7 @@ Normal mode, and the gray boxes represent the algorithm's actions.
 The PBFT phases are:
 
 * ``NotStarted``: No blocks are being processed and no new ``BlockNew`` updates
-  have been received. In this phase, a node enters Checkpointing mode if
-  ``checkpoint_period`` blocks have been committed to the chain. If no
-  checkpoint occurs, the node is ready to receive a ``BlockNew`` update for
+  have been received. The node is ready to receive a ``BlockNew`` update for
   the next block.
 
 * ``PrePreparing``: A ``BlockNew`` update has been received through the
@@ -409,9 +371,8 @@ Each node in a Sawtooth PBFT network keeps track of the following information:
 
 * Current sequence number and view number
 
-* Current mode of operation (:ref:`Normal <normal-mode-label>`,
-  :ref:`View Changing <view-changing-mode-label>`, or
-  :ref:`Checkpointing <checkpointing-mode-label>`)
+* Current mode of operation (:ref:`Normal <normal-mode-label>`
+  or :ref:`View Changing <view-changing-mode-label>`)
 
 * Which step of the algorithm it’s on
 
