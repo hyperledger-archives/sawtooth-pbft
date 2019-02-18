@@ -27,7 +27,9 @@ use sawtooth_sdk::consensus::engine::{BlockId, PeerMessage};
 
 use crate::error::PbftError;
 use crate::hash::verify_sha512;
-use crate::protos::pbft_message::{PbftMessage, PbftMessageInfo, PbftNewView, PbftSealResponse};
+use crate::protos::pbft_message::{
+    PbftMessage, PbftMessageInfo, PbftNewView, PbftSealResponse, PbftSignedVote,
+};
 
 /// Wrapper enum for all of the possible PBFT-related messages
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +98,22 @@ impl ParsedMessage {
             message_bytes: message.write_to_bytes().unwrap(),
             message: PbftMessageWrapper::NewView(message),
         }
+    }
+
+    /// Constructs a `ParsedMessage` from the given `PbftSignedVote`.
+    ///
+    /// Adds metadata necessary for re-creating a signed vote later on.
+    pub fn from_signed_vote(vote: &PbftSignedVote) -> Result<Self, PbftError> {
+        let message = protobuf::parse_from_bytes(vote.get_message_bytes())
+            .map_err(|err| PbftError::SerializationError("Error parsing vote".into(), err))?;
+
+        Ok(Self {
+            from_self: false,
+            header_bytes: vote.get_header_bytes().to_vec(),
+            header_signature: vote.get_header_signature().to_vec(),
+            message_bytes: vote.get_message_bytes().to_vec(),
+            message: PbftMessageWrapper::Message(message),
+        })
     }
 
     pub fn info(&self) -> &PbftMessageInfo {
