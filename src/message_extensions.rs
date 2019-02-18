@@ -56,6 +56,7 @@ impl Hash for PbftMessage {
 
 impl Hash for PbftSeal {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_info().hash(state);
         self.get_block_id().hash(state);
         self.get_previous_id().hash(state);
         for vote in self.get_commit_votes() {
@@ -107,7 +108,8 @@ impl fmt::Display for PbftSeal {
             .fold(String::new(), |acc, vote| format!("{}{}, ", acc, vote));
         write!(
             f,
-            "PbftSeal(block_id: {}, votes: {})",
+            "PbftSeal(info: {}, block_id: {}, votes: {})",
+            self.get_info(),
             hex::encode(self.get_block_id()),
             votes,
         )
