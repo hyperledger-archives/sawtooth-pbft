@@ -1190,10 +1190,27 @@ impl PbftNode {
                 .iter()
                 .try_fold(HashSet::new(), |mut ids, vote| {
                     Self::verify_vote(vote, PbftMessageType::Commit, |msg| {
+                        // Make sure all votes are for the right block
                         if msg.block_id != seal.block_id {
                             return Err(PbftError::InvalidMessage(format!(
                                 "Commit vote's block ID ({:?}) doesn't match seal's ID ({:?})",
                                 msg.block_id, seal.block_id
+                            )));
+                        }
+                        // Make sure all votes are for the right view
+                        if msg.get_info().get_view() != seal.get_info().get_view() {
+                            return Err(PbftError::InvalidMessage(format!(
+                                "Commit vote's view ({:?}) doesn't match seal's view ({:?})",
+                                msg.get_info().get_view(),
+                                seal.get_info().get_view()
+                            )));
+                        }
+                        // Make sure all votes are for the right sequence number
+                        if msg.get_info().get_seq_num() != seal.get_info().get_seq_num() {
+                            return Err(PbftError::InvalidMessage(format!(
+                                "Commit vote's seq_num ({:?}) doesn't match seal's seq_num ({:?})",
+                                msg.get_info().get_seq_num(),
+                                seal.get_info().get_seq_num()
                             )));
                         }
                         Ok(())
