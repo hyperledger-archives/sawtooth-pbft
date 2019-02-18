@@ -1685,7 +1685,7 @@ mod tests {
             let header_signature =
                 hex::decode(context.sign(&header_bytes, &*key).unwrap()).unwrap();
 
-            message.from_self = false;
+            message.from_self = vec![i] == state.id;
             message.header_bytes = header_bytes;
             message.header_signature = header_signature;
 
@@ -1825,56 +1825,6 @@ mod tests {
 
             state.seq_num += 1;
         }
-    }
-
-    /// Make sure that `BlockNew` properly checks the consensus seal.
-    #[test]
-    fn block_new_consensus() {
-        let cfg = mock_config(4);
-        let mut node = mock_node(vec![1], mock_block(6));
-        let mut state = PbftState::new(vec![], 6, &cfg);
-        let head = mock_block(6);
-        let mut block = mock_block(7);
-        let context = create_context("secp256k1").unwrap();
-
-        for i in 0..3 {
-            let mut info = PbftMessageInfo::new();
-            info.set_msg_type("Commit".into());
-            info.set_view(0);
-            info.set_seq_num(6);
-            info.set_signer_id(vec![i]);
-
-            let mut msg = PbftMessage::new();
-            msg.set_info(info);
-            msg.set_block_id(head.block_id.clone());
-
-            let mut message = ParsedMessage::from_pbft_message(msg);
-
-            let key = context.new_random_private_key().unwrap();
-            let pub_key = context.get_public_key(&*key).unwrap();
-            let mut header = ConsensusPeerMessageHeader::new();
-
-            header.set_signer_id(pub_key.as_slice().to_vec());
-            header.set_content_sha512(hash_sha512(&message.message_bytes));
-
-            let header_bytes = header.write_to_bytes().unwrap();
-            let header_signature =
-                hex::decode(context.sign(&header_bytes, &*key).unwrap()).unwrap();
-
-            message.from_self = false;
-            message.header_bytes = header_bytes;
-            message.header_signature = header_signature;
-
-            node.msg_log.add_message(message, &state).unwrap();
-        }
-
-        let seal = node.build_seal(&state).unwrap();
-        block.payload = seal
-            .write_to_bytes()
-            .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
-            .unwrap();
-
-        node.on_block_new(block, &mut state).unwrap();
     }
 
     /// Make sure that a valid `PrePrepare` is accepted
