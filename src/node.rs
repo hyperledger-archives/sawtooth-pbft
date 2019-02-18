@@ -491,7 +491,7 @@ impl PbftNode {
         }
 
         // Verify the seal
-        match self.verify_consensus_seal(seal, msg.info().get_signer_id().to_vec(), state) {
+        match self.verify_consensus_seal(seal, state) {
             Ok(_) => {
                 trace!("Consensus seal passed verification");
             }
@@ -1168,7 +1168,7 @@ impl PbftNode {
         }
 
         // Verify the seal itself
-        self.verify_consensus_seal(&seal, block.signer_id.clone(), state)?;
+        self.verify_consensus_seal(&seal, state)?;
 
         Ok(seal)
     }
@@ -1181,7 +1181,6 @@ impl PbftNode {
     fn verify_consensus_seal(
         &mut self,
         seal: &PbftSeal,
-        seal_signer_id: PeerId,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         // Verify each individual vote and extract the signer ID from each PbftMessage so the IDs
@@ -1203,10 +1202,10 @@ impl PbftNode {
                     Ok(ids)
                 })?;
 
-        // All of the votes must come from known peers, and the primary can't explicitly vote
-        // itself, since publishing a block is an implicit vote. Check that the votes received are
-        // from a subset of "peers - primary". Use the list of peers from the block this seal
-        // verifies, since it may have changed.
+        // All of the votes in a seal must come from known peers, and the primary can't explicitly
+        // vote itself, since building a consensus seal is an implicit vote. Check that the votes
+        // received are from a subset of "peers - seal creator". Use the list of peers from the
+        // block this seal verifies, since it may have changed.
         trace!("Getting on-chain list of peers to verify seal");
         let settings = retry_until_ok(
             state.exponential_retry_base,
@@ -1220,10 +1219,18 @@ impl PbftNode {
         );
         let peers = get_peers_from_settings(&settings);
 
+        // Verify that the seal's signer is a known peer
+        if !peers.contains(&seal.get_info().get_signer_id().to_vec()) {
+            return Err(PbftError::InvalidMessage(format!(
+                "Consensus seal is signed by an unknown peer: {:?}",
+                seal.get_info().get_signer_id()
+            )));
+        }
+
         let peer_ids: HashSet<_> = peers
             .iter()
             .cloned()
-            .filter(|pid| pid != &seal_signer_id)
+            .filter(|pid| pid.as_slice() != seal.get_info().get_signer_id())
             .collect();
 
         trace!(
