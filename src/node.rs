@@ -34,7 +34,7 @@ use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::{
-    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSealResponse, PbftSignedVote,
+    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
 };
 use crate::state::{PbftMode, PbftPhase, PbftState};
 use crate::timing::{retry_until_ok, Timeout};
@@ -121,7 +121,7 @@ impl PbftNode {
             PbftMessageType::ViewChange => self.handle_view_change(&msg, state)?,
             PbftMessageType::NewView => self.handle_new_view(&msg, state)?,
             PbftMessageType::SealRequest => self.handle_seal_request(msg, state)?,
-            PbftMessageType::SealResponse => self.handle_seal_response(&msg, state)?,
+            PbftMessageType::Seal => self.handle_seal_response(&msg, state)?,
             _ => warn!("Received message with unknown type: {:?}", msg_type),
         }
 
@@ -447,7 +447,7 @@ impl PbftNode {
         }
     }
 
-    /// Handle a `SealResponse` message
+    /// Handle a `Seal` message
     ///
     /// A node has responded to the seal request by sending a seal for the last block; validate the
     /// seal and commit the block.
@@ -456,7 +456,7 @@ impl PbftNode {
         msg: &ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        let seal = msg.get_seal_response().get_seal();
+        let seal = msg.get_seal();
 
         // If the node has already committed the block, ignore
         if let PbftPhase::Finishing(_, _) = state.phase {
@@ -1381,8 +1381,8 @@ impl PbftNode {
         return Ok(());
     }
 
-    /// Build a consensus seal for the last block this node committed and send it in a
-    /// `SealResponse` message to the node that requested the seal (the `recipient`)
+    /// Build a consensus seal for the last block this node committed and send it to the node that
+    /// requested the seal (the `recipient`)
     #[allow(clippy::ptr_arg)]
     fn send_seal_response(
         &mut self,
@@ -1393,25 +1393,15 @@ impl PbftNode {
             PbftError::InternalError(format!("Failed to build requested seal due to: {}", err))
         })?;
 
-        // Construct the response
-        let mut seal_response = PbftSealResponse::new();
-        seal_response.set_info(PbftMessageInfo::new_from(
-            PbftMessageType::SealResponse,
-            state.view,
-            state.seq_num,
-            state.id.clone(),
-        ));
-        seal_response.set_seal(seal);
-
-        let msg_bytes = seal_response.write_to_bytes().map_err(|err| {
-            PbftError::SerializationError("Error writing SealResponse to bytes".into(), err)
+        let msg_bytes = seal.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing seal to bytes".into(), err)
         })?;
 
         // Send the seal to the requester
         self.service
             .send_to(
                 recipient,
-                String::from(PbftMessageType::SealResponse).as_str(),
+                String::from(PbftMessageType::Seal).as_str(),
                 msg_bytes,
             )
             .map_err(|err| {
