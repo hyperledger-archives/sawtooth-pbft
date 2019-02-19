@@ -607,12 +607,8 @@ impl PbftNode {
         let messages = seal
             .get_commit_votes()
             .iter()
-            .try_fold(Vec::new(), |mut msgs, v| {
-                msgs.push(ParsedMessage::from_pbft_message(
-                    protobuf::parse_from_bytes(&v.get_message_bytes()).map_err(|err| {
-                        PbftError::SerializationError("Error parsing commit vote".into(), err)
-                    })?,
-                ));
+            .try_fold(Vec::new(), |mut msgs, vote| {
+                msgs.push(ParsedMessage::from_signed_vote(vote)?);
                 Ok(msgs)
             })?;
 
