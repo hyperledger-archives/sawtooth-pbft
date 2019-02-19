@@ -465,12 +465,16 @@ impl PbftNode {
 
         // Make sure that this seal is for a block that the node has at this sequence number and
         // that the seal's previous ID matches the previous ID of the block
-        if let Some(block) = self
-            .msg_log
-            .get_blocks_with_num(state.seq_num)
-            .iter()
-            .find(|block| block.block_id == seal.block_id)
-        {
+        if let Some(block) = self.msg_log.get_block_with_id(seal.block_id.as_slice()) {
+            if block.block_num != state.seq_num {
+                return Err(PbftError::InvalidMessage(format!(
+                    "Received a seal for block {:?}, but block_num does not match node's seq_num: \
+                     {} != {}",
+                    hex::encode(&seal.block_id),
+                    block.block_num,
+                    state.seq_num,
+                )));
+            }
             if block.previous_id != seal.previous_id {
                 return Err(PbftError::InvalidMessage(format!(
                     "Received a seal for block {:?}, but previous IDs do not match: {:?} != {:?}",
@@ -481,8 +485,7 @@ impl PbftNode {
             }
         } else {
             return Err(PbftError::InvalidMessage(format!(
-                "Received a seal for a block ({:?}) that the node does not have at its current \
-                 sequence number",
+                "Received a seal for a block ({:?}) that the node does not have",
                 hex::encode(&seal.block_id),
             )));
         }
@@ -925,15 +928,8 @@ impl PbftNode {
 
         let previous_id = self
             .msg_log
-            .get_blocks_with_num(state.seq_num - 1)
-            .iter()
-            .find_map(|block| {
-                if block.block_id == block_id {
-                    Some(block.previous_id.clone())
-                } else {
-                    None
-                }
-            })
+            .get_block_with_id(block_id.as_slice())
+            .map(|block| block.previous_id.clone())
             .ok_or_else(|| {
                 PbftError::InternalError("Log does not have the last committed block".into())
             })?;
@@ -1131,10 +1127,7 @@ impl PbftNode {
         // Make sure the seal's previous ID matches the previous ID of the block it verifies
         let verified_block = self
             .msg_log
-            .get_blocks_with_num(block.block_num - 1)
-            .iter()
-            .find(|log_block| log_block.block_id == seal.block_id)
-            .cloned()
+            .get_block_with_id(seal.block_id.as_slice())
             .ok_or_else(|| {
                 PbftError::InternalError(format!(
                     "Got seal for block {:?}, but block was not found in the log",
