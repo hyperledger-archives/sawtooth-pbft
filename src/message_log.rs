@@ -91,11 +91,11 @@ impl PbftLog {
             .collect()
     }
 
-    /// Check if the log contains a block with the specified block ID
-    pub fn has_block(&self, block_id: &[u8]) -> bool {
+    /// Get the `Block` with the specified block ID
+    pub fn get_block_with_id(&self, block_id: &[u8]) -> Option<&Block> {
         self.blocks
             .iter()
-            .any(|block| block.block_id.as_slice() == block_id)
+            .find(|block| block.block_id.as_slice() == block_id)
     }
 
     /// Add a parsed PBFT message to the log

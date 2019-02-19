@@ -531,7 +531,11 @@ impl PbftNode {
         // verified without it; the node has the previous block if 1) this block is for the current
         // sequence number (previous block is already committed), or 2) the previous block is in
         // the log
-        if block.block_num != state.seq_num && !self.msg_log.has_block(block.previous_id.as_slice())
+        if block.block_num != state.seq_num
+            && self
+                .msg_log
+                .get_block_with_id(block.previous_id.as_slice())
+                .is_none()
         {
             self.service
                 .fail_block(block.block_id.clone())
@@ -849,7 +853,7 @@ impl PbftNode {
     /// Prepare
     fn try_preparing(&mut self, block_id: BlockId, state: &mut PbftState) -> Result<(), PbftError> {
         if state.phase == PbftPhase::PrePreparing
-            && self.msg_log.has_block(&block_id)
+            && self.msg_log.get_block_with_id(&block_id).is_some()
             && self.msg_log.has_pre_prepare(state, &block_id)
         {
             state.switch_phase(PbftPhase::Preparing)?;
