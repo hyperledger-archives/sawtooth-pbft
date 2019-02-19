@@ -534,17 +534,30 @@ impl PbftNode {
         // verified without it; the node has the previous block if 1) this block is for the current
         // sequence number (previous block is already committed), or 2) the previous block is in
         // the log
-        if block.block_num != state.seq_num
-            && self
-                .msg_log
-                .get_block_with_id(block.previous_id.as_slice())
-                .is_none()
-        {
+        let previous_block = self.msg_log.get_block_with_id(block.previous_id.as_slice());
+
+        if block.block_num != state.seq_num && previous_block.is_none() {
             self.service
                 .fail_block(block.block_id.clone())
                 .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
             return Err(PbftError::InternalError(format!(
-                "Received block {:?} / {:?} but node does not have previous block {:?} / {:?}",
+                "Received block {:?} / {:?} but node does not have previous block {:?}",
+                block.block_num,
+                hex::encode(&block.block_id),
+                hex::encode(&block.previous_id),
+            )));
+        }
+
+        // Make sure that the previous block has the previous block number (enforces that blocks
+        // are strictly monotically increasing by 1)
+        let previous_block = previous_block.expect("Previous block's existence already checked");
+        if previous_block.block_num != block.block_num - 1 {
+            self.service
+                .fail_block(block.block_id.clone())
+                .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
+            return Err(PbftError::InternalError(format!(
+                "Received block {:?} / {:?} but its previous block ({:?} / {:?}) does not have \
+                 the previous block_num",
                 block.block_num,
                 hex::encode(&block.block_id),
                 block.block_num - 1,
@@ -855,19 +868,28 @@ impl PbftNode {
     /// and it is in the PrePreparing phase, it can enter the Preparing phase and broadcast its
     /// Prepare
     fn try_preparing(&mut self, block_id: BlockId, state: &mut PbftState) -> Result<(), PbftError> {
-        if state.phase == PbftPhase::PrePreparing
-            && self.msg_log.get_block_with_id(&block_id).is_some()
-            && self.msg_log.has_pre_prepare(state, &block_id)
-        {
-            state.switch_phase(PbftPhase::Preparing)?;
+        if let Some(block) = self.msg_log.get_block_with_id(&block_id) {
+            if state.phase == PbftPhase::PrePreparing
+                && self.msg_log.has_pre_prepare(state, &block_id)
+                // PrePrepare.seq_num == state.seq_num == block.block_num enforces the one-to-one
+                // correlation between seq_num and block_num (PrePrepare n should be for block n)
+                && block.block_num == state.seq_num
+            {
+                state.switch_phase(PbftPhase::Preparing)?;
 
-            // Stop view change timer, since a new block and valid PrePrepare were received in time
-            state.faulty_primary_timeout.stop();
+                // Stop view change timer, since a new block and valid PrePrepare were received in time
+                state.faulty_primary_timeout.stop();
 
-            // Now start the commit timeout in case something goes wrong
-            state.commit_timeout.start();
+                // Now start the commit timeout in case something goes wrong
+                state.commit_timeout.start();
 
-            self._broadcast_pbft_message(state.seq_num, PbftMessageType::Prepare, block_id, state)?;
+                self._broadcast_pbft_message(
+                    state.seq_num,
+                    PbftMessageType::Prepare,
+                    block_id,
+                    state,
+                )?;
+            }
         }
 
         Ok(())
