@@ -571,7 +571,7 @@ impl PbftNode {
         if block.block_num > state.seq_num && !is_waiting {
             self.catchup(state, &seal, true)?;
         } else if block.block_num == state.seq_num {
-            if state.is_primary() {
+            if block.signer_id == state.id && state.is_primary() {
                 // This is the next block and this node is the primary; broadcast PrePrepare
                 // messages
                 info!("Broadcasting PrePrepares");
