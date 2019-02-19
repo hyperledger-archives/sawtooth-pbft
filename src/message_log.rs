@@ -84,7 +84,7 @@ impl PbftLog {
     }
 
     /// Get all `Block`s in the message log with the specified block number
-    pub fn get_blocks(&self, block_num: u64) -> Vec<&Block> {
+    pub fn get_blocks_with_num(&self, block_num: u64) -> Vec<&Block> {
         self.blocks
             .iter()
             .filter(|block| block.block_num == block_num)

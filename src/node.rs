@@ -467,7 +467,7 @@ impl PbftNode {
         // that the seal's previous ID matches the previous ID of the block
         if let Some(block) = self
             .msg_log
-            .get_blocks(state.seq_num)
+            .get_blocks_with_num(state.seq_num)
             .iter()
             .find(|block| block.block_id == seal.block_id)
         {
@@ -710,7 +710,7 @@ impl PbftNode {
         // just committed, reject them
         let invalid_block_ids = self
             .msg_log
-            .get_blocks(state.seq_num)
+            .get_blocks_with_num(state.seq_num)
             .iter()
             .filter_map(|block| {
                 if block.block_id != block_id {
@@ -762,7 +762,7 @@ impl PbftNode {
         // perform catch-up
         let block_option = self
             .msg_log
-            .get_blocks(state.seq_num + 1)
+            .get_blocks_with_num(state.seq_num + 1)
             .first()
             .cloned()
             .cloned();
@@ -784,7 +784,7 @@ impl PbftNode {
         // Preparing (there may be multiple blocks, but only one will have a valid PrePrepare)
         let block_ids = self
             .msg_log
-            .get_blocks(state.seq_num)
+            .get_blocks_with_num(state.seq_num)
             .iter()
             .map(|block| block.block_id.clone())
             .collect::<Vec<_>>();
@@ -925,7 +925,7 @@ impl PbftNode {
 
         let previous_id = self
             .msg_log
-            .get_blocks(state.seq_num - 1)
+            .get_blocks_with_num(state.seq_num - 1)
             .iter()
             .find_map(|block| {
                 if block.block_id == block_id {
@@ -1131,7 +1131,7 @@ impl PbftNode {
         // Make sure the seal's previous ID matches the previous ID of the block it verifies
         let verified_block = self
             .msg_log
-            .get_blocks(block.block_num - 1)
+            .get_blocks_with_num(block.block_num - 1)
             .iter()
             .find(|log_block| log_block.block_id == seal.block_id)
             .cloned()
