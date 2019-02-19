@@ -219,7 +219,8 @@ impl PbftState {
         self.seq_num > 0 && self.seq_num % self.forced_view_change_period == 0
     }
 
-    /// Reset the phase and mode, restart the timers; used after a view change has occured
+    /// Reset the phase and mode, restart the faulty primary timer; used to "restart" the algorithm
+    /// when a view change occurs or a block is committed.
     pub fn reset_to_start(&mut self) {
         info!("Resetting state: {}", self);
         self.phase = PbftPhase::PrePreparing;
