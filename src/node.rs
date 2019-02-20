@@ -830,7 +830,6 @@ impl PbftNode {
     /// Check the on-chain list of peers; if it has changed, update peers list and return true.
     ///
     /// # Panics
-    /// + If the node is unable to query the validator for on-chain settings
     /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
     /// + If the network this node is on does not have enough nodes to be Byzantine fault tolernant
     fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) -> bool {
@@ -881,7 +880,8 @@ impl PbftNode {
                 // Stop view change timer, since a new block and valid PrePrepare were received in time
                 state.faulty_primary_timeout.stop();
 
-                // Now start the commit timeout in case something goes wrong
+                // Now start the commit timeout in case the network fails to commit the block
+                // within a reasonable amount of time
                 state.commit_timeout.start();
 
                 self._broadcast_pbft_message(
@@ -919,7 +919,7 @@ impl PbftNode {
     fn build_seal(&self, state: &PbftState) -> Result<PbftSeal, PbftError> {
         trace!("{}: Building seal for block {}", state, state.seq_num - 1);
 
-        // The previous block may have been committed in a different view, so the node will need
+        // The previous block may have been committed in a different view, so the node will need to
         // find the view that contains the required 2f Commit messages for building the seal
         let (block_id, view, messages) = self
             .msg_log
@@ -1166,7 +1166,6 @@ impl PbftNode {
     /// Verify the given consenus seal
     ///
     /// # Panics
-    /// + If the node is unable to query the validator for on-chain settings
     /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
     fn verify_consensus_seal(
         &mut self,
