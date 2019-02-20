@@ -415,9 +415,13 @@ impl PbftNode {
         // Update view
         state.view = new_view.get_info().get_view();
         state.view_change_timeout.stop();
-        state.reset_to_start();
 
         info!("{}: Updated to view {}", state, state.view);
+
+        // Reset state to beginning of Normal mode and restart faulty primary timeout
+        state.mode = PbftMode::Normal;
+        state.phase = PbftPhase::PrePreparing;
+        state.faulty_primary_timeout.start();
 
         // Initialize a new block if this node is the new primary
         if state.is_primary() {
@@ -743,8 +747,10 @@ impl PbftNode {
             });
         }
 
-        // Update sequence number
+        // Increment sequence number and update state to beginning of Normal mode
         state.seq_num += 1;
+        state.mode = PbftMode::Normal;
+        state.phase = PbftPhase::PrePreparing;
 
         // If node(s) are waiting for a seal to commit the last block, send it now
         let requesters = self
@@ -788,9 +794,8 @@ impl PbftNode {
             return self.request_final_seal(state);
         }
 
-        // Restart to the beginning of the algorithm (Normal mode, PrePreparing phase) and start
-        // the faulty primary timeout for the next block
-        state.reset_to_start();
+        // Start the faulty primary timeout for the next block
+        state.faulty_primary_timeout.start();
 
         // If we already have a block at this sequence number with a valid PrePrepare for it, start
         // Preparing (there may be multiple blocks, but only one will have a valid PrePrepare)
