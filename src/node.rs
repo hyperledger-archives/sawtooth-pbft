@@ -333,8 +333,8 @@ impl PbftNode {
             .msg_log
             .get_messages_of_type_view(PbftMessageType::ViewChange, msg_view)
             .iter()
-            .cloned()
             .filter(|msg| !msg.from_self)
+            .cloned()
             .collect::<Vec<_>>();
 
         if state.is_primary_at_view(msg_view) && messages.len() as u64 >= 2 * state.f {
