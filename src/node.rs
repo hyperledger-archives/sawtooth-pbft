@@ -873,7 +873,7 @@ impl PbftNode {
     fn try_preparing(&mut self, block_id: BlockId, state: &mut PbftState) -> Result<(), PbftError> {
         if let Some(block) = self.msg_log.get_block_with_id(&block_id) {
             if state.phase == PbftPhase::PrePreparing
-                && self.msg_log.has_pre_prepare(state, &block_id)
+                && self.msg_log.has_pre_prepare(state.seq_num, state.view, &block_id)
                 // PrePrepare.seq_num == state.seq_num == block.block_num enforces the one-to-one
                 // correlation between seq_num and block_num (PrePrepare n should be for block n)
                 && block.block_num == state.seq_num
