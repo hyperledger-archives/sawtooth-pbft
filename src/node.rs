@@ -788,7 +788,9 @@ impl PbftNode {
             .cloned()
             .cloned();
         if let Some(block) = block_option {
-            let seal = self.verify_consensus_seal_from_block(&block, state)?;
+            let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
+                PbftError::SerializationError("Error parsing seal for catch-up".into(), err)
+            })?;
             return self.catchup(state, &seal, true);
         }
 
