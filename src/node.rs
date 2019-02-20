@@ -539,12 +539,9 @@ impl PbftNode {
         }
 
         // Make sure the node already has the previous block, since the consensus seal can't be
-        // verified without it; the node has the previous block if 1) this block is for the current
-        // sequence number (previous block is already committed), or 2) the previous block is in
-        // the log
+        // verified without it
         let previous_block = self.msg_log.get_block_with_id(block.previous_id.as_slice());
-
-        if block.block_num != state.seq_num && previous_block.is_none() {
+        if previous_block.is_none() {
             self.service
                 .fail_block(block.block_id.clone())
                 .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
