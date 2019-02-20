@@ -217,7 +217,7 @@ impl PbftState {
     }
 
     pub fn at_forced_view_change(&self) -> bool {
-        self.seq_num > 0 && self.seq_num % self.forced_view_change_period == 0
+        self.seq_num % self.forced_view_change_period == 0
     }
 }
 
