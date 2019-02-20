@@ -1496,8 +1496,9 @@ impl PbftNode {
 mod tests {
     use super::*;
     use crate::config::mock_config;
-    use crate::hash::{hash_sha256, hash_sha512};
+    use crate::hash::hash_sha512;
     use crate::protos::pbft_message::PbftMessageInfo;
+    use openssl::sha::Sha256;
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
     use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
     use serde_json;
@@ -1625,9 +1626,11 @@ mod tests {
 
     /// Create a deterministic BlockId hash based on a block number
     fn mock_block_id(num: u64) -> BlockId {
-        BlockId::from(hash_sha256(
-            format!("I'm a block with block num {}", num).as_bytes(),
-        ))
+        let mut sha = Sha256::new();
+        sha.update(format!("I'm a block with block num {}", num).as_bytes());
+        let mut bytes = Vec::new();
+        bytes.extend(sha.finish().iter());
+        BlockId::from(bytes)
     }
 
     /// Create a mock Block, including only the BlockId, the BlockId of the previous block, and the

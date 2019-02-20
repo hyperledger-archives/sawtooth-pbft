@@ -16,18 +16,9 @@
  */
 
 /// Contains common hashing functions
-use openssl::sha::{Sha256, Sha512};
+use openssl::sha::Sha512;
 
 use crate::error::PbftError;
-
-/// Hashes the given bytes with SHA-256
-pub fn hash_sha256(bytes: &[u8]) -> Vec<u8> {
-    let mut sha = Sha256::new();
-    sha.update(bytes);
-    let mut bytes = Vec::new();
-    bytes.extend(sha.finish().iter());
-    bytes
-}
 
 /// Hashes the given bytes with SHA-512
 pub fn hash_sha512(bytes: &[u8]) -> Vec<u8> {
