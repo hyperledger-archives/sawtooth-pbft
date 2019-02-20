@@ -436,10 +436,12 @@ impl PbftNode {
 
     /// Handle a `SealRequest` message
     ///
-    /// A node is requesting a consensus seal for the last block. If the block has already been
+    /// A node is requesting a consensus seal for the last block. If the block was the last one
     /// committed by this node, build the seal and send it to the requesting node; if the block has
-    /// not been committed yet, add the request to the log and the node will build/send the seal
-    /// when it's done committing.
+    /// not been committed yet but it's the next one to be committed, add the request to the log
+    /// and the node will build/send the seal when it's done committing. If this is an older block
+    /// (state.seq_num > msg.seq_num + 1) or this node is behind (state.seq_num < msg.seq_num), the
+    /// node will not be able to build the requseted seal, so just ignore the message.
     fn handle_seal_request(
         &mut self,
         msg: ParsedMessage,
@@ -447,8 +449,10 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         if state.seq_num == msg.info().get_seq_num() + 1 {
             self.send_seal_response(state, &msg.info().get_signer_id().to_vec())
-        } else {
+        } else if state.seq_num == msg.info().get_seq_num() {
             self.msg_log.add_message(msg, state)
+        } else {
+            Ok(())
         }
     }
 
