@@ -255,7 +255,7 @@ mod tests {
         msg.set_info(info);
         msg.set_block_id(vec![]);
 
-        ParsedMessage::from_pbft_message(msg)
+        ParsedMessage::from_pbft_message(msg).expect("Failed to parse PbftMessage")
     }
 
     /// Obtain the PeerId for node `which`

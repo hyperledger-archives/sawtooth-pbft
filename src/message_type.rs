@@ -108,27 +108,35 @@ impl ParsedMessage {
     /// Constructs a `ParsedMessage` from the given `PbftMessage`.
     ///
     /// Does not add metadata necessary for creating a signed vote from this message.
-    pub fn from_pbft_message(message: PbftMessage) -> Self {
-        Self {
+    pub fn from_pbft_message(message: PbftMessage) -> Result<Self, PbftError> {
+        let message_bytes = message.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing PbftMessage to bytes".into(), err)
+        })?;
+
+        Ok(Self {
             from_self: true,
             header_bytes: vec![],
             header_signature: vec![],
-            message_bytes: message.write_to_bytes().unwrap(),
+            message_bytes,
             message: PbftMessageWrapper::Message(message),
-        }
+        })
     }
 
     /// Constructs a `ParsedMessage` from the given `PbftNewView`.
     ///
     /// Does not add metadata necessary for creating a signed vote from this message.
-    pub fn from_new_view_message(message: PbftNewView) -> Self {
-        Self {
+    pub fn from_new_view_message(message: PbftNewView) -> Result<Self, PbftError> {
+        let message_bytes = message.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing PbftNewView to bytes".into(), err)
+        })?;
+
+        Ok(Self {
             from_self: true,
             header_bytes: vec![],
             header_signature: vec![],
-            message_bytes: message.write_to_bytes().unwrap(),
+            message_bytes,
             message: PbftMessageWrapper::NewView(message),
-        }
+        })
     }
 
     /// Constructs a `ParsedMessage` from the given `PbftSignedVote`.
