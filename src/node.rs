@@ -743,9 +743,11 @@ impl PbftNode {
             });
         }
 
-        // Increment the view if a view change must be forced for fairness or if membership has
-        // changed
-        if state.at_forced_view_change() || self.update_membership(block_id.clone(), state) {
+        // Update membership if necessary
+        self.update_membership(block_id.clone(), state);
+
+        // Increment the view if a view change must be forced for fairness
+        if state.at_forced_view_change() {
             state.view += 1;
         }
 
@@ -823,7 +825,7 @@ impl PbftNode {
     /// # Panics
     /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
     /// + If the network this node is on does not have enough nodes to be Byzantine fault tolernant
-    fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) -> bool {
+    fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) {
         // Get list of peers from settings (retry until a valid result is received)
         trace!("Getting on-chain list of peers to check for membership updates");
         let settings = retry_until_ok(
@@ -843,16 +845,14 @@ impl PbftNode {
         let old_peers_set: HashSet<PeerId> = state.peer_ids.iter().cloned().collect();
 
         if new_peers_set != old_peers_set {
+            info!("Updating membership: {:?}", peers);
             state.peer_ids = peers;
             let f = (state.peer_ids.len() - 1) / 3;
             if f == 0 {
                 panic!("This network no longer contains enough nodes to be fault tolerant");
             }
             state.f = f as u64;
-            return true;
         }
-
-        false
     }
 
     /// When the node has a block and a corresponding PrePrepare for its current sequence number,
