@@ -44,12 +44,6 @@ pub enum PbftError {
 
     /// Internal PBFT error (description)
     InternalError(String),
-
-    /// The message should only come from the primary, but was sent by a secondary node; this can
-    /// be used in a situation where a typical error would trigger a view change (e.g. an invalid
-    /// NewView message), but if the message isn't actually from the primary a view change
-    /// shouldn't be triggered.
-    NotFromPrimary,
 }
 
 impl Error for PbftError {
@@ -62,7 +56,6 @@ impl Error for PbftError {
             FaultyPrimary(_) => "FaultyPrimary",
             InvalidMessage(_) => "InvalidMessage",
             InternalError(_) => "InternalError",
-            NotFromPrimary => "NotFromPrimary",
         }
     }
 }
@@ -81,10 +74,6 @@ impl fmt::Display for PbftError {
             ),
             PbftError::InvalidMessage(description) => write!(f, "{}", description),
             PbftError::InternalError(description) => write!(f, "{}", description),
-            PbftError::NotFromPrimary => write!(
-                f,
-                "Message should be from primary, but was sent by secondary"
-            ),
         }
     }
 }

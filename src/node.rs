@@ -364,9 +364,8 @@ impl PbftNode {
 
     /// Handle a `NewView` message
     ///
-    /// When a `NewView` is received, first check that the node is expecting it and verify that it
-    /// is valid. If the NewView is invalid, start a new view change for the next view; if the
-    /// NewView is valid, update the view and the node's state.
+    /// When a `NewView` is received, verify that it is valid; if it is, update the view and the
+    /// node's state.
     fn handle_new_view(
         &mut self,
         msg: &ParsedMessage,
@@ -374,43 +373,13 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         let new_view = msg.get_new_view_message();
 
-        // Make sure this is a NewView that the node is expecting; if this isn't enforced, a faulty
-        // node could send an invalid NewView message to arbitrarily initiate a view change across
-        // the network
-        if match state.mode {
-            PbftMode::ViewChanging(v) => v != new_view.get_info().get_view(),
-            _ => true,
-        } {
-            warn!(
-                "Received NewView message ({:?}) for a view that this node is not changing to",
-                new_view.get_info().get_view(),
-            );
-            return Ok(());
-        }
-
         match self.verify_new_view(new_view, state) {
-            Err(PbftError::NotFromPrimary) => {
-                // Not the new primary that's faulty, so no need to do a new view change,
-                // just don't proceed any further
-                warn!(
-                    "Got NewView message ({:?}) from node that is not primary for new view",
-                    new_view,
-                );
-                return Ok(());
-            }
+            Ok(_) => trace!("NewView passed verification"),
             Err(err) => {
-                if let PbftMode::ViewChanging(v) = state.mode {
-                    self.start_view_change(state, v + 1)?;
-                    return Err(PbftError::FaultyPrimary(format!(
-                        "NewView failed verification; starting new view change to view {} - \
-                         Error was: {}",
-                        v + 1,
-                        err
-                    )));
-                }
-            }
-            Ok(_) => {
-                trace!("NewView passed verification");
+                return Err(PbftError::InvalidMessage(format!(
+                    "NewView failed verification - Error was: {}",
+                    err
+                )));
             }
         }
 
@@ -1037,11 +1006,23 @@ impl PbftNode {
         new_view: &PbftNewView,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
+        // Make sure this is for a future view (prevents re-using old NewView messages)
+        if new_view.get_info().get_view() <= state.view {
+            return Err(PbftError::InvalidMessage(format!(
+                "Node is on view {}, but received NewView message for view {}",
+                state.view,
+                new_view.get_info().get_view(),
+            )));
+        }
+
         // Make sure this is from the new primary
         if PeerId::from(new_view.get_info().get_signer_id())
             != state.get_primary_id_at_view(new_view.get_info().get_view())
         {
-            return Err(PbftError::NotFromPrimary);
+            return Err(PbftError::InvalidMessage(format!(
+                "Received view change for view {} that is not from the primary",
+                new_view.get_info().get_view()
+            )));
         }
 
         // Verify each individual vote and extract the signer ID from each ViewChange so the IDs
