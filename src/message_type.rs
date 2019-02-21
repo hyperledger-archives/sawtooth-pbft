@@ -175,7 +175,7 @@ impl ParsedMessage {
     ///
     /// Attempts to parse the message contents as a `PbftMessage`, `PbftNewView`, or
     /// `PbftSeal` and wraps that in an internal enum.
-    pub fn from_peer_message(message: PeerMessage, from_self: bool) -> Result<Self, PbftError> {
+    pub fn from_peer_message(message: PeerMessage) -> Result<Self, PbftError> {
         let parsed_message = match message.header.message_type.as_str() {
             "Seal" => PbftMessageWrapper::Seal(
                 protobuf::parse_from_bytes::<PbftSeal>(&message.content).map_err(|err| {
@@ -195,23 +195,12 @@ impl ParsedMessage {
         };
 
         Ok(Self {
+            from_self: false,
             header_bytes: message.header_bytes,
             header_signature: message.header_signature,
             message: parsed_message,
             message_bytes: message.content.clone(),
-            from_self,
         })
-    }
-
-    /// Constructs a `ParsedMessage` from the given serialized `PbftMessage`
-    pub fn from_bytes(message: Vec<u8>, message_type: PbftMessageType) -> Result<Self, PbftError> {
-        let mut peer_message = PeerMessage {
-            content: message,
-            ..Default::default()
-        };
-        peer_message.header.message_type = String::from(message_type);
-
-        Self::from_peer_message(peer_message, true)
     }
 }
 
