@@ -222,7 +222,7 @@ impl PbftNode {
                     true,
                     2 * state.f + 1,
                 ) {
-                    state.switch_phase(PbftPhase::Committing)?;
+                    state.phase = PbftPhase::Committing;
                     self.broadcast_pbft_message(
                         state.view,
                         state.seq_num,
@@ -273,7 +273,7 @@ impl PbftNode {
                             err,
                         )
                     })?;
-                    state.switch_phase(PbftPhase::Finishing(false))?;
+                    state.phase = PbftPhase::Finishing(false);
                     // Stop the commit timeout, since the network has agreed to commit the block
                     state.commit_timeout.stop();
                 }
@@ -849,7 +849,7 @@ impl PbftNode {
                 // correlation between seq_num and block_num (PrePrepare n should be for block n)
                 && block.block_num == state.seq_num
             {
-                state.switch_phase(PbftPhase::Preparing)?;
+                state.phase = PbftPhase::Preparing;
 
                 // Stop view change timer, since a new block and valid PrePrepare were received in time
                 state.faulty_primary_timeout.stop();
