@@ -223,7 +223,7 @@ impl PbftNode {
                     2 * state.f + 1,
                 ) {
                     state.switch_phase(PbftPhase::Committing)?;
-                    self._broadcast_pbft_message(
+                    self.broadcast_pbft_message(
                         state.view,
                         state.seq_num,
                         PbftMessageType::Commit,
@@ -356,7 +356,7 @@ impl PbftNode {
                 PbftError::SerializationError("Error writing NewView to bytes".into(), err)
             })?;
 
-            self._broadcast_message(PbftMessageType::NewView, msg_bytes, state)?;
+            self.broadcast_message(PbftMessageType::NewView, msg_bytes, state)?;
         }
 
         Ok(())
@@ -601,7 +601,7 @@ impl PbftNode {
                 // This is the next block and this node is the primary; broadcast PrePrepare
                 // messages
                 info!("Broadcasting PrePrepares");
-                self._broadcast_pbft_message(
+                self.broadcast_pbft_message(
                     state.view,
                     state.seq_num,
                     PbftMessageType::PrePrepare,
@@ -776,7 +776,7 @@ impl PbftNode {
                 "{}: Requesting seal to finish catch-up to block {}",
                 state, state.seq_num
             );
-            return self._broadcast_pbft_message(
+            return self.broadcast_pbft_message(
                 state.view,
                 state.seq_num,
                 PbftMessageType::SealRequest,
@@ -875,7 +875,7 @@ impl PbftNode {
                 // within a reasonable amount of time
                 state.commit_timeout.start();
 
-                self._broadcast_pbft_message(
+                self.broadcast_pbft_message(
                     state.view,
                     state.seq_num,
                     PbftMessageType::Prepare,
@@ -1330,7 +1330,7 @@ impl PbftNode {
 
     /// Construct the message bytes and broadcast the message to all of this node's peers and
     /// itself
-    fn _broadcast_pbft_message(
+    fn broadcast_pbft_message(
         &mut self,
         view: u64,
         seq_num: u64,
@@ -1349,12 +1349,12 @@ impl PbftNode {
 
         trace!("{}: Created PBFT message: {:?}", state, msg);
 
-        self._broadcast_message(msg_type, msg.write_to_bytes().unwrap_or_default(), state)
+        self.broadcast_message(msg_type, msg.write_to_bytes().unwrap_or_default(), state)
     }
 
     /// Broadcast the specified message to all of the node's peers, including itself
     #[cfg(not(test))]
-    fn _broadcast_message(
+    fn broadcast_message(
         &mut self,
         msg_type: PbftMessageType,
         msg: Vec<u8>,
@@ -1380,7 +1380,7 @@ impl PbftNode {
 
     /// Disabled self-sending (used for testing)
     #[cfg(test)]
-    fn _broadcast_message(
+    fn broadcast_message(
         &mut self,
         _msg_type: PbftMessageType,
         _msg: Vec<u8>,
@@ -1460,7 +1460,7 @@ impl PbftNode {
         state.view_change_timeout.start();
 
         // Broadcast the view change message
-        self._broadcast_pbft_message(
+        self.broadcast_pbft_message(
             view,
             state.seq_num - 1,
             PbftMessageType::ViewChange,
