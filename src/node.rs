@@ -668,31 +668,6 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Request the consensus seal for the next block from the network so the node can finish the
-    /// catch-up process
-    fn request_final_seal(&mut self, state: &mut PbftState) -> Result<(), PbftError> {
-        info!(
-            "{}: Requesting seal to finish catch-up to block {}",
-            state, state.seq_num
-        );
-
-        // The node doesn't know which block that the network decided to commit, so it can't
-        // request the seal for a specific block (hence not including a block ID with this message)
-        let mut seal_request = PbftMessage::new();
-        seal_request.set_info(PbftMessageInfo::new_from(
-            PbftMessageType::SealRequest,
-            state.view,
-            state.seq_num,
-            state.id.clone(),
-        ));
-
-        let msg_bytes = seal_request.write_to_bytes().map_err(|err| {
-            PbftError::SerializationError("Error writing SealRequest to bytes".into(), err)
-        })?;
-
-        self._broadcast_message(PbftMessageType::SealRequest, msg_bytes, state)
-    }
-
     /// Handle a `BlockCommit` update from the Validator
     ///
     /// A block was sucessfully committed; clean up any uncommitted blocks, update state to be
@@ -792,9 +767,20 @@ impl PbftNode {
         }
 
         // If the node is catching up but doesn't have a block with a seal to commit the next one,
-        // it will need to request the seal to commit the last block
+        // it will need to request the seal to commit the last block. The node doesn't know which
+        // block that the network decided to commit, so it can't request the seal for a specific
+        // block (puts an empty BlockId in the message)
         if is_catching_up {
-            return self.request_final_seal(state);
+            info!(
+                "{}: Requesting seal to finish catch-up to block {}",
+                state, state.seq_num
+            );
+            return self._broadcast_pbft_message(
+                state.seq_num,
+                PbftMessageType::SealRequest,
+                BlockId::new(),
+                state,
+            );
         }
 
         // Start the faulty primary timeout for the next block
