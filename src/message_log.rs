@@ -26,10 +26,8 @@ use hex;
 use sawtooth_sdk::consensus::engine::Block;
 
 use crate::config::PbftConfig;
-use crate::error::PbftError;
 use crate::message_type::{ParsedMessage, PbftMessageType};
 use crate::protos::pbft_message::PbftMessageInfo;
-use crate::state::PbftState;
 
 /// Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
@@ -99,22 +97,9 @@ impl PbftLog {
     }
 
     /// Add a parsed PBFT message to the log
-    pub fn add_message(&mut self, msg: ParsedMessage, state: &PbftState) -> Result<(), PbftError> {
-        // Except for ViewChanges, the message must be for the current view to be accepted
-        let msg_type = PbftMessageType::from(msg.info().get_msg_type());
-        if msg_type != PbftMessageType::ViewChange && msg.info().get_view() != state.view {
-            return Err(PbftError::InvalidMessage(format!(
-                "Node is on view {}, but a message for view {} was received",
-                state.view,
-                msg.info().get_view(),
-            )));
-        }
-
-        trace!("{}: Adding message to log: {:?}", state, msg);
-
+    pub fn add_message(&mut self, msg: ParsedMessage) {
+        trace!("Adding message to log: {:?}", msg);
         self.messages.insert(msg);
-
-        Ok(())
     }
 
     /// Check if the log has a PrePrepare at the node's current view and sequence number that
@@ -268,11 +253,10 @@ mod tests {
     fn one_message() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
-        let state = PbftState::new(vec![], 0, &cfg);
 
         let msg = make_msg(PbftMessageType::PrePrepare, 0, 1, get_peer_id(&cfg, 0));
 
-        log.add_message(msg.clone(), &state).unwrap();
+        log.add_message(msg.clone());
 
         let gotten_msgs = log.get_messages_of_type_seq_view(PbftMessageType::PrePrepare, 1, 0);
 
@@ -286,24 +270,23 @@ mod tests {
     fn garbage_collection() {
         let cfg = config::mock_config(4);
         let mut log = PbftLog::new(&cfg);
-        let state = PbftState::new(vec![], 0, &cfg);
 
         for seq in 1..5 {
             log.add_block(Block::default());
 
             let msg = make_msg(PbftMessageType::PrePrepare, 0, seq, get_peer_id(&cfg, 0));
-            log.add_message(msg.clone(), &state).unwrap();
+            log.add_message(msg.clone());
 
             for peer in 0..4 {
                 let msg = make_msg(PbftMessageType::Prepare, 0, seq, get_peer_id(&cfg, peer));
 
-                log.add_message(msg.clone(), &state).unwrap();
+                log.add_message(msg.clone());
             }
 
             for peer in 0..4 {
                 let msg = make_msg(PbftMessageType::Commit, 0, seq, get_peer_id(&cfg, peer));
 
-                log.add_message(msg.clone(), &state).unwrap();
+                log.add_message(msg.clone());
             }
         }
 

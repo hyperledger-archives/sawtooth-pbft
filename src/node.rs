@@ -133,9 +133,9 @@ impl PbftNode {
     /// A `PrePrepare` message is accepted and added to the log if the following are true:
     /// - The message signature is valid (already verified by validator)
     /// - The message is from the primary
+    /// - The message's view matches the node's current view
     /// - A `PrePrepare` message does not already exist at this view and sequence number with a
     ///   different block
-    /// - The message's view matches the node's current view (handled by message log)
     ///
     /// Once a `PrePrepare` for the current sequence number is accepted and added to the log, the
     /// node will try to switch to the `Preparing` phase.
@@ -151,6 +151,15 @@ impl PbftNode {
                 msg.info().get_signer_id()
             );
             return Ok(());
+        }
+
+        // Check that the message is for the current view
+        if msg.info().get_view() != state.view {
+            return Err(PbftError::InvalidMessage(format!(
+                "Node is on view {}, but a PrePrepare for view {} was received",
+                state.view,
+                msg.info().get_view(),
+            )));
         }
 
         // Check that no `PrePrepare`s already exist with this view and sequence number but a
@@ -184,7 +193,7 @@ impl PbftNode {
         }
 
         // Add message to the log
-        self.msg_log.add_message(msg.clone(), state)?;
+        self.msg_log.add_message(msg.clone());
 
         // If the node is in the PrePreparing phase, this message is for the current sequence
         // number, and the node already has this block: switch to Preparing
@@ -204,7 +213,16 @@ impl PbftNode {
         let info = msg.info().clone();
         let block_id = msg.get_block_id();
 
-        self.msg_log.add_message(msg, state)?;
+        // Check that the message is for the current view
+        if msg.info().get_view() != state.view {
+            return Err(PbftError::InvalidMessage(format!(
+                "Node is on view {}, but a Prepare for view {} was received",
+                state.view,
+                msg.info().get_view(),
+            )));
+        }
+
+        self.msg_log.add_message(msg);
 
         // If this message is for the current sequence number and the node is in the Preparing
         // phase, check if the node is ready to move on to the Committing phase
@@ -249,7 +267,16 @@ impl PbftNode {
         let info = msg.info().clone();
         let block_id = msg.get_block_id();
 
-        self.msg_log.add_message(msg, state)?;
+        // Check that the message is for the current view
+        if msg.info().get_view() != state.view {
+            return Err(PbftError::InvalidMessage(format!(
+                "Node is on view {}, but a Commit for view {} was received",
+                state.view,
+                msg.info().get_view(),
+            )));
+        }
+
+        self.msg_log.add_message(msg);
 
         // If this message is for the current sequence number and the node is in the Committing
         // phase, check if the node is ready to commit the block
@@ -307,7 +334,7 @@ impl PbftNode {
             return Ok(());
         }
 
-        self.msg_log.add_message(msg.clone(), state)?;
+        self.msg_log.add_message(msg.clone());
 
         // Even if the node hasn't detected a faulty primary yet, start view changing if there are
         // f + 1 ViewChange messages in the log for this proposed view (but if already view
@@ -414,12 +441,11 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         if state.seq_num == msg.info().get_seq_num() + 1 {
-            self.send_seal_response(state, &msg.info().get_signer_id().to_vec())
+            return self.send_seal_response(state, &msg.info().get_signer_id().to_vec());
         } else if state.seq_num == msg.info().get_seq_num() {
-            self.msg_log.add_message(msg, state)
-        } else {
-            Ok(())
+            self.msg_log.add_message(msg);
         }
+        Ok(())
     }
 
     /// Handle a `Seal` message
@@ -612,7 +638,7 @@ impl PbftNode {
 
         // Add messages to the log
         for message in &messages {
-            self.msg_log.add_message(message.clone(), state)?;
+            self.msg_log.add_message(message.clone());
         }
 
         // Commit the block, stop the idle timeout, and skip straight to Finishing
@@ -1629,7 +1655,7 @@ mod tests {
             message.header_bytes = header_bytes;
             message.header_signature = header_signature;
 
-            node.msg_log.add_message(message, state).unwrap();
+            node.msg_log.add_message(message);
         }
 
         let seal = node.build_seal(state).unwrap();
@@ -1950,13 +1976,9 @@ mod tests {
 
             let mut msg = PbftMessage::new();
             msg.set_info(info);
-            node0
-                .msg_log
-                .add_message(
-                    ParsedMessage::from_pbft_message(msg).expect("Failed to parse PbftMessage"),
-                    &state0,
-                )
-                .unwrap();
+            node0.msg_log.add_message(
+                ParsedMessage::from_pbft_message(msg).expect("Failed to parse PbftMessage"),
+            );
         }
 
         state0.phase = PbftPhase::PrePreparing;
