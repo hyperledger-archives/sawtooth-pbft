@@ -102,8 +102,8 @@ impl PbftLog {
         self.messages.insert(msg);
     }
 
-    /// Check if the log has a PrePrepare at the node's current view and sequence number that
-    /// matches the given block ID
+    /// Check if the log has a PrePrepare at the given view and sequence number that matches the
+    /// given block ID
     pub fn has_pre_prepare(&self, seq_num: u64, view: u64, block_id: &[u8]) -> bool {
         self.get_messages_of_type_seq_view(PbftMessageType::PrePrepare, seq_num, view)
             .iter()
@@ -137,18 +137,6 @@ impl PbftLog {
         };
 
         msgs.len() as u64 >= required
-    }
-
-    /// Get the first message matching the type, view, and sequence number of the `info` (if one
-    /// exists)
-    pub fn get_first_msg(
-        &self,
-        info: &PbftMessageInfo,
-        msg_type: PbftMessageType,
-    ) -> Option<&ParsedMessage> {
-        let msgs =
-            self.get_messages_of_type_seq_view(msg_type, info.get_seq_num(), info.get_view());
-        msgs.first().cloned()
     }
 
     /// Obtain all messages from the log that match the given type and sequence_number

@@ -222,7 +222,7 @@ impl PbftNode {
             )));
         }
 
-        self.msg_log.add_message(msg);
+        self.msg_log.add_message(msg.clone());
 
         // If this message is for the current sequence number and the node is in the Preparing
         // phase, check if the node is ready to move on to the Committing phase
@@ -230,25 +230,24 @@ impl PbftNode {
             // The node is ready to move on to the Committing phase (i.e. the predicate `prepared`
             // is true) when its log has 2f + 1 Prepare messages from different nodes that match
             // the PrePrepare message received earlier (same view, sequence number, and block)
-            if let Some(pre_prep) = self
-                .msg_log
-                .get_first_msg(&info, PbftMessageType::PrePrepare)
-            {
-                if self.msg_log.has_required_msgs(
-                    PbftMessageType::Prepare,
-                    &pre_prep,
-                    true,
-                    2 * state.f + 1,
-                ) {
-                    state.switch_phase(PbftPhase::Committing)?;
-                    self.broadcast_pbft_message(
-                        state.view,
-                        state.seq_num,
-                        PbftMessageType::Commit,
-                        block_id,
-                        state,
-                    )?;
-                }
+            let has_matching_pre_prepare =
+                self.msg_log
+                    .has_pre_prepare(info.get_seq_num(), info.get_view(), &block_id);
+            let has_required_prepares = self.msg_log.has_required_msgs(
+                PbftMessageType::Prepare,
+                &msg,
+                true,
+                2 * state.f + 1,
+            );
+            if has_matching_pre_prepare && has_required_prepares {
+                state.switch_phase(PbftPhase::Committing)?;
+                self.broadcast_pbft_message(
+                    state.view,
+                    state.seq_num,
+                    PbftMessageType::Commit,
+                    block_id,
+                    state,
+                )?;
             }
         }
 
@@ -276,7 +275,7 @@ impl PbftNode {
             )));
         }
 
-        self.msg_log.add_message(msg);
+        self.msg_log.add_message(msg.clone());
 
         // If this message is for the current sequence number and the node is in the Committing
         // phase, check if the node is ready to commit the block
@@ -284,26 +283,25 @@ impl PbftNode {
             // The node is ready to commit the block (i.e. the predicate `committable` is true)
             // when its log has 2f + 1 Commit messages from different nodes that match the
             // PrePrepare message received earlier (same view, sequence number, and block)
-            if let Some(pre_prep) = self
-                .msg_log
-                .get_first_msg(&info, PbftMessageType::PrePrepare)
-            {
-                if self.msg_log.has_required_msgs(
-                    PbftMessageType::Commit,
-                    &pre_prep,
-                    true,
-                    2 * state.f + 1,
-                ) {
-                    self.service.commit_block(block_id.clone()).map_err(|err| {
-                        PbftError::ServiceError(
-                            format!("Failed to commit block {:?}", hex::encode(&block_id)),
-                            err,
-                        )
-                    })?;
-                    state.switch_phase(PbftPhase::Finishing(false))?;
-                    // Stop the commit timeout, since the network has agreed to commit the block
-                    state.commit_timeout.stop();
-                }
+            let has_matching_pre_prepare =
+                self.msg_log
+                    .has_pre_prepare(info.get_seq_num(), info.get_view(), &block_id);
+            let has_required_commits = self.msg_log.has_required_msgs(
+                PbftMessageType::Commit,
+                &msg,
+                true,
+                2 * state.f + 1,
+            );
+            if has_matching_pre_prepare && has_required_commits {
+                self.service.commit_block(block_id.clone()).map_err(|err| {
+                    PbftError::ServiceError(
+                        format!("Failed to commit block {:?}", hex::encode(&block_id)),
+                        err,
+                    )
+                })?;
+                state.switch_phase(PbftPhase::Finishing(false))?;
+                // Stop the commit timeout, since the network has agreed to commit the block
+                state.commit_timeout.stop();
             }
         }
 
