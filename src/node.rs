@@ -273,7 +273,7 @@ impl PbftNode {
                             err,
                         )
                     })?;
-                    state.switch_phase(PbftPhase::Finishing(block_id, false))?;
+                    state.switch_phase(PbftPhase::Finishing(false))?;
                     // Stop the commit timeout, since the network has agreed to commit the block
                     state.commit_timeout.stop();
                 }
@@ -469,7 +469,7 @@ impl PbftNode {
         let seal = msg.get_seal();
 
         // If the node has already committed the block, ignore
-        if let PbftPhase::Finishing(_, _) = state.phase {
+        if let PbftPhase::Finishing(_) = state.phase {
             return Ok(());
         }
 
@@ -591,7 +591,7 @@ impl PbftNode {
         // it is waiting for a commit message, catch-up will have to be done after the message is
         // received)
         let is_waiting = match state.phase {
-            PbftPhase::Finishing(_, _) => true,
+            PbftPhase::Finishing(_) => true,
             _ => false,
         };
         if block.block_num > state.seq_num && !is_waiting {
@@ -664,7 +664,7 @@ impl PbftNode {
                 )
             })?;
         state.faulty_primary_timeout.stop();
-        state.phase = PbftPhase::Finishing(seal.block_id.clone(), catchup_again);
+        state.phase = PbftPhase::Finishing(catchup_again);
 
         Ok(())
     }
@@ -679,23 +679,10 @@ impl PbftNode {
         block_id: BlockId,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        // Ignore this BlockCommit if the node isn't waiting for it
-        if match state.phase {
-            PbftPhase::Finishing(ref expected_id, _) => &block_id != expected_id,
-            _ => true,
-        } {
-            info!(
-                "{}: Igorning BlockCommit for {}",
-                state,
-                hex::encode(&block_id)
-            );
-            return Ok(());
-        }
-
         info!("{}: Got BlockCommit for {}", state, hex::encode(&block_id));
 
         let is_catching_up = match state.phase {
-            PbftPhase::Finishing(_, true) => true,
+            PbftPhase::Finishing(true) => true,
             _ => false,
         };
 
@@ -1835,7 +1822,7 @@ mod tests {
         let mut node = mock_node(vec![0], mock_block(0));
         let cfg = mock_config(4);
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
-        state0.phase = PbftPhase::Finishing(mock_block_id(1), false);
+        state0.phase = PbftPhase::Finishing(false);
         assert_eq!(state0.seq_num, 1);
         assert!(node.on_block_commit(mock_block_id(1), &mut state0).is_ok());
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
@@ -1881,7 +1868,7 @@ mod tests {
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(panic_with_err);
         }
-        assert_eq!(state1.phase, PbftPhase::Finishing(mock_block_id(1), false));
+        assert_eq!(state1.phase, PbftPhase::Finishing(false));
 
         // Spoof the `commit_blocks()` call
         assert!(node1.on_block_commit(mock_block_id(1), &mut state1).is_ok());
