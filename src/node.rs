@@ -224,6 +224,7 @@ impl PbftNode {
                 ) {
                     state.switch_phase(PbftPhase::Committing)?;
                     self._broadcast_pbft_message(
+                        state.view,
                         state.seq_num,
                         PbftMessageType::Commit,
                         block_id,
@@ -600,9 +601,9 @@ impl PbftNode {
                 // This is the next block and this node is the primary; broadcast PrePrepare
                 // messages
                 info!("Broadcasting PrePrepares");
-                let s = state.seq_num;
                 self._broadcast_pbft_message(
-                    s,
+                    state.view,
+                    state.seq_num,
                     PbftMessageType::PrePrepare,
                     block.block_id,
                     state,
@@ -776,6 +777,7 @@ impl PbftNode {
                 state, state.seq_num
             );
             return self._broadcast_pbft_message(
+                state.view,
                 state.seq_num,
                 PbftMessageType::SealRequest,
                 BlockId::new(),
@@ -874,6 +876,7 @@ impl PbftNode {
                 state.commit_timeout.start();
 
                 self._broadcast_pbft_message(
+                    state.view,
                     state.seq_num,
                     PbftMessageType::Prepare,
                     block_id,
@@ -1329,6 +1332,7 @@ impl PbftNode {
     /// itself
     fn _broadcast_pbft_message(
         &mut self,
+        view: u64,
         seq_num: u64,
         msg_type: PbftMessageType,
         block_id: BlockId,
@@ -1337,7 +1341,7 @@ impl PbftNode {
         let mut msg = PbftMessage::new();
         msg.set_info(PbftMessageInfo::new_from(
             msg_type,
-            state.view,
+            view,
             seq_num,
             state.id.clone(),
         ));
@@ -1456,21 +1460,13 @@ impl PbftNode {
         state.view_change_timeout.start();
 
         // Broadcast the view change message
-        let mut vc_msg = PbftMessage::new();
-        vc_msg.set_info(PbftMessageInfo::new_from(
-            PbftMessageType::ViewChange,
+        self._broadcast_pbft_message(
             view,
             state.seq_num - 1,
-            state.id.clone(),
-        ));
-
-        trace!("Created view change message: {:?}", vc_msg);
-
-        let msg_bytes = vc_msg.write_to_bytes().map_err(|err| {
-            PbftError::SerializationError("Error writing ViewChange to bytes".into(), err)
-        })?;
-
-        self._broadcast_message(PbftMessageType::ViewChange, msg_bytes, state)
+            PbftMessageType::ViewChange,
+            BlockId::new(),
+            state,
+        )
     }
 }
 
