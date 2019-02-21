@@ -352,11 +352,7 @@ impl PbftNode {
 
             trace!("Created NewView message: {:?}", new_view);
 
-            let msg_bytes = new_view.write_to_bytes().map_err(|err| {
-                PbftError::SerializationError("Error writing NewView to bytes".into(), err)
-            })?;
-
-            self.broadcast_message(PbftMessageType::NewView, msg_bytes, state)?;
+            self.broadcast_message(ParsedMessage::from_new_view_message(new_view), state)?;
         }
 
         Ok(())
@@ -1328,8 +1324,7 @@ impl PbftNode {
 
     // ---------- Methods for communication between nodes ----------
 
-    /// Construct the message bytes and broadcast the message to all of this node's peers and
-    /// itself
+    /// Construct a PbftMessage message and broadcast it to all peers (including self)
     fn broadcast_pbft_message(
         &mut self,
         view: u64,
@@ -1349,22 +1344,22 @@ impl PbftNode {
 
         trace!("{}: Created PBFT message: {:?}", state, msg);
 
-        self.broadcast_message(msg_type, msg.write_to_bytes().unwrap_or_default(), state)
+        self.broadcast_message(ParsedMessage::from_pbft_message(msg), state)
     }
 
     /// Broadcast the specified message to all of the node's peers, including itself
     #[cfg(not(test))]
     fn broadcast_message(
         &mut self,
-        msg_type: PbftMessageType,
-        msg: Vec<u8>,
+        msg: ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        trace!("{}: Broadcasting {:?}", state, msg_type);
-
         // Broadcast to peers
         self.service
-            .broadcast(String::from(msg_type).as_str(), msg.clone())
+            .broadcast(
+                String::from(msg.info().get_msg_type()).as_str(),
+                msg.message_bytes.clone(),
+            )
             .unwrap_or_else(|err| {
                 error!(
                     "Couldn't broadcast message ({:?}) due to error: {}",
@@ -1373,17 +1368,14 @@ impl PbftNode {
             });
 
         // Send to self
-        let parsed_message = ParsedMessage::from_bytes(msg, msg_type)?;
-
-        self.on_peer_message(parsed_message, state)
+        self.on_peer_message(msg, state)
     }
 
     /// Disabled self-sending (used for testing)
     #[cfg(test)]
     fn broadcast_message(
         &mut self,
-        _msg_type: PbftMessageType,
-        _msg: Vec<u8>,
+        _msg: ParsedMessage,
         _state: &mut PbftState,
     ) -> Result<(), PbftError> {
         return Ok(());

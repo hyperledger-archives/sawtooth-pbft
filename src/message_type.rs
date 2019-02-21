@@ -78,7 +78,7 @@ impl ParsedMessage {
     /// Does not add metadata necessary for creating a signed vote from this message.
     pub fn from_pbft_message(message: PbftMessage) -> Self {
         Self {
-            from_self: false,
+            from_self: true,
             header_bytes: vec![],
             header_signature: vec![],
             message_bytes: message.write_to_bytes().unwrap(),
@@ -91,7 +91,7 @@ impl ParsedMessage {
     /// Does not add metadata necessary for creating a signed vote from this message.
     pub fn from_new_view_message(message: PbftNewView) -> Self {
         Self {
-            from_self: false,
+            from_self: true,
             header_bytes: vec![],
             header_signature: vec![],
             message_bytes: message.write_to_bytes().unwrap(),
