@@ -1020,7 +1020,7 @@ impl PbftNode {
             != state.get_primary_id_at_view(new_view.get_info().get_view())
         {
             return Err(PbftError::InvalidMessage(format!(
-                "Received view change for view {} that is not from the primary",
+                "Received NewView message for view {} that is not from the primary for that view",
                 new_view.get_info().get_view()
             )));
         }
