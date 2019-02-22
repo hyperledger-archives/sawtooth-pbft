@@ -57,7 +57,6 @@ impl Hash for PbftSeal {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.get_info().hash(state);
         self.get_block_id().hash(state);
-        self.get_previous_id().hash(state);
         for vote in self.get_commit_votes() {
             vote.hash(state);
         }

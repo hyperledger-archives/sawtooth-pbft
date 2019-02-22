@@ -69,10 +69,7 @@ message PbftSeal {
   // ID of the block this seal verifies
   bytes block_id = 2;
 
-  // ID of the previous block
-  bytes previous_id = 3;
-
   // A list of Commit votes to prove the block commit (must contain at least 2f
   // votes)
-  repeated PbftSignedVote commit_votes = 4;
+  repeated PbftSignedVote commit_votes = 3;
 }

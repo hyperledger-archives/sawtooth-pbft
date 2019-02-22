@@ -463,35 +463,34 @@ impl PbftNode {
             return Ok(());
         }
 
-        // Make sure that this seal is for a block that the node has at this sequence number and
-        // that the seal's previous ID matches the previous ID of the block
-        if let Some(block) = self.msg_log.get_block_with_id(seal.block_id.as_slice()) {
-            if block.block_num != state.seq_num {
-                return Err(PbftError::InvalidMessage(format!(
-                    "Received a seal for block {:?}, but block_num does not match node's seq_num: \
-                     {} != {}",
+        // Get the previous ID of the block this seal is for so it can be used to verify the seal
+        let previous_id = self
+            .msg_log
+            .get_block_with_id(seal.block_id.as_slice())
+            // Make sure the node actually has the block
+            .ok_or_else(|| {
+                PbftError::InvalidMessage(format!(
+                    "Received a seal for a block ({:?}) that the node does not have",
                     hex::encode(&seal.block_id),
-                    block.block_num,
-                    state.seq_num,
-                )));
-            }
-            if block.previous_id != seal.previous_id {
-                return Err(PbftError::InvalidMessage(format!(
-                    "Received a seal for block {:?}, but previous IDs do not match: {:?} != {:?}",
-                    hex::encode(&seal.block_id),
-                    hex::encode(&seal.previous_id),
-                    hex::encode(&block.previous_id),
-                )));
-            }
-        } else {
-            return Err(PbftError::InvalidMessage(format!(
-                "Received a seal for a block ({:?}) that the node does not have",
-                hex::encode(&seal.block_id),
-            )));
-        }
+                ))
+            })
+            .and_then(|block| {
+                // Make sure the block is at the node's current sequence number
+                if block.block_num != state.seq_num {
+                    Err(PbftError::InvalidMessage(format!(
+                        "Received a seal for block {:?}, but block_num does not match node's \
+                         seq_num: {} != {}",
+                        hex::encode(&seal.block_id),
+                        block.block_num,
+                        state.seq_num,
+                    )))
+                } else {
+                    Ok(block.previous_id.clone())
+                }
+            })?;
 
         // Verify the seal
-        match self.verify_consensus_seal(seal, state) {
+        match self.verify_consensus_seal(seal, previous_id, state) {
             Ok(_) => {
                 trace!("Consensus seal passed verification");
             }
@@ -944,14 +943,6 @@ impl PbftNode {
                 ))
             })?;
 
-        let previous_id = self
-            .msg_log
-            .get_block_with_id(block_id.as_slice())
-            .map(|block| block.previous_id.clone())
-            .ok_or_else(|| {
-                PbftError::InternalError("Log does not have the last committed block".into())
-            })?;
-
         let mut seal = PbftSeal::new();
         seal.set_info(PbftMessageInfo::new_from(
             PbftMessageType::Seal,
@@ -960,7 +951,6 @@ impl PbftNode {
             state.id.clone(),
         ));
         seal.set_block_id(block_id);
-        seal.set_previous_id(previous_id);
         seal.set_commit_votes(Self::signed_votes_from_messages(messages.as_slice()));
 
         trace!("Seal created: {:?}", seal);
@@ -1148,27 +1138,21 @@ impl PbftNode {
             )));
         }
 
-        // Make sure the seal's previous ID matches the previous ID of the block it verifies
-        let verified_block = self
+        // Get the previous ID of the block this seal is supposed to prove so it can be used to
+        // verify the seal
+        let proven_block_previous_id = self
             .msg_log
             .get_block_with_id(seal.block_id.as_slice())
+            .map(|proven_block| proven_block.previous_id.clone())
             .ok_or_else(|| {
                 PbftError::InternalError(format!(
                     "Got seal for block {:?}, but block was not found in the log",
                     seal.block_id,
                 ))
             })?;
-        if verified_block.previous_id != seal.previous_id {
-            return Err(PbftError::InvalidMessage(format!(
-                "Received a seal for block {:?}, but previous IDs do not match: {:?} != {:?}",
-                hex::encode(&seal.block_id),
-                hex::encode(&seal.previous_id),
-                hex::encode(&verified_block.previous_id)
-            )));
-        }
 
         // Verify the seal itself
-        self.verify_consensus_seal(&seal, state)?;
+        self.verify_consensus_seal(&seal, proven_block_previous_id, state)?;
 
         Ok(seal)
     }
@@ -1181,6 +1165,7 @@ impl PbftNode {
     fn verify_consensus_seal(
         &mut self,
         seal: &PbftSeal,
+        previous_id: BlockId,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         // Verify each individual vote and extract the signer ID from each PbftMessage so the IDs
@@ -1222,14 +1207,15 @@ impl PbftNode {
         // All of the votes in a seal must come from known peers, and the primary can't explicitly
         // vote itself, since building a consensus seal is an implicit vote. Check that the votes
         // received are from a subset of "peers - seal creator". Use the list of peers from the
-        // block this seal verifies, since it may have changed.
+        // block previous to the one this seal verifies, since that represents the state of the
+        // network at the time this block was voted on.
         trace!("Getting on-chain list of peers to verify seal");
         let settings = retry_until_ok(
             state.exponential_retry_base,
             state.exponential_retry_max,
             || {
                 self.service.get_settings(
-                    seal.get_previous_id().to_vec(),
+                    previous_id.clone(),
                     vec![String::from("sawtooth.consensus.pbft.peers")],
                 )
             },
