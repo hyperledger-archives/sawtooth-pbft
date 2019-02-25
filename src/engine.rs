@@ -80,7 +80,7 @@ impl Engine for PbftEngine {
             pbft_state.read().is_primary(),
         );
 
-        node.start_faulty_primary_timeout(&mut pbft_state.write());
+        node.start_idle_timeout(&mut pbft_state.write());
 
         // Main event loop; keep going until PBFT receives a Shutdown message or is disconnected
         loop {
@@ -101,10 +101,10 @@ impl Engine for PbftEngine {
             working_ticker.tick(|| {
                 log_any_error(node.try_publish(state));
 
-                // Every so often, check to see if the faulty primary timeout has expired; initiate
+                // Every so often, check to see if the idle timeout has expired; initiate
                 // ViewChange if necessary
-                if node.check_faulty_primary_timeout_expired(state) {
-                    warn!("Faulty primary timeout expired; proposing view change");
+                if node.check_idle_timeout_expired(state) {
+                    warn!("Idle timeout expired; proposing view change");
                     log_any_error(node.start_view_change(state, state.view + 1));
                 }
 
