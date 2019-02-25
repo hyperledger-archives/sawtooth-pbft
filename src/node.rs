@@ -323,7 +323,8 @@ impl PbftNode {
                 "{}: Received f + 1 ViewChange messages; starting early view change",
                 state
             );
-            self.start_view_change(state, msg_view)?;
+            // Can exit early since the node will self-send another ViewChange message here
+            return self.start_view_change(state, msg_view);
         }
 
         // If this node is the new primary and the required 2f ViewChange messages (not including
