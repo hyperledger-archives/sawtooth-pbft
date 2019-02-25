@@ -222,6 +222,15 @@ impl PbftNode {
             )));
         }
 
+        // The primary is not allowed to send a Prepare; its PrePrepare counts as its "vote"
+        if PeerId::from(info.get_signer_id()) == state.get_primary_id() {
+            self.start_view_change(state, state.view + 1)?;
+            return Err(PbftError::FaultyPrimary(format!(
+                "Received Prepare from primary at view {}, seq_num {}",
+                state.view, state.seq_num
+            )));
+        }
+
         self.msg_log.add_message(msg);
 
         // If this message is for the current sequence number and the node is in the Preparing
@@ -864,13 +873,16 @@ impl PbftNode {
                 // within a reasonable amount of time
                 state.commit_timeout.start();
 
-                self.broadcast_pbft_message(
-                    state.view,
-                    state.seq_num,
-                    PbftMessageType::Prepare,
-                    block_id,
-                    state,
-                )?;
+                // The primary doesn't broadcast a Prepare; its PrePrepare counts as its "vote"
+                if !state.is_primary() {
+                    self.broadcast_pbft_message(
+                        state.view,
+                        state.seq_num,
+                        PbftMessageType::Prepare,
+                        block_id,
+                        state,
+                    )?;
+                }
             }
         }
 
@@ -1872,8 +1884,8 @@ mod tests {
         assert_eq!(state1.phase, PbftPhase::Preparing);
         assert_eq!(state1.seq_num, 1);
 
-        // Receive 3 `Prepare` messages
-        for peer in 0..3 {
+        // Receive 3 `Prepare` messages (none from the primary)
+        for peer in 1..4 {
             assert_eq!(state1.phase, PbftPhase::Preparing);
             let msg = mock_msg(PbftMessageType::Prepare, 0, 1, block.clone(), vec![peer]);
             node1
