@@ -110,35 +110,6 @@ impl PbftLog {
             .any(|msg| msg.get_block_id() == block_id)
     }
 
-    /// Check if the log contains `required` number of messages that match:
-    /// - The `msg_type`
-    /// - Sequence + view number of the provided `ref_msg`
-    /// - The block_id in `ref_msg` (only if `check_block_id` is `true`)
-    pub fn has_required_msgs(
-        &self,
-        msg_type: PbftMessageType,
-        ref_msg: &ParsedMessage,
-        check_block_id: bool,
-        required: u64,
-    ) -> bool {
-        let msgs = self.get_messages_of_type_seq_view(
-            msg_type,
-            ref_msg.info().get_seq_num(),
-            ref_msg.info().get_view(),
-        );
-
-        let msgs = if check_block_id {
-            msgs.iter()
-                .filter(|msg| msg.get_block_id() == ref_msg.get_block_id())
-                .cloned()
-                .collect()
-        } else {
-            msgs
-        };
-
-        msgs.len() as u64 >= required
-    }
-
     /// Obtain all messages from the log that match the given type and sequence_number
     pub fn get_messages_of_type_seq(
         &self,
@@ -184,6 +155,28 @@ impl PbftLog {
                 info.get_msg_type() == String::from(msg_type)
                     && info.get_seq_num() == sequence_number
                     && info.get_view() == view
+            })
+            .collect()
+    }
+
+    /// Obtain all messages from the log that match the given type, sequence number, view, and
+    /// block_id
+    pub fn get_messages_of_type_seq_view_block(
+        &self,
+        msg_type: PbftMessageType,
+        sequence_number: u64,
+        view: u64,
+        block_id: &[u8],
+    ) -> Vec<&ParsedMessage> {
+        self.messages
+            .iter()
+            .filter(|&msg| {
+                let info = (*msg).info();
+                let msg_block_id = (*msg).get_block_id();
+                info.get_msg_type() == String::from(msg_type)
+                    && info.get_seq_num() == sequence_number
+                    && info.get_view() == view
+                    && msg_block_id == block_id
             })
             .collect()
     }

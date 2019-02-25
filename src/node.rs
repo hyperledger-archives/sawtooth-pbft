@@ -222,7 +222,7 @@ impl PbftNode {
             )));
         }
 
-        self.msg_log.add_message(msg.clone());
+        self.msg_log.add_message(msg);
 
         // If this message is for the current sequence number and the node is in the Preparing
         // phase, check if the node is ready to move on to the Committing phase
@@ -233,12 +233,18 @@ impl PbftNode {
             let has_matching_pre_prepare =
                 self.msg_log
                     .has_pre_prepare(info.get_seq_num(), info.get_view(), &block_id);
-            let has_required_prepares = self.msg_log.has_required_msgs(
-                PbftMessageType::Prepare,
-                &msg,
-                true,
-                2 * state.f + 1,
-            );
+            let has_required_prepares = self
+                .msg_log
+                // Only get Prepares with matching seq_num, view, and block_id
+                .get_messages_of_type_seq_view_block(
+                    PbftMessageType::Prepare,
+                    info.get_seq_num(),
+                    info.get_view(),
+                    &block_id,
+                )
+                // Check if there are at least 2f + 1 Prepares
+                .len() as u64
+                > 2 * state.f;
             if has_matching_pre_prepare && has_required_prepares {
                 state.switch_phase(PbftPhase::Committing)?;
                 self.broadcast_pbft_message(
@@ -286,12 +292,18 @@ impl PbftNode {
             let has_matching_pre_prepare =
                 self.msg_log
                     .has_pre_prepare(info.get_seq_num(), info.get_view(), &block_id);
-            let has_required_commits = self.msg_log.has_required_msgs(
-                PbftMessageType::Commit,
-                &msg,
-                true,
-                2 * state.f + 1,
-            );
+            let has_required_commits = self
+                .msg_log
+                // Only get Commits with matching seq_num, view, and block_id
+                .get_messages_of_type_seq_view_block(
+                    PbftMessageType::Commit,
+                    info.get_seq_num(),
+                    info.get_view(),
+                    &block_id,
+                )
+                // Check if there are at least 2f + 1 Commits
+                .len() as u64
+                > 2 * state.f;
             if has_matching_pre_prepare && has_required_commits {
                 self.service.commit_block(block_id.clone()).map_err(|err| {
                     PbftError::ServiceError(
@@ -338,13 +350,18 @@ impl PbftNode {
         // f + 1 ViewChange messages in the log for this proposed view (but if already view
         // changing, only do this for a later view); this will prevent starting the view change too
         // late
-        if match state.mode {
+        let is_later_view = match state.mode {
             PbftMode::ViewChanging(v) => msg_view > v,
             PbftMode::Normal => true,
-        } && self
+        };
+        let has_required_view_changes = self
             .msg_log
-            .has_required_msgs(PbftMessageType::ViewChange, msg, false, state.f + 1)
-        {
+            // Only get ViewChanges with matching view
+            .get_messages_of_type_view(PbftMessageType::ViewChange, msg_view)
+            // Check if there are at least f + 1 ViewChanges
+            .len() as u64
+            > state.f;
+        if is_later_view && has_required_view_changes {
             info!(
                 "{}: Received f + 1 ViewChange messages; starting early view change",
                 state
@@ -1805,9 +1822,18 @@ mod tests {
             .unwrap_or_else(panic_with_err);
 
         // Verify it worked
-        assert!(node0
-            .msg_log
-            .has_required_msgs(PbftMessageType::PrePrepare, &valid_msg, true, 1));
+        assert_eq!(
+            node0
+                .msg_log
+                .get_messages_of_type_seq_view_block(
+                    PbftMessageType::PrePrepare,
+                    valid_msg.info().get_seq_num(),
+                    valid_msg.info().get_view(),
+                    &mock_block_id(1),
+                )
+                .len(),
+            1
+        );
         assert_eq!(state0.phase, PbftPhase::Preparing);
     }
 
