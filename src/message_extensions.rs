@@ -30,12 +30,11 @@ use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 
 use crate::message_type::PbftMessageType;
 use crate::protos::pbft_message::{
-    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSealResponse, PbftSignedVote,
+    PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
 };
 
 impl Eq for PbftMessage {}
 impl Eq for PbftSeal {}
-impl Eq for PbftSealResponse {}
 impl Eq for PbftNewView {}
 
 impl Hash for PbftMessageInfo {
@@ -56,17 +55,11 @@ impl Hash for PbftMessage {
 
 impl Hash for PbftSeal {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get_info().hash(state);
         self.get_block_id().hash(state);
         for vote in self.get_commit_votes() {
             vote.hash(state);
         }
-    }
-}
-
-impl Hash for PbftSealResponse {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.get_info().hash(state);
-        self.get_seal().hash(state);
     }
 }
 
@@ -106,7 +99,8 @@ impl fmt::Display for PbftSeal {
             .fold(String::new(), |acc, vote| format!("{}{}, ", acc, vote));
         write!(
             f,
-            "PbftSeal(block_id: {}, votes: {})",
+            "PbftSeal(info: {}, block_id: {}, votes: {})",
+            self.get_info(),
             hex::encode(self.get_block_id()),
             votes,
         )
