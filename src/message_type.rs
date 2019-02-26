@@ -73,30 +73,70 @@ impl Hash for ParsedMessage {
 }
 
 impl ParsedMessage {
+    /// Constructs a `ParsedMessage` from the given `PeerMessage`.
+    ///
+    /// Attempts to parse the message contents as a `PbftMessage`, `PbftNewView`, or
+    /// `PbftSeal` and wraps that in an internal enum.
+    pub fn from_peer_message(message: PeerMessage) -> Result<Self, PbftError> {
+        let parsed_message = match message.header.message_type.as_str() {
+            "Seal" => PbftMessageWrapper::Seal(
+                protobuf::parse_from_bytes::<PbftSeal>(&message.content).map_err(|err| {
+                    PbftError::SerializationError("Error parsing PbftSeal".into(), err)
+                })?,
+            ),
+            "NewView" => PbftMessageWrapper::NewView(
+                protobuf::parse_from_bytes::<PbftNewView>(&message.content).map_err(|err| {
+                    PbftError::SerializationError("Error parsing PbftNewView".into(), err)
+                })?,
+            ),
+            _ => PbftMessageWrapper::Message(
+                protobuf::parse_from_bytes::<PbftMessage>(&message.content).map_err(|err| {
+                    PbftError::SerializationError("Error parsing PbftMessage".into(), err)
+                })?,
+            ),
+        };
+
+        Ok(Self {
+            from_self: false,
+            header_bytes: message.header_bytes,
+            header_signature: message.header_signature,
+            message: parsed_message,
+            message_bytes: message.content.clone(),
+        })
+    }
+
     /// Constructs a `ParsedMessage` from the given `PbftMessage`.
     ///
     /// Does not add metadata necessary for creating a signed vote from this message.
-    pub fn from_pbft_message(message: PbftMessage) -> Self {
-        Self {
+    pub fn from_pbft_message(message: PbftMessage) -> Result<Self, PbftError> {
+        let message_bytes = message.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing PbftMessage to bytes".into(), err)
+        })?;
+
+        Ok(Self {
             from_self: true,
             header_bytes: vec![],
             header_signature: vec![],
-            message_bytes: message.write_to_bytes().unwrap(),
+            message_bytes,
             message: PbftMessageWrapper::Message(message),
-        }
+        })
     }
 
     /// Constructs a `ParsedMessage` from the given `PbftNewView`.
     ///
     /// Does not add metadata necessary for creating a signed vote from this message.
-    pub fn from_new_view_message(message: PbftNewView) -> Self {
-        Self {
+    pub fn from_new_view_message(message: PbftNewView) -> Result<Self, PbftError> {
+        let message_bytes = message.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing PbftNewView to bytes".into(), err)
+        })?;
+
+        Ok(Self {
             from_self: true,
             header_bytes: vec![],
             header_signature: vec![],
-            message_bytes: message.write_to_bytes().unwrap(),
+            message_bytes,
             message: PbftMessageWrapper::NewView(message),
-        }
+        })
     }
 
     /// Constructs a `ParsedMessage` from the given `PbftSignedVote`.
@@ -169,49 +209,6 @@ impl ParsedMessage {
             }
             PbftMessageWrapper::Seal(s) => s,
         }
-    }
-
-    /// Constructs a `ParsedMessage` from the given `PeerMessage`.
-    ///
-    /// Attempts to parse the message contents as a `PbftMessage`, `PbftNewView`, or
-    /// `PbftSeal` and wraps that in an internal enum.
-    pub fn from_peer_message(message: PeerMessage, from_self: bool) -> Result<Self, PbftError> {
-        let parsed_message = match message.header.message_type.as_str() {
-            "Seal" => PbftMessageWrapper::Seal(
-                protobuf::parse_from_bytes::<PbftSeal>(&message.content).map_err(|err| {
-                    PbftError::SerializationError("Error parsing PbftSeal".into(), err)
-                })?,
-            ),
-            "NewView" => PbftMessageWrapper::NewView(
-                protobuf::parse_from_bytes::<PbftNewView>(&message.content).map_err(|err| {
-                    PbftError::SerializationError("Error parsing PbftNewView".into(), err)
-                })?,
-            ),
-            _ => PbftMessageWrapper::Message(
-                protobuf::parse_from_bytes::<PbftMessage>(&message.content).map_err(|err| {
-                    PbftError::SerializationError("Error parsing PbftMessage".into(), err)
-                })?,
-            ),
-        };
-
-        Ok(Self {
-            header_bytes: message.header_bytes,
-            header_signature: message.header_signature,
-            message: parsed_message,
-            message_bytes: message.content.clone(),
-            from_self,
-        })
-    }
-
-    /// Constructs a `ParsedMessage` from the given serialized `PbftMessage`
-    pub fn from_bytes(message: Vec<u8>, message_type: PbftMessageType) -> Result<Self, PbftError> {
-        let mut peer_message = PeerMessage {
-            content: message,
-            ..Default::default()
-        };
-        peer_message.header.message_type = String::from(message_type);
-
-        Self::from_peer_message(peer_message, true)
     }
 }
 

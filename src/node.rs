@@ -352,7 +352,7 @@ impl PbftNode {
 
             trace!("Created NewView message: {:?}", new_view);
 
-            self.broadcast_message(ParsedMessage::from_new_view_message(new_view), state)?;
+            self.broadcast_message(ParsedMessage::from_new_view_message(new_view)?, state)?;
         }
 
         Ok(())
@@ -1312,7 +1312,7 @@ impl PbftNode {
 
         trace!("{}: Created PBFT message: {:?}", state, msg);
 
-        self.broadcast_message(ParsedMessage::from_pbft_message(msg), state)
+        self.broadcast_message(ParsedMessage::from_pbft_message(msg)?, state)
     }
 
     /// Broadcast the specified message to all of the node's peers, including itself
@@ -1611,7 +1611,8 @@ mod tests {
             msg.set_info(info);
             msg.set_block_id(head.block_id.clone());
 
-            let mut message = ParsedMessage::from_pbft_message(msg);
+            let mut message =
+                ParsedMessage::from_pbft_message(msg).expect("Failed to parse PbftMessage");
 
             let key = context.new_random_private_key().unwrap();
             let pub_key = context.get_public_key(&*key).unwrap();
@@ -1650,7 +1651,8 @@ mod tests {
         let info = PbftMessageInfo::new_from(PbftMessageType::ViewChange, view, seq_num, peer);
         vc_msg.set_info(info);
 
-        let mut message = ParsedMessage::from_pbft_message(vc_msg);
+        let mut message =
+            ParsedMessage::from_pbft_message(vc_msg).expect("Failed to parse PbftMessage");
         let mut header = ConsensusPeerMessageHeader::new();
         header.set_signer_id(pub_key.as_slice().to_vec());
         header.set_content_sha512(hash_sha512(&message.message_bytes));
@@ -1677,7 +1679,7 @@ mod tests {
         pbft_msg.set_info(info);
         pbft_msg.set_block_id(block.block_id);
 
-        ParsedMessage::from_pbft_message(pbft_msg)
+        ParsedMessage::from_pbft_message(pbft_msg).expect("Failed to parse PbftMessage")
     }
 
     fn panic_with_err(e: PbftError) {
@@ -1906,7 +1908,10 @@ mod tests {
         new_view.set_view_changes(PbftNode::signed_votes_from_messages(msgs.as_slice()));
 
         node1
-            .on_peer_message(ParsedMessage::from_new_view_message(new_view), &mut state1)
+            .on_peer_message(
+                ParsedMessage::from_new_view_message(new_view).expect("Failed to parse NewView"),
+                &mut state1,
+            )
             .unwrap_or_else(panic_with_err);
 
         assert!(state1.is_primary());
@@ -1947,7 +1952,10 @@ mod tests {
             msg.set_info(info);
             node0
                 .msg_log
-                .add_message(ParsedMessage::from_pbft_message(msg), &state0)
+                .add_message(
+                    ParsedMessage::from_pbft_message(msg).expect("Failed to parse PbftMessage"),
+                    &state0,
+                )
                 .unwrap();
         }
 
