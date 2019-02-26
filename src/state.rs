@@ -106,7 +106,7 @@ pub struct PbftState {
 
     /// Timer used to make sure the primary publishes blocks in a timely manner. If not, then this
     /// node will initiate a view change.
-    pub faulty_primary_timeout: Timeout,
+    pub idle_timeout: Timeout,
 
     /// Timer used to make sure the network doesn't get stuck if it fails to commit a block in a
     /// reasonable amount of time. If it doesn't commit a block in time, this node will initiate a
@@ -153,7 +153,7 @@ impl PbftState {
             mode: PbftMode::Normal,
             f,
             peer_ids: config.peers.clone(),
-            faulty_primary_timeout: Timeout::new(config.faulty_primary_timeout),
+            idle_timeout: Timeout::new(config.idle_timeout),
             commit_timeout: Timeout::new(config.commit_timeout),
             view_change_timeout: Timeout::new(config.view_change_duration),
             view_change_duration: config.view_change_duration,

@@ -50,7 +50,7 @@ pub struct PbftConfig {
 
     /// How long to wait for the next BlockNew + PrePrepare before determining primary is faulty
     /// Should be longer than block_duration
-    pub faulty_primary_timeout: Duration,
+    pub idle_timeout: Duration,
 
     /// How long to wait (after Pre-Preparing) for the node to commit the block before starting a
     /// view change (guarantees liveness by allowing the network to get "unstuck" if it is unable
@@ -79,7 +79,7 @@ impl PbftConfig {
             message_timeout: Duration::from_millis(10),
             exponential_retry_base: Duration::from_millis(100),
             exponential_retry_max: Duration::from_secs(60),
-            faulty_primary_timeout: Duration::from_secs(30),
+            idle_timeout: Duration::from_secs(30),
             commit_timeout: Duration::from_secs(30),
             view_change_duration: Duration::from_secs(5),
             forced_view_change_period: 30,
@@ -93,7 +93,7 @@ impl PbftConfig {
     /// Configuration loads the following settings:
     /// + `sawtooth.consensus.pbft.peers` (required)
     /// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
-    /// + `sawtooth.consensus.pbft.faulty_primary_timeout` (optional, default 30s)
+    /// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30s)
     /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 30s)
     /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
     /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
@@ -102,7 +102,7 @@ impl PbftConfig {
     /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
     ///
     /// # Panics
-    /// + If block duration is greater than the faulty primary timeout
+    /// + If block duration is greater than the idle timeout
     /// + If the `sawtooth.consensus.pbft.peers` setting is not provided or is invalid
     pub fn load_settings(&mut self, block_id: BlockId, service: &mut Service) {
         debug!("Getting on-chain settings for config");
@@ -115,7 +115,7 @@ impl PbftConfig {
                     vec![
                         String::from("sawtooth.consensus.pbft.peers"),
                         String::from("sawtooth.consensus.pbft.block_duration"),
-                        String::from("sawtooth.consensus.pbft.faulty_primary_timeout"),
+                        String::from("sawtooth.consensus.pbft.idle_timeout"),
                         String::from("sawtooth.consensus.pbft.commit_timeout"),
                         String::from("sawtooth.consensus.pbft.view_change_duration"),
                         String::from("sawtooth.consensus.pbft.forced_view_change_period"),
@@ -145,8 +145,8 @@ impl PbftConfig {
         );
         merge_secs_setting_if_set(
             &settings,
-            &mut self.faulty_primary_timeout,
-            "sawtooth.consensus.pbft.faulty_primary_timeout",
+            &mut self.idle_timeout,
+            "sawtooth.consensus.pbft.idle_timeout",
         );
         merge_secs_setting_if_set(
             &settings,
@@ -159,11 +159,11 @@ impl PbftConfig {
             "sawtooth.consensus.pbft.view_change_duration",
         );
 
-        // Check to make sure block_duration < faulty_primary_timeout
-        if self.block_duration >= self.faulty_primary_timeout {
+        // Check to make sure block_duration < idle_timeout
+        if self.block_duration >= self.idle_timeout {
             panic!(
-                "Block duration ({:?}) must be less than the faulty primary timeout ({:?})",
-                self.block_duration, self.faulty_primary_timeout
+                "Block duration ({:?}) must be less than the idle timeout ({:?})",
+                self.block_duration, self.idle_timeout
             );
         }
 

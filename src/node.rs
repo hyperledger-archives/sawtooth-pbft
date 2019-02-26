@@ -416,10 +416,10 @@ impl PbftNode {
 
         info!("{}: Updated to view {}", state, state.view);
 
-        // Reset state to beginning of Normal mode and restart faulty primary timeout
+        // Reset state to beginning of Normal mode and restart idle timeout
         state.mode = PbftMode::Normal;
         state.phase = PbftPhase::PrePreparing;
-        state.faulty_primary_timeout.start();
+        state.idle_timeout.start();
 
         // Initialize a new block if this node is the new primary
         if state.is_primary() {
@@ -646,7 +646,7 @@ impl PbftNode {
             self.msg_log.add_message(message.clone(), state)?;
         }
 
-        // Commit the block, stop the faulty primary timeout, and skip straight to Finishing
+        // Commit the block, stop the idle timeout, and skip straight to Finishing
         self.service
             .commit_block(seal.block_id.clone())
             .map_err(|err| {
@@ -659,7 +659,7 @@ impl PbftNode {
                     err,
                 )
             })?;
-        state.faulty_primary_timeout.stop();
+        state.idle_timeout.stop();
         state.phase = PbftPhase::Finishing(catchup_again);
 
         Ok(())
@@ -770,8 +770,8 @@ impl PbftNode {
             );
         }
 
-        // Start the faulty primary timeout for the next block
-        state.faulty_primary_timeout.start();
+        // Start the idle timeout for the next block
+        state.idle_timeout.start();
 
         // If we already have a block at this sequence number with a valid PrePrepare for it, start
         // Preparing (there may be multiple blocks, but only one will have a valid PrePrepare)
@@ -851,8 +851,8 @@ impl PbftNode {
             {
                 state.switch_phase(PbftPhase::Preparing)?;
 
-                // Stop view change timer, since a new block and valid PrePrepare were received in time
-                state.faulty_primary_timeout.stop();
+                // Stop idle timeout, since a new block and valid PrePrepare were received in time
+                state.idle_timeout.stop();
 
                 // Now start the commit timeout in case the network fails to commit the block
                 // within a reasonable amount of time
@@ -1284,14 +1284,14 @@ impl PbftNode {
         }
     }
 
-    /// Check to see if the faulty primary timeout has expired
-    pub fn check_faulty_primary_timeout_expired(&mut self, state: &mut PbftState) -> bool {
-        state.faulty_primary_timeout.check_expired()
+    /// Check to see if the idle timeout has expired
+    pub fn check_idle_timeout_expired(&mut self, state: &mut PbftState) -> bool {
+        state.idle_timeout.check_expired()
     }
 
-    /// Start the faulty primary timeout
-    pub fn start_faulty_primary_timeout(&self, state: &mut PbftState) {
-        state.faulty_primary_timeout.start();
+    /// Start the idle timeout
+    pub fn start_idle_timeout(&self, state: &mut PbftState) {
+        state.idle_timeout.start();
     }
 
     /// Check to see if the commit timeout has expired
@@ -1424,9 +1424,9 @@ impl PbftNode {
 
         state.mode = PbftMode::ViewChanging(view);
 
-        // Stop the faulty primary and commit timeouts because they are not needed until after the
-        // view change
-        state.faulty_primary_timeout.stop();
+        // Stop the idle and commit timeouts because they are not needed until after the view
+        // change
+        state.idle_timeout.stop();
         state.commit_timeout.stop();
 
         // Update the view change timeout and start it
