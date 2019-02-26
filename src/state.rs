@@ -20,8 +20,7 @@
 use std::fmt;
 use std::time::Duration;
 
-use hex;
-use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
+use sawtooth_sdk::consensus::engine::PeerId;
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
@@ -33,8 +32,8 @@ pub enum PbftPhase {
     PrePreparing,
     Preparing,
     Committing,
-    // Node is waiting for the BlockCommit (committed BlockId, is a catch-up commit)
-    Finishing(BlockId, bool),
+    // Node is waiting for a BlockCommit (bool indicates if it's a catch-up commit)
+    Finishing(bool),
 }
 
 impl fmt::Display for PbftPhase {
@@ -46,9 +45,7 @@ impl fmt::Display for PbftPhase {
                 PbftPhase::PrePreparing => "PrePreparing".into(),
                 PbftPhase::Preparing => "Preparing".into(),
                 PbftPhase::Committing => "Committing".into(),
-                PbftPhase::Finishing(ref id, cu) => {
-                    format!("Finishing {}/{}", &hex::encode(id), cu)
-                }
+                PbftPhase::Finishing(cu) => format!("Finishing {}", cu),
             },
         )
     }
@@ -72,7 +69,7 @@ impl fmt::Display for PbftState {
                 PbftPhase::PrePreparing => "PP".into(),
                 PbftPhase::Preparing => "Pr".into(),
                 PbftPhase::Committing => "Co".into(),
-                PbftPhase::Finishing(ref id, cu) => format!("Fi({}/{})", hex::encode(&id[..3]), cu),
+                PbftPhase::Finishing(cu) => format!("Fi({})", cu),
             }
         };
         write!(
@@ -192,14 +189,14 @@ impl PbftState {
     /// phase, return an error
     pub fn switch_phase(&mut self, desired_phase: PbftPhase) -> Result<(), PbftError> {
         let is_next_phase = {
-            if let PbftPhase::Finishing(_, _) = desired_phase {
+            if let PbftPhase::Finishing(_) = desired_phase {
                 self.phase == PbftPhase::Committing
             } else {
                 desired_phase
                     == match self.phase {
                         PbftPhase::PrePreparing => PbftPhase::Preparing,
                         PbftPhase::Preparing => PbftPhase::Committing,
-                        PbftPhase::Finishing(_, _) => PbftPhase::PrePreparing,
+                        PbftPhase::Finishing(_) => PbftPhase::PrePreparing,
                         _ => panic!("All conditions should be accounted for already"),
                     }
             }
@@ -270,16 +267,12 @@ mod tests {
         // Valid changes
         assert!(state.switch_phase(PbftPhase::Preparing).is_ok());
         assert!(state.switch_phase(PbftPhase::Committing).is_ok());
-        assert!(state
-            .switch_phase(PbftPhase::Finishing(BlockId::new(), false))
-            .is_ok());
+        assert!(state.switch_phase(PbftPhase::Finishing(false)).is_ok());
         assert!(state.switch_phase(PbftPhase::PrePreparing).is_ok());
 
         // Invalid changes
         assert!(state.switch_phase(PbftPhase::Committing).is_err());
-        assert!(state
-            .switch_phase(PbftPhase::Finishing(BlockId::new(), false))
-            .is_err());
+        assert!(state.switch_phase(PbftPhase::Finishing(false)).is_err());
         assert!(state.switch_phase(PbftPhase::PrePreparing).is_err());
     }
 }
