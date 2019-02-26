@@ -223,7 +223,7 @@ impl PbftNode {
                     2 * state.f + 1,
                 ) {
                     state.switch_phase(PbftPhase::Committing)?;
-                    self._broadcast_pbft_message(
+                    self.broadcast_pbft_message(
                         state.view,
                         state.seq_num,
                         PbftMessageType::Commit,
@@ -352,11 +352,7 @@ impl PbftNode {
 
             trace!("Created NewView message: {:?}", new_view);
 
-            let msg_bytes = new_view.write_to_bytes().map_err(|err| {
-                PbftError::SerializationError("Error writing NewView to bytes".into(), err)
-            })?;
-
-            self._broadcast_message(PbftMessageType::NewView, msg_bytes, state)?;
+            self.broadcast_message(ParsedMessage::from_new_view_message(new_view), state)?;
         }
 
         Ok(())
@@ -601,7 +597,7 @@ impl PbftNode {
                 // This is the next block and this node is the primary; broadcast PrePrepare
                 // messages
                 info!("Broadcasting PrePrepares");
-                self._broadcast_pbft_message(
+                self.broadcast_pbft_message(
                     state.view,
                     state.seq_num,
                     PbftMessageType::PrePrepare,
@@ -776,7 +772,7 @@ impl PbftNode {
                 "{}: Requesting seal to finish catch-up to block {}",
                 state, state.seq_num
             );
-            return self._broadcast_pbft_message(
+            return self.broadcast_pbft_message(
                 state.view,
                 state.seq_num,
                 PbftMessageType::SealRequest,
@@ -875,7 +871,7 @@ impl PbftNode {
                 // within a reasonable amount of time
                 state.commit_timeout.start();
 
-                self._broadcast_pbft_message(
+                self.broadcast_pbft_message(
                     state.view,
                     state.seq_num,
                     PbftMessageType::Prepare,
@@ -1328,9 +1324,8 @@ impl PbftNode {
 
     // ---------- Methods for communication between nodes ----------
 
-    /// Construct the message bytes and broadcast the message to all of this node's peers and
-    /// itself
-    fn _broadcast_pbft_message(
+    /// Construct a PbftMessage message and broadcast it to all peers (including self)
+    fn broadcast_pbft_message(
         &mut self,
         view: u64,
         seq_num: u64,
@@ -1349,22 +1344,22 @@ impl PbftNode {
 
         trace!("{}: Created PBFT message: {:?}", state, msg);
 
-        self._broadcast_message(msg_type, msg.write_to_bytes().unwrap_or_default(), state)
+        self.broadcast_message(ParsedMessage::from_pbft_message(msg), state)
     }
 
     /// Broadcast the specified message to all of the node's peers, including itself
     #[cfg(not(test))]
-    fn _broadcast_message(
+    fn broadcast_message(
         &mut self,
-        msg_type: PbftMessageType,
-        msg: Vec<u8>,
+        msg: ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        trace!("{}: Broadcasting {:?}", state, msg_type);
-
         // Broadcast to peers
         self.service
-            .broadcast(String::from(msg_type).as_str(), msg.clone())
+            .broadcast(
+                String::from(msg.info().get_msg_type()).as_str(),
+                msg.message_bytes.clone(),
+            )
             .unwrap_or_else(|err| {
                 error!(
                     "Couldn't broadcast message ({:?}) due to error: {}",
@@ -1373,17 +1368,14 @@ impl PbftNode {
             });
 
         // Send to self
-        let parsed_message = ParsedMessage::from_bytes(msg, msg_type)?;
-
-        self.on_peer_message(parsed_message, state)
+        self.on_peer_message(msg, state)
     }
 
     /// Disabled self-sending (used for testing)
     #[cfg(test)]
-    fn _broadcast_message(
+    fn broadcast_message(
         &mut self,
-        _msg_type: PbftMessageType,
-        _msg: Vec<u8>,
+        _msg: ParsedMessage,
         _state: &mut PbftState,
     ) -> Result<(), PbftError> {
         return Ok(());
@@ -1460,7 +1452,7 @@ impl PbftNode {
         state.view_change_timeout.start();
 
         // Broadcast the view change message
-        self._broadcast_pbft_message(
+        self.broadcast_pbft_message(
             view,
             state.seq_num - 1,
             PbftMessageType::ViewChange,
