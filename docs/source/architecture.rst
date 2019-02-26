@@ -241,11 +241,11 @@ two modes:
 
 .. note::
 
-   The original PBFT algorithm also defines a Checkpointing (garbage collection)
-   mode to prune log messages after a certain number of blocks have been
-   committed. Sawtooth PBFT does not implement checkpointing. Instead, it uses
-   the on-chain setting ``sawtooth.consensus.pbft.max_log_size`` to trigger
-   log pruning on each node.
+   The original PBFT definition includes a checkpointing procedure that is
+   responsible for garbage collection of the log. Sawtooth PBFT does not
+   implement this checkpointing procedure; instead, it cleans the log
+   periodically during its normal operation. For more information, see
+   :ref:`log-pruning-label`.
 
 
 Initialization
@@ -365,6 +365,26 @@ with the validators. N1 is the primary node; N2, N3, and N4 are secondary nodes.
 
 .. figure:: images/message_passing.png
     :alt: PBFT messages passed during normal operation
+
+
+.. _log-pruning-label:
+
+Log Pruning in Normal Mode
+--------------------------
+
+Sawtooth PBFT does not implement a checkpointing procedure (garbage collection
+of the log). Instead, each node cleans the log periodically during normal
+operation.
+
+Log size is controlled by a configurable setting, as determined by the on-chain
+setting ``sawtooth.consensus.pbft.max_log_size``. When a block is committed,
+each node compares the size of its log against the maximum size. If the log
+exceeds this value, Sawtooth PBFT uses these rules to prune the log:
+
+- Keep blocks and messages for the sequence number of the block that was just
+  committed, plus those for any higher (newer) sequence numbers
+
+- Delete blocks and messages for all lower (earlier) sequence numbers
 
 
 .. _view-changing-mode-label:
