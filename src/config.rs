@@ -53,8 +53,8 @@ pub struct PbftConfig {
     pub faulty_primary_timeout: Duration,
 
     /// How long to wait (after Pre-Preparing) for the node to commit the block before starting a
-    /// view change (guarantees liveness by allowing the network to get "unstuck" if something goes
-    // wrong)
+    /// view change (guarantees liveness by allowing the network to get "unstuck" if it is unable
+    /// to commit a block)
     pub commit_timeout: Duration,
 
     /// When view changing, how long to wait for a valid NewView message before starting a

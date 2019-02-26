@@ -26,7 +26,6 @@ use protobuf::Message;
 use sawtooth_sdk::consensus::engine::{BlockId, PeerMessage};
 
 use crate::error::PbftError;
-use crate::hash::verify_sha512;
 use crate::protos::pbft_message::{
     PbftMessage, PbftMessageInfo, PbftNewView, PbftSeal, PbftSignedVote,
 };
@@ -177,12 +176,6 @@ impl ParsedMessage {
     /// Attempts to parse the message contents as a `PbftMessage`, `PbftNewView`, or
     /// `PbftSeal` and wraps that in an internal enum.
     pub fn from_peer_message(message: PeerMessage, from_self: bool) -> Result<Self, PbftError> {
-        // Self-constructed messages aren't signed, since we don't have access to
-        // the validator key necessary for signing them.
-        if !from_self {
-            verify_sha512(&message.content, &message.header.content_sha512)?;
-        }
-
         let parsed_message = match message.header.message_type.as_str() {
             "Seal" => PbftMessageWrapper::Seal(
                 protobuf::parse_from_bytes::<PbftSeal>(&message.content).map_err(|err| {

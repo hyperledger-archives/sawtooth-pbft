@@ -119,8 +119,8 @@ impl PbftLog {
 
     /// Check if the log has a PrePrepare at the node's current view and sequence number that
     /// matches the given block ID
-    pub fn has_pre_prepare(&self, state: &PbftState, block_id: &[u8]) -> bool {
-        self.get_messages_of_type_seq_view(PbftMessageType::PrePrepare, state.seq_num, state.view)
+    pub fn has_pre_prepare(&self, seq_num: u64, view: u64, block_id: &[u8]) -> bool {
+        self.get_messages_of_type_seq_view(PbftMessageType::PrePrepare, seq_num, view)
             .iter()
             .any(|msg| msg.get_block_id() == block_id)
     }

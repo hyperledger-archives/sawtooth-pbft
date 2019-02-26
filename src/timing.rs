@@ -142,7 +142,7 @@ mod tests {
         };
     }
 
-    /// Tell the ticker to wait for 100ms, then see if it actually waited 100 +/- 1ms
+    /// Tell the ticker to wait for 100ms, then see if it actually waited 100 +/- 5ms
     #[test]
     fn ticker() {
         let time = Duration::from_millis(100);
@@ -156,7 +156,7 @@ mod tests {
                 triggered = true;
             })
         }
-        assert_tolerance!(end_time - start_time, time, Duration::from_millis(1));
+        assert_tolerance!(end_time - start_time, time, Duration::from_millis(5));
     }
 
     /// Create a Timeout that lasts for 100ms and check that it expires anytime after 100ms have
