@@ -790,15 +790,11 @@ impl PbftNode {
                 )
             },
         );
-        let peers = get_peers_from_settings(&settings);
-        let new_peers_set: HashSet<PeerId> = peers.iter().cloned().collect();
+        let on_chain_peers = get_peers_from_settings(&settings);
 
-        // Check if membership has changed
-        let old_peers_set: HashSet<PeerId> = state.peer_ids.iter().cloned().collect();
-
-        if new_peers_set != old_peers_set {
-            info!("Updating membership: {:?}", peers);
-            state.peer_ids = peers;
+        if on_chain_peers != state.peer_ids {
+            info!("Updating membership: {:?}", on_chain_peers);
+            state.peer_ids = on_chain_peers;
             let f = (state.peer_ids.len() - 1) / 3;
             if f == 0 {
                 panic!("This network no longer contains enough nodes to be fault tolerant");
