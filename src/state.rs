@@ -222,6 +222,40 @@ impl PbftState {
 mod tests {
     use super::*;
     use crate::config::mock_config;
+    use crate::test_helpers::*;
+
+    /// This test will verify that calling `PbftState::new` will properly initialize a state struct
+    /// and fail if there are not enough peers.
+    #[test]
+    fn test_state_initialization() {
+        // Verify normal initialization
+        let cfg = mock_config(4);
+        let state = PbftState::new(vec![0], 1, &cfg);
+        assert_eq!(vec![0], state.id);
+        assert_eq!(2, state.seq_num);
+        assert_eq!(0, state.view);
+        assert_eq!(PbftPhase::PrePreparing, state.phase);
+        assert_eq!(PbftMode::Normal, state.mode);
+        assert_eq!(cfg.peers, state.peer_ids);
+        assert_eq!(1, state.f);
+        assert_eq!(cfg.idle_timeout, state.idle_timeout.duration());
+        assert_eq!(cfg.commit_timeout, state.commit_timeout.duration());
+        assert_eq!(
+            cfg.view_change_duration,
+            state.view_change_timeout.duration()
+        );
+        assert_eq!(cfg.view_change_duration, state.view_change_duration);
+        assert_eq!(cfg.exponential_retry_base, state.exponential_retry_base);
+        assert_eq!(cfg.exponential_retry_max, state.exponential_retry_max);
+        assert_eq!(
+            cfg.forced_view_change_period,
+            state.forced_view_change_period
+        );
+
+        // Verify panic if f == 0
+        let cfg = mock_config(3);
+        assert!(std::panic::catch_unwind(|| PbftState::new(vec![0], 0, &cfg)).is_err());
+    }
 
     /// Check that state responds to having an inadequately sized network
     #[test]
