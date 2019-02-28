@@ -221,7 +221,6 @@ impl PbftState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::mock_config;
     use crate::test_helpers::*;
 
     /// This test will verify that calling `PbftState::new` will properly initialize a state struct
@@ -255,39 +254,6 @@ mod tests {
         // Verify panic if f == 0
         let cfg = mock_config(3);
         assert!(std::panic::catch_unwind(|| PbftState::new(vec![0], 0, &cfg)).is_err());
-    }
-
-    /// Check that state responds to having an inadequately sized network
-    #[test]
-    fn no_fault_tolerance() {
-        let config = mock_config(1);
-        let caught = ::std::panic::catch_unwind(|| {
-            PbftState::new(vec![0], 0, &config);
-        })
-        .is_err();
-        assert!(caught);
-    }
-
-    /// Check that the initial configuration of state is as we expect:
-    /// + Primary is node 0, secondaries are other nodes
-    /// + The node is not expecting any particular message type
-    /// + `peer_ids` got set properly
-    /// + The node's own PeerId got set properly
-    /// + The primary PeerId got se properly
-    #[test]
-    fn initial_config() {
-        let config = mock_config(4);
-        let state0 = PbftState::new(vec![0], 0, &config);
-        let state1 = PbftState::new(vec![], 0, &config);
-
-        assert!(state0.is_primary());
-        assert!(!state1.is_primary());
-
-        assert_eq!(state0.f, 1);
-        assert_eq!(state1.f, 1);
-
-        assert_eq!(state0.get_primary_id(), state0.peer_ids[0]);
-        assert_eq!(state1.get_primary_id(), state1.peer_ids[0]);
     }
 
     /// Make sure that a normal PBFT cycle works properly
