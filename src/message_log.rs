@@ -200,10 +200,7 @@ impl PbftLog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config;
-    use crate::protos::pbft_message::PbftMessage;
     use crate::test_helpers::*;
-    use sawtooth_sdk::consensus::engine::PeerId;
 
     /// The `PbftLog` must reliably store and retrieve blocks for the node to keep track of the
     /// blocks it receives from the validator, perform consensus on them, and commit or fail them.
@@ -356,101 +353,5 @@ mod tests {
             log.get_messages_of_type_seq_view_block(PbftMessageType::Commit, 1, 0, &vec![2]);
         assert_eq!(1, res10.len());
         assert!(res10.contains(&&msg9));
-    }
-
-    /// Create a PbftMessage, given its type, view, sequence number, and who it's from
-    fn make_msg(
-        msg_type: PbftMessageType,
-        view: u64,
-        seq_num: u64,
-        signer_id: PeerId,
-    ) -> ParsedMessage {
-        let mut info = PbftMessageInfo::new();
-        info.set_msg_type(String::from(msg_type));
-        info.set_view(view);
-        info.set_seq_num(seq_num);
-        info.set_signer_id(Vec::<u8>::from(signer_id.clone()));
-
-        let mut msg = PbftMessage::new();
-        msg.set_info(info);
-        msg.set_block_id(vec![]);
-
-        ParsedMessage::from_pbft_message(msg).expect("Failed to parse PbftMessage")
-    }
-
-    /// Obtain the PeerId for node `which`
-    fn get_peer_id(cfg: &PbftConfig, which: usize) -> PeerId {
-        cfg.peers[which].clone()
-    }
-
-    /// Test that adding one message works as expected
-    #[test]
-    fn one_message() {
-        let cfg = config::mock_config(4);
-        let mut log = PbftLog::new(&cfg);
-
-        let msg = make_msg(PbftMessageType::PrePrepare, 0, 1, get_peer_id(&cfg, 0));
-
-        log.add_message(msg.clone());
-
-        let gotten_msgs = log.get_messages_of_type_seq_view(PbftMessageType::PrePrepare, 1, 0);
-
-        assert_eq!(gotten_msgs.len(), 1);
-        assert_eq!(&msg, gotten_msgs[0]);
-    }
-
-    /// Make sure that log garbage collection works as expected
-    /// (All messages up to, but not including, the previous sequence number are deleted)
-    #[test]
-    fn garbage_collection() {
-        let cfg = config::mock_config(4);
-        let mut log = PbftLog::new(&cfg);
-
-        for seq in 1..5 {
-            log.add_block(Block::default());
-
-            let msg = make_msg(PbftMessageType::PrePrepare, 0, seq, get_peer_id(&cfg, 0));
-            log.add_message(msg.clone());
-
-            for peer in 0..4 {
-                let msg = make_msg(PbftMessageType::Prepare, 0, seq, get_peer_id(&cfg, peer));
-
-                log.add_message(msg.clone());
-            }
-
-            for peer in 0..4 {
-                let msg = make_msg(PbftMessageType::Commit, 0, seq, get_peer_id(&cfg, peer));
-
-                log.add_message(msg.clone());
-            }
-        }
-
-        log.max_log_size = 20;
-        log.garbage_collect(5);
-
-        for old in 1..3 {
-            for msg_type in &[
-                PbftMessageType::PrePrepare,
-                PbftMessageType::Prepare,
-                PbftMessageType::Commit,
-            ] {
-                assert_eq!(
-                    log.get_messages_of_type_seq_view(*msg_type, old, 0).len(),
-                    0
-                );
-            }
-        }
-
-        assert!(log.blocks.is_empty());
-
-        assert_eq!(
-            log.get_messages_of_type_seq_view(PbftMessageType::PrePrepare, 4, 0)
-                .len(),
-            1
-        );
-
-        for msg_type in vec![PbftMessageType::Prepare, PbftMessageType::Commit] {
-            assert_eq!(log.get_messages_of_type_seq_view(msg_type, 4, 0).len(), 4);
-        }
     }
 }
