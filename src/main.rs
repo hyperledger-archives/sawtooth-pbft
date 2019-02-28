@@ -46,6 +46,8 @@ pub mod node;
 mod protos;
 pub mod state;
 pub mod storage;
+#[cfg(test)]
+pub mod test_helpers;
 pub mod timing;
 
 fn main() {
