@@ -42,3 +42,33 @@ pub fn verify_sha512(content: &[u8], content_hash: &[u8]) -> Result<(), PbftErro
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Nodes must be able to verify SHA-512 hashes to properly validate consensus messages from
+    /// other peers, especially those that are used in consensus seals. This allows the network to
+    /// verify the origin of the messages and prevents a malicious node from forging messages.
+    ///
+    /// This test will verify that the `verify_sha512` function properly verifies a SHA-512 hash.
+    #[test]
+    fn test_sha512_verification() {
+        let bytes = b"abc";
+        let correct_hash = [
+            221, 175, 53, 161, 147, 97, 122, 186, 204, 65, 115, 73, 174, 32, 65, 49, 18, 230, 250,
+            78, 137, 169, 126, 162, 10, 158, 238, 230, 75, 85, 211, 154, 33, 146, 153, 42, 39, 79,
+            193, 168, 54, 186, 60, 35, 163, 254, 235, 189, 69, 77, 68, 35, 100, 60, 232, 14, 42,
+            154, 201, 79, 165, 76, 164, 159,
+        ];
+        let incorrect_hash = [
+            216, 2, 47, 32, 96, 173, 110, 253, 41, 122, 183, 61, 204, 83, 85, 201, 178, 20, 5, 75,
+            13, 23, 118, 161, 54, 166, 105, 210, 106, 125, 59, 20, 247, 58, 160, 208, 235, 255, 25,
+            238, 51, 51, 104, 240, 22, 75, 100, 25, 169, 109, 164, 158, 62, 72, 23, 83, 231, 233,
+            107, 113, 107, 220, 203, 111,
+        ];
+
+        assert!(verify_sha512(bytes, &correct_hash).is_ok());
+        assert!(verify_sha512(bytes, &incorrect_hash).is_err());
+    }
+}
