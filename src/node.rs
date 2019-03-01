@@ -629,7 +629,7 @@ impl PbftNode {
 
         // Update view if necessary
         let view = messages[0].info().get_view();
-        if view > state.view {
+        if view != state.view {
             info!("Updating view from {} to {}", state.view, view);
             state.view = view;
         }
