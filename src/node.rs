@@ -1496,9 +1496,8 @@ impl PbftNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::mock_config;
     use crate::protos::pbft_message::PbftMessageInfo;
-    use openssl::sha::Sha256;
+    use crate::test_helpers::*;
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
     use serde_json;
     use std::collections::HashMap;
@@ -1577,7 +1576,7 @@ mod tests {
                     .iter()
                     .position(|val| val == id)
                     .unwrap_or(self.chain.len());
-                res.insert(id.clone(), mock_block(index as u64));
+                res.insert(id.clone(), mock_block(index as u8));
             }
             Ok(res)
         }
@@ -1617,55 +1616,10 @@ mod tests {
     fn mock_node(node_id: PeerId, chain_head: Block) -> PbftNode {
         let service: Box<MockService> = Box::new(MockService {
             // Create genesis block (but with actual ID)
-            chain: vec![mock_block_id(0)],
+            chain: vec![vec![0]],
         });
         let cfg = mock_config(4);
         PbftNode::new(&cfg, chain_head, service, node_id == vec![0])
-    }
-
-    /// Create a deterministic BlockId hash based on a block number
-    fn mock_block_id(num: u64) -> BlockId {
-        let mut sha = Sha256::new();
-        sha.update(format!("I'm a block with block num {}", num).as_bytes());
-        let mut bytes = Vec::new();
-        bytes.extend(sha.finish().iter());
-        BlockId::from(bytes)
-    }
-
-    /// Create a mock Block, including only the BlockId, the BlockId of the previous block, and the
-    /// block number
-    fn mock_block(num: u64) -> Block {
-        let previous_id = if num == 0 {
-            vec![]
-        } else {
-            mock_block_id(num - 1)
-        };
-
-        Block {
-            block_id: mock_block_id(num),
-            previous_id,
-            signer_id: PeerId::from(vec![]),
-            block_num: num,
-            payload: vec![],
-            summary: vec![],
-        }
-    }
-
-    /// Create a mock serialized PbftMessage
-    fn mock_msg(
-        msg_type: PbftMessageType,
-        view: u64,
-        seq_num: u64,
-        block: Block,
-        from: PeerId,
-    ) -> ParsedMessage {
-        let info = PbftMessageInfo::new_from(msg_type, view, seq_num, from);
-
-        let mut pbft_msg = PbftMessage::new();
-        pbft_msg.set_info(info);
-        pbft_msg.set_block_id(block.block_id);
-
-        ParsedMessage::from_pbft_message(pbft_msg).expect("Failed to parse PbftMessage")
     }
 
     fn panic_with_err(e: PbftError) {
@@ -1703,7 +1657,7 @@ mod tests {
         node0.msg_log.add_block(mock_block(1));
 
         // Add PrePrepare to log
-        let valid_msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, mock_block(1), vec![0]);
+        let valid_msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, vec![0], vec![1]);
         node0
             .handle_pre_prepare(valid_msg.clone(), &mut state0)
             .unwrap_or_else(panic_with_err);
@@ -1716,7 +1670,7 @@ mod tests {
                     PbftMessageType::PrePrepare,
                     valid_msg.info().get_seq_num(),
                     valid_msg.info().get_view(),
-                    &mock_block_id(1),
+                    &vec![1],
                 )
                 .len(),
             1
@@ -1732,7 +1686,7 @@ mod tests {
         let mut state0 = PbftState::new(vec![0], 0, &cfg);
         state0.phase = PbftPhase::Finishing(false);
         assert_eq!(state0.seq_num, 1);
-        assert!(node.on_block_commit(mock_block_id(1), &mut state0).is_ok());
+        assert!(node.on_block_commit(vec![1], &mut state0).is_ok());
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.seq_num, 2);
     }
@@ -1751,7 +1705,7 @@ mod tests {
             .unwrap_or_else(panic_with_err);
 
         // Receive a PrePrepare
-        let msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, block.clone(), vec![0]);
+        let msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, vec![0], vec![1]);
         node1
             .on_peer_message(msg, &mut state1)
             .unwrap_or_else(panic_with_err);
@@ -1762,7 +1716,7 @@ mod tests {
         // Receive 3 `Prepare` messages (none from the primary)
         for peer in 1..4 {
             assert_eq!(state1.phase, PbftPhase::Preparing);
-            let msg = mock_msg(PbftMessageType::Prepare, 0, 1, block.clone(), vec![peer]);
+            let msg = mock_msg(PbftMessageType::Prepare, 0, 1, vec![peer], vec![1]);
             node1
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(panic_with_err);
@@ -1771,7 +1725,7 @@ mod tests {
         // Receive 3 `Commit` messages
         for peer in 0..3 {
             assert_eq!(state1.phase, PbftPhase::Committing);
-            let msg = mock_msg(PbftMessageType::Commit, 0, 1, block.clone(), vec![peer]);
+            let msg = mock_msg(PbftMessageType::Commit, 0, 1, vec![peer], vec![1]);
             node1
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(panic_with_err);
@@ -1779,7 +1733,7 @@ mod tests {
         assert_eq!(state1.phase, PbftPhase::Finishing(false));
 
         // Spoof the `commit_blocks()` call
-        assert!(node1.on_block_commit(mock_block_id(1), &mut state1).is_ok());
+        assert!(node1.on_block_commit(vec![1], &mut state1).is_ok());
         assert_eq!(state1.phase, PbftPhase::PrePreparing);
 
         // Make sure the block was actually committed
@@ -1793,7 +1747,7 @@ mod tests {
             .map(|ref block| BlockId::from(block.clone().clone()))
             .collect();
         assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[1], mock_block_id(1));
+        assert_eq!(blocks[1], vec![1]);
 
         remove_file(BLOCK_FILE).unwrap();
     }
