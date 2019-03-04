@@ -984,6 +984,16 @@ impl PbftNode {
             header
         );
 
+        // Verify the header's signer matches the PbftMessage's signer
+        if header.signer_id != pbft_message.get_info().get_signer_id() {
+            return Err(PbftError::InvalidMessage(format!(
+                "Received a vote where PbftMessage's signer ID ({:?}) and PeerMessage's signer ID \
+                 ({:?}) don't match",
+                pbft_message.get_info().get_signer_id(),
+                header.signer_id
+            )));
+        }
+
         // Verify the message type
         let msg_type = PbftMessageType::from(pbft_message.get_info().get_msg_type());
         if msg_type != expected_type {
@@ -1487,11 +1497,9 @@ impl PbftNode {
 mod tests {
     use super::*;
     use crate::config::mock_config;
-    use crate::hash::hash_sha512;
     use crate::protos::pbft_message::PbftMessageInfo;
     use openssl::sha::Sha256;
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
-    use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
     use serde_json;
     use std::collections::HashMap;
     use std::default::Default;
@@ -1643,77 +1651,6 @@ mod tests {
         }
     }
 
-    /// Creates a block with a valid consensus seal for the previous block
-    fn mock_block_with_seal(num: u64, node: &mut PbftNode, state: &mut PbftState) -> Block {
-        let head = mock_block(num - 1);
-        let mut block = mock_block(num);
-        let context = create_context("secp256k1").unwrap();
-
-        for i in 0..3 {
-            let mut info = PbftMessageInfo::new();
-            info.set_msg_type("Commit".into());
-            info.set_view(0);
-            info.set_seq_num(num - 1);
-            info.set_signer_id(vec![i]);
-
-            let mut msg = PbftMessage::new();
-            msg.set_info(info);
-            msg.set_block_id(head.block_id.clone());
-
-            let mut message =
-                ParsedMessage::from_pbft_message(msg).expect("Failed to parse PbftMessage");
-
-            let key = context.new_random_private_key().unwrap();
-            let pub_key = context.get_public_key(&*key).unwrap();
-            let mut header = ConsensusPeerMessageHeader::new();
-
-            header.set_signer_id(pub_key.as_slice().to_vec());
-            header.set_content_sha512(hash_sha512(&message.message_bytes));
-
-            let header_bytes = header.write_to_bytes().unwrap();
-            let header_signature =
-                hex::decode(context.sign(&header_bytes, &*key).unwrap()).unwrap();
-
-            message.from_self = vec![i] == state.id;
-            message.header_bytes = header_bytes;
-            message.header_signature = header_signature;
-
-            node.msg_log.add_message(message);
-        }
-
-        let seal = node.build_seal(state).unwrap();
-        block.payload = seal
-            .write_to_bytes()
-            .map_err(|err| PbftError::SerializationError("Error writing seal to bytes".into(), err))
-            .unwrap();
-
-        block
-    }
-
-    /// Create a signed ViewChange message
-    fn mock_view_change(view: u64, seq_num: u64, peer: PeerId, from_self: bool) -> ParsedMessage {
-        let context = create_context("secp256k1").unwrap();
-        let key = context.new_random_private_key().unwrap();
-        let pub_key = context.get_public_key(&*key).unwrap();
-
-        let mut vc_msg = PbftMessage::new();
-        let info = PbftMessageInfo::new_from(PbftMessageType::ViewChange, view, seq_num, peer);
-        vc_msg.set_info(info);
-
-        let mut message =
-            ParsedMessage::from_pbft_message(vc_msg).expect("Failed to parse PbftMessage");
-        let mut header = ConsensusPeerMessageHeader::new();
-        header.set_signer_id(pub_key.as_slice().to_vec());
-        header.set_content_sha512(hash_sha512(&message.message_bytes));
-        let header_bytes = header.write_to_bytes().unwrap();
-        let header_signature = hex::decode(context.sign(&header_bytes, &*key).unwrap()).unwrap();
-        message.from_self = from_self;
-        message.header_bytes = header_bytes;
-        message.header_signature = header_signature;
-
-        message
-    }
-
     /// Create a mock serialized PbftMessage
     fn mock_msg(
         msg_type: PbftMessageType,
@@ -1753,68 +1690,6 @@ mod tests {
             .on_block_new(mock_block(1), &mut state1)
             .unwrap_or_else(panic_with_err);
         assert_eq!(state1.phase, PbftPhase::PrePreparing);
-    }
-
-    #[test]
-    fn block_new_first_10_blocks() {
-        let mut node = mock_node(vec![0], mock_block(0));
-        let cfg = mock_config(4);
-        let mut state = PbftState::new(vec![0], 0, &cfg);
-
-        let block_0_id = mock_block_id(0);
-
-        // Assert starting state
-        let head = node.service.get_chain_head().unwrap();
-        assert_eq!(head.block_num, 0);
-        assert_eq!(head.block_id, block_0_id);
-        assert_eq!(head.previous_id, block_0_id);
-
-        assert_eq!(state.id, vec![0]);
-        assert_eq!(state.view, 0);
-        assert_eq!(state.phase, PbftPhase::PrePreparing);
-        assert_eq!(state.mode, PbftMode::Normal);
-        assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
-        assert_eq!(state.f, 1);
-        assert_eq!(state.forced_view_change_period, 30);
-        assert!(state.is_primary());
-
-        // Handle the first block and assert resulting state
-        node.on_block_new(mock_block(1), &mut state).unwrap();
-
-        let head = node.service.get_chain_head().unwrap();
-        assert_eq!(head.block_num, 0);
-        assert_eq!(head.block_id, block_0_id);
-        assert_eq!(head.previous_id, block_0_id);
-
-        assert_eq!(state.id, vec![0]);
-        assert_eq!(state.seq_num, 1);
-        assert_eq!(state.view, 0);
-        assert_eq!(state.phase, PbftPhase::PrePreparing);
-        assert_eq!(state.mode, PbftMode::Normal);
-        assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
-        assert_eq!(state.f, 1);
-        assert_eq!(state.forced_view_change_period, 30);
-        assert!(state.is_primary());
-
-        state.seq_num += 1;
-
-        // Handle the rest of the blocks
-        for i in 2..10 {
-            assert_eq!(state.seq_num, i);
-            let block = mock_block_with_seal(i, &mut node, &mut state);
-            node.on_block_new(block.clone(), &mut state).unwrap();
-
-            assert_eq!(state.id, vec![0]);
-            assert_eq!(state.view, 0);
-            assert_eq!(state.phase, PbftPhase::PrePreparing);
-            assert_eq!(state.mode, PbftMode::Normal);
-            assert_eq!(state.peer_ids, (0..4).map(|i| vec![i]).collect::<Vec<_>>());
-            assert_eq!(state.f, 1);
-            assert_eq!(state.forced_view_change_period, 30);
-            assert!(state.is_primary());
-
-            state.seq_num += 1;
-        }
     }
 
     /// Make sure that a valid `PrePrepare` is accepted
@@ -1921,59 +1796,6 @@ mod tests {
         assert_eq!(blocks[1], mock_block_id(1));
 
         remove_file(BLOCK_FILE).unwrap();
-    }
-
-    /// Test that view changes work as expected, and that nodes take the proper roles after a view
-    /// change
-    #[test]
-    fn view_change() {
-        let mut node1 = mock_node(vec![1], mock_block(0));
-        let cfg = mock_config(4);
-        let mut state1 = PbftState::new(vec![1], 0, &cfg);
-
-        assert!(!state1.is_primary());
-
-        // Receive 3 `ViewChange` messages
-        for peer in 0..3 {
-            // It takes f + 1 `ViewChange` messages to trigger a view change, if it wasn't started
-            // by `start_view_change()`
-            if peer < 2 {
-                assert_eq!(state1.mode, PbftMode::Normal);
-            } else {
-                assert_eq!(state1.mode, PbftMode::ViewChanging(1));
-            }
-
-            node1
-                .on_peer_message(mock_view_change(1, 0, vec![peer], peer == 1), &mut state1)
-                .unwrap_or_else(panic_with_err);
-        }
-
-        // Receive `NewView` message
-        let msgs: Vec<&ParsedMessage> = node1
-            .msg_log
-            .get_messages_of_type_view(PbftMessageType::ViewChange, 1)
-            .iter()
-            .cloned()
-            .filter(|msg| !msg.from_self)
-            .collect::<Vec<_>>();
-        let mut new_view = PbftNewView::new();
-        new_view.set_info(PbftMessageInfo::new_from(
-            PbftMessageType::NewView,
-            1,
-            0,
-            vec![1],
-        ));
-        new_view.set_view_changes(PbftNode::signed_votes_from_messages(msgs.as_slice()));
-
-        node1
-            .on_peer_message(
-                ParsedMessage::from_new_view_message(new_view).expect("Failed to parse NewView"),
-                &mut state1,
-            )
-            .unwrap_or_else(panic_with_err);
-
-        assert!(state1.is_primary());
-        assert_eq!(state1.view, 1);
     }
 
     /// Make sure that view changes start correctly
