@@ -221,39 +221,39 @@ impl PbftState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::mock_config;
+    use crate::test_helpers::*;
 
-    /// Check that state responds to having an inadequately sized network
+    /// This test will verify that calling `PbftState::new` will properly initialize a state struct
+    /// and fail if there are not enough peers.
     #[test]
-    fn no_fault_tolerance() {
-        let config = mock_config(1);
-        let caught = ::std::panic::catch_unwind(|| {
-            PbftState::new(vec![0], 0, &config);
-        })
-        .is_err();
-        assert!(caught);
-    }
+    fn test_state_initialization() {
+        // Verify normal initialization
+        let cfg = mock_config(4);
+        let state = PbftState::new(vec![0], 1, &cfg);
+        assert_eq!(vec![0], state.id);
+        assert_eq!(2, state.seq_num);
+        assert_eq!(0, state.view);
+        assert_eq!(PbftPhase::PrePreparing, state.phase);
+        assert_eq!(PbftMode::Normal, state.mode);
+        assert_eq!(cfg.peers, state.peer_ids);
+        assert_eq!(1, state.f);
+        assert_eq!(cfg.idle_timeout, state.idle_timeout.duration());
+        assert_eq!(cfg.commit_timeout, state.commit_timeout.duration());
+        assert_eq!(
+            cfg.view_change_duration,
+            state.view_change_timeout.duration()
+        );
+        assert_eq!(cfg.view_change_duration, state.view_change_duration);
+        assert_eq!(cfg.exponential_retry_base, state.exponential_retry_base);
+        assert_eq!(cfg.exponential_retry_max, state.exponential_retry_max);
+        assert_eq!(
+            cfg.forced_view_change_period,
+            state.forced_view_change_period
+        );
 
-    /// Check that the initial configuration of state is as we expect:
-    /// + Primary is node 0, secondaries are other nodes
-    /// + The node is not expecting any particular message type
-    /// + `peer_ids` got set properly
-    /// + The node's own PeerId got set properly
-    /// + The primary PeerId got se properly
-    #[test]
-    fn initial_config() {
-        let config = mock_config(4);
-        let state0 = PbftState::new(vec![0], 0, &config);
-        let state1 = PbftState::new(vec![], 0, &config);
-
-        assert!(state0.is_primary());
-        assert!(!state1.is_primary());
-
-        assert_eq!(state0.f, 1);
-        assert_eq!(state1.f, 1);
-
-        assert_eq!(state0.get_primary_id(), state0.peer_ids[0]);
-        assert_eq!(state1.get_primary_id(), state1.peer_ids[0]);
+        // Verify panic if f == 0
+        let cfg = mock_config(3);
+        assert!(std::panic::catch_unwind(|| PbftState::new(vec![0], 0, &cfg)).is_err());
     }
 
     /// Make sure that a normal PBFT cycle works properly

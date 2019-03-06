@@ -92,6 +92,11 @@ impl Timeout {
         self.state = TimeoutState::Inactive;
         self.start = Instant::now();
     }
+
+    #[cfg(test)]
+    pub fn duration(&self) -> Duration {
+        self.duration
+    }
 }
 
 /// With exponential backoff, repeatedly try the callback until the result is `Ok`

@@ -268,3 +268,155 @@ impl From<PbftMessageType> for String {
         format!("{:?}", msg_type)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The log stores `ParsedMessage`s, and `ParsedMessage`s need to be constructed from
+    /// `PbftMessage`s directly (when self-sending messages), `PbftSignedVote`s (during catch-up),
+    /// and from `PeerMessage`s that contain `PbftMessage`s (when receiving messages from peers).
+    /// These are parsed using the `ParsedMessage::from_pbft_message`,
+    /// `ParsedMessage::from_signed_vote`, and `ParsedMessage::from_peer_message` constructors
+    /// respectively.
+    #[test]
+    fn test_pbft_message_parsing() {
+        // Create a PbftMessage and serialize it
+        let info = PbftMessageInfo::new_from(PbftMessageType::Commit, 0, 1, vec![0]);
+        let mut msg = PbftMessage::new();
+        msg.set_info(info);
+        msg.set_block_id(vec![0]);
+
+        let msg_bytes = msg
+            .write_to_bytes()
+            .expect("Failed to serialize PbftMessage");
+
+        // Validate that the PbftMessage is parsed correctly
+        let parsed1 = ParsedMessage::from_pbft_message(msg.clone())
+            .expect("PbftMessage parsing not successful");
+        assert_eq!(msg.get_info().get_msg_type(), parsed1.info().get_msg_type());
+        assert_eq!(msg.get_info().get_view(), parsed1.info().get_view());
+        assert_eq!(msg.get_info().get_seq_num(), parsed1.info().get_seq_num());
+        assert_eq!(
+            msg.get_info().get_signer_id(),
+            parsed1.info().get_signer_id()
+        );
+        assert_eq!(msg.get_block_id(), parsed1.get_block_id().as_slice());
+        assert_eq!(msg_bytes, parsed1.message_bytes);
+        assert!(parsed1.from_self);
+
+        // Validate that a PbftSignedVote is parsed correctly
+        let mut vote = PbftSignedVote::new();
+        vote.set_header_bytes(b"abc".to_vec());
+        vote.set_header_signature(b"def".to_vec());
+        vote.set_message_bytes(msg_bytes.clone());
+
+        let parsed2 =
+            ParsedMessage::from_signed_vote(&vote).expect("PbftSignedVote parsing not successful");
+        assert_eq!(msg.get_info().get_msg_type(), parsed2.info().get_msg_type());
+        assert_eq!(msg.get_info().get_view(), parsed2.info().get_view());
+        assert_eq!(msg.get_info().get_seq_num(), parsed2.info().get_seq_num());
+        assert_eq!(
+            msg.get_info().get_signer_id(),
+            parsed2.info().get_signer_id()
+        );
+        assert_eq!(msg.get_block_id(), parsed2.get_block_id().as_slice());
+        assert_eq!(vote.get_header_bytes(), parsed2.header_bytes.as_slice());
+        assert_eq!(
+            vote.get_header_signature(),
+            parsed2.header_signature.as_slice()
+        );
+        assert_eq!(vote.get_message_bytes(), parsed2.message_bytes.as_slice());
+        assert!(!parsed2.from_self);
+
+        // Validate that a PeerMessage containing a PbftMessage is parsed correctly
+        let mut peer_msg = PeerMessage::default();
+        peer_msg.header.message_type = msg.get_info().get_msg_type().into();
+        peer_msg.header_bytes = b"abc".to_vec();
+        peer_msg.header_signature = b"def".to_vec();
+        peer_msg.content = msg_bytes;
+
+        let parsed3 = ParsedMessage::from_peer_message(peer_msg.clone())
+            .expect("PeerMessage parsing not successful");
+        assert_eq!(msg.get_info().get_msg_type(), parsed3.info().get_msg_type());
+        assert_eq!(msg.get_info().get_view(), parsed3.info().get_view());
+        assert_eq!(msg.get_info().get_seq_num(), parsed3.info().get_seq_num());
+        assert_eq!(
+            msg.get_info().get_signer_id(),
+            parsed3.info().get_signer_id()
+        );
+        assert_eq!(msg.get_block_id(), parsed3.get_block_id().as_slice());
+        assert_eq!(peer_msg.header_bytes, parsed3.header_bytes);
+        assert_eq!(peer_msg.header_signature, parsed3.header_signature);
+        assert_eq!(peer_msg.content, parsed3.message_bytes);
+        assert!(!parsed3.from_self);
+    }
+
+    /// `PbftNewView` messages are structurally different from `PbftMessage`s and`PbftSeal`s, but
+    /// `ParsedMessage`s must also be able to be constructed from `PbftNewView` messages directly
+    /// (for self-sent messages) and those contained in a `PeerMessage` (from other peers) for view
+    /// changing to work. This parsing is handled by the `ParsedMessage::from_new_view_message` and
+    /// `ParsedMessage::from_peer_message` methods respectively.
+    #[test]
+    fn test_new_view_parsing() {
+        // Create a PbftNewView and serialize it
+        let info = PbftMessageInfo::new_from(PbftMessageType::NewView, 1, 1, vec![0]);
+        let mut msg = PbftNewView::new();
+        msg.set_info(info);
+
+        let msg_bytes = msg
+            .write_to_bytes()
+            .expect("Failed to serialize PbftNewView");
+
+        // Validate that the PbftNewView is parsed correctly
+        let parsed1 = ParsedMessage::from_new_view_message(msg.clone())
+            .expect("PbftNewView parsing not successful");
+        assert_eq!(&msg, parsed1.get_new_view_message());
+        assert_eq!(msg_bytes, parsed1.message_bytes);
+        assert!(parsed1.from_self);
+
+        // Validate that a PeerMessage containing a PbftNewView is parsed correctly
+        let mut peer_msg = PeerMessage::default();
+        peer_msg.header.message_type = msg.get_info().get_msg_type().into();
+        peer_msg.header_bytes = b"abc".to_vec();
+        peer_msg.header_signature = b"def".to_vec();
+        peer_msg.content = msg_bytes;
+
+        let parsed2 = ParsedMessage::from_peer_message(peer_msg.clone())
+            .expect("PeerMessage parsing not successful");
+        assert_eq!(&msg, parsed2.get_new_view_message());
+        assert_eq!(peer_msg.header_bytes, parsed2.header_bytes);
+        assert_eq!(peer_msg.header_signature, parsed2.header_signature);
+        assert_eq!(peer_msg.content, parsed2.message_bytes);
+        assert!(!parsed2.from_self);
+    }
+
+    /// `PbftSeal` messages are structurally different from `PbftMessage`s and `PbftNewView`s, but
+    /// `ParsedMessage`s must also be able to be constructed from those contained in a
+    /// `PeerMessage` for the catch-up procedure to work.
+    #[test]
+    fn test_seal_parsing() {
+        // Create a PbftSeal and serialize it
+        let info = PbftMessageInfo::new_from(PbftMessageType::Seal, 1, 1, vec![0]);
+        let mut msg = PbftSeal::new();
+        msg.set_info(info);
+        msg.set_block_id(vec![1]);
+
+        let msg_bytes = msg.write_to_bytes().expect("Failed to serialize PbftSeal");
+
+        // Validate that a PeerMessage containing a PbftSeal is parsed correctly
+        let mut peer_msg = PeerMessage::default();
+        peer_msg.header.message_type = msg.get_info().get_msg_type().into();
+        peer_msg.header_bytes = b"abc".to_vec();
+        peer_msg.header_signature = b"def".to_vec();
+        peer_msg.content = msg_bytes;
+
+        let parsed1 = ParsedMessage::from_peer_message(peer_msg.clone())
+            .expect("PeerMessage parsing not successful");
+        assert_eq!(&msg, parsed1.get_seal());
+        assert_eq!(peer_msg.header_bytes, parsed1.header_bytes);
+        assert_eq!(peer_msg.header_signature, parsed1.header_signature);
+        assert_eq!(peer_msg.content, parsed1.message_bytes);
+        assert!(!parsed1.from_self);
+    }
+}
