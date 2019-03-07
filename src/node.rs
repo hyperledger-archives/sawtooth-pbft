@@ -436,9 +436,15 @@ impl PbftNode {
 
         info!("{}: Updated to view {}", state, state.view);
 
-        // Reset state to beginning of Normal mode and restart idle timeout
+        // Reset state to Normal mode, reset the phase (unless waiting for a BlockCommit) and
+        // restart the idle timeout
         state.mode = PbftMode::Normal;
-        state.phase = PbftPhase::PrePreparing;
+        if match state.phase {
+            PbftPhase::Finishing(_) => false,
+            _ => true,
+        } {
+            state.phase = PbftPhase::PrePreparing;
+        }
         state.idle_timeout.start();
 
         // Initialize a new block if this node is the new primary
