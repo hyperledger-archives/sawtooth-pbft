@@ -93,7 +93,7 @@ impl PbftNode {
         if !state.peer_ids.contains(&msg.info().signer_id) {
             return Err(PbftError::InvalidMessage(format!(
                 "Received message from node ({:?}) that is not a known peer",
-                msg.info().get_signer_id(),
+                hex::encode(msg.info().get_signer_id()),
             )));
         }
 
