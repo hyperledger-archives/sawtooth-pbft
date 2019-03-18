@@ -78,7 +78,7 @@ impl ParsedMessage {
     /// Attempts to parse the message contents as a `PbftMessage`, `PbftNewView`, or
     /// `PbftSeal` and wraps that in an internal enum.
     pub fn from_peer_message(message: PeerMessage) -> Result<Self, PbftError> {
-        let parsed_message = match message.header.message_type.as_str() {
+        let deserialized_message = match message.header.message_type.as_str() {
             "Seal" => PbftMessageWrapper::Seal(
                 protobuf::parse_from_bytes::<PbftSeal>(&message.content).map_err(|err| {
                     PbftError::SerializationError("Error parsing PbftSeal".into(), err)
@@ -96,13 +96,27 @@ impl ParsedMessage {
             ),
         };
 
-        Ok(Self {
+        let parsed_message = Self {
             from_self: false,
             header_bytes: message.header_bytes,
             header_signature: message.header_signature,
-            message: parsed_message,
+            message: deserialized_message,
             message_bytes: message.content.clone(),
-        })
+        };
+
+        // Ensure that the type of the ParsedMessage matches the type of the PeerMessage; if this
+        // is not enforced, a node could, for instance, send a Seal but trick the other node into
+        // parsing it as a NewView
+        if parsed_message.info().get_msg_type() != message.header.message_type.as_str() {
+            return Err(PbftError::InvalidMessage(format!(
+                "Message type mismatch: received a PeerMessage with type {} that contains a PBFT \
+                 message with type {}",
+                message.header.message_type.as_str(),
+                parsed_message.info().get_msg_type()
+            )));
+        }
+
+        Ok(parsed_message)
     }
 
     /// Constructs a `ParsedMessage` from the given `PbftMessage`.
@@ -350,6 +364,12 @@ mod tests {
         assert_eq!(peer_msg.header_signature, parsed3.header_signature);
         assert_eq!(peer_msg.content, parsed3.message_bytes);
         assert!(!parsed3.from_self);
+
+        // Validate that the PeerMessage's type is checked against the ParsedMessage's type
+        peer_msg.header.message_type = "Seal".into();
+        assert!(ParsedMessage::from_peer_message(peer_msg.clone()).is_err());
+        peer_msg.header.message_type = "NewView".into();
+        assert!(ParsedMessage::from_peer_message(peer_msg).is_err());
     }
 
     /// `PbftNewView` messages are structurally different from `PbftMessage`s and`PbftSeal`s, but
@@ -389,6 +409,12 @@ mod tests {
         assert_eq!(peer_msg.header_signature, parsed2.header_signature);
         assert_eq!(peer_msg.content, parsed2.message_bytes);
         assert!(!parsed2.from_self);
+
+        // Validate that the PeerMessage's type is checked against the ParsedMessage's type
+        peer_msg.header.message_type = "Seal".into();
+        assert!(ParsedMessage::from_peer_message(peer_msg.clone()).is_err());
+        peer_msg.header.message_type = "Commit".into();
+        assert!(ParsedMessage::from_peer_message(peer_msg).is_err());
     }
 
     /// `PbftSeal` messages are structurally different from `PbftMessage`s and `PbftNewView`s, but
@@ -418,5 +444,11 @@ mod tests {
         assert_eq!(peer_msg.header_signature, parsed1.header_signature);
         assert_eq!(peer_msg.content, parsed1.message_bytes);
         assert!(!parsed1.from_self);
+
+        // Validate that the PeerMessage's type is checked against the ParsedMessage's type
+        peer_msg.header.message_type = "NewView".into();
+        assert!(ParsedMessage::from_peer_message(peer_msg.clone()).is_err());
+        peer_msg.header.message_type = "Commit".into();
+        assert!(ParsedMessage::from_peer_message(peer_msg).is_err());
     }
 }
