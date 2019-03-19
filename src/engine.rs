@@ -189,6 +189,15 @@ fn handle_update(
     Ok(true)
 }
 
+#[cfg(test)]
+pub fn test_handle_update(
+    node: &mut PbftNode,
+    incoming_message: Result<Update, RecvTimeoutError>,
+    state: &mut PbftState,
+) -> Result<bool, PbftError> {
+    handle_update(node, incoming_message, state)
+}
+
 fn log_any_error(res: Result<(), PbftError>) {
     if let Err(e) = res {
         error!("{}", e)

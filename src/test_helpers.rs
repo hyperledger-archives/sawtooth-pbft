@@ -50,11 +50,14 @@ pub fn mock_msg(
     seq_num: u64,
     signer_id: PeerId,
     block_id: BlockId,
+    from_self: bool,
 ) -> ParsedMessage {
     let info = PbftMessageInfo::new_from(msg_type, view, seq_num, signer_id);
     let mut msg = PbftMessage::new();
     msg.set_info(info);
     msg.set_block_id(block_id);
 
-    ParsedMessage::from_pbft_message(msg).expect("Failed to parse PbftMessage")
+    let mut parsed = ParsedMessage::from_pbft_message(msg).expect("Failed to parse PbftMessage");
+    parsed.from_self = from_self;
+    parsed
 }

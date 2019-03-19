@@ -97,6 +97,11 @@ impl Timeout {
     pub fn duration(&self) -> Duration {
         self.duration
     }
+
+    #[cfg(test)]
+    pub fn is_active(&self) -> bool {
+        self.state == TimeoutState::Active
+    }
 }
 
 /// With exponential backoff, repeatedly try the callback until the result is `Ok`
