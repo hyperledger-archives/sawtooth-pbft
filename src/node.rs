@@ -1502,176 +1502,204 @@ impl PbftNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::mock_config;
     use crate::protos::pbft_message::PbftMessageInfo;
-    use openssl::sha::Sha256;
+    use crate::test_helpers::*;
     use sawtooth_sdk::consensus::engine::{Error, PeerId};
     use serde_json;
+    use std::cell::RefCell;
     use std::collections::HashMap;
     use std::default::Default;
-    use std::fs::{remove_file, File};
-    use std::io::prelude::*;
+    use std::rc::Rc;
 
-    const BLOCK_FILE: &str = "target/blocks.txt";
+    /// Turns a series of items into a `Vec<String>` for easily tracking and checking for function
+    /// calls to the MockService
+    macro_rules! stringify_func_call {
+        ( $( $x:expr ),* ) => {
+            {
+                let mut output = Vec::new();
+                $(
+                    output.push(format!("{:?}", $x));
+                )*
+                output
+            }
+        }
+    }
 
-    /// Mock service to roughly keep track of the blockchain
-    pub struct MockService {
-        pub chain: Vec<BlockId>,
+    /// Implementation of the consensus' `Service` trait that's used to mock out interactions with
+    /// the Sawtooth validator. The `MockService` will track calls to its methods and supports
+    /// configurable return values for some of its methods.
+    #[derive(Clone)]
+    struct MockService {
+        /// A list of function calls, where each function call is a list of the form (func_name,
+        /// arg1, arg2, ...)
+        calls: Rc<RefCell<Vec<Vec<String>>>>,
+        /// For each block ID, the settings value to return when `get_settings` is called
+        settings: Rc<RefCell<HashMap<BlockId, HashMap<String, String>>>>,
+        /// Determines the return value of the `summarize_block` method
+        summarize_block_return_val: Rc<RefCell<Result<Vec<u8>, Error>>>,
     }
 
     impl MockService {
-        /// Serialize the chain into JSON, and write to a file
-        fn write_chain(&self) {
-            let mut block_file = File::create(BLOCK_FILE).unwrap();
-            let block_bytes: Vec<Vec<u8>> = self
-                .chain
-                .iter()
-                .map(|block: &BlockId| -> Vec<u8> { Vec::<u8>::from(block.clone()) })
-                .collect();
+        /// Create a new `MockService` and set the peers setting based on the `PbftConfig`
+        fn new(cfg: &PbftConfig) -> Self {
+            let peers: Vec<_> = cfg.peers.iter().map(hex::encode).collect();
+            let service = MockService {
+                calls: Default::default(),
+                settings: Default::default(),
+                summarize_block_return_val: Rc::new(RefCell::new(Ok(Default::default()))),
+            };
+            // Set the default settings
+            let mut default_settings = HashMap::new();
+            default_settings.insert(
+                "sawtooth.consensus.pbft.peers".to_string(),
+                serde_json::to_string(&peers).unwrap(),
+            );
+            service
+                .settings
+                .borrow_mut()
+                .insert(vec![0], default_settings);
 
-            let ser_blocks = serde_json::to_string(&block_bytes).unwrap();
-            block_file.write_all(&ser_blocks.into_bytes()).unwrap();
+            service
+        }
+
+        /// Indicates if the specified method was called with the given arguments
+        fn was_called_with_args(&self, call: Vec<String>) -> bool {
+            self.calls.borrow().contains(&call)
         }
     }
 
     impl Service for MockService {
         fn send_to(
             &mut self,
-            _peer: &PeerId,
-            _message_type: &str,
-            _payload: Vec<u8>,
+            peer: &PeerId,
+            message_type: &str,
+            payload: Vec<u8>,
         ) -> Result<(), Error> {
+            self.calls.borrow_mut().push(stringify_func_call!(
+                "send_to",
+                peer,
+                message_type,
+                payload
+            ));
             Ok(())
         }
-        fn broadcast(&mut self, _message_type: &str, _payload: Vec<u8>) -> Result<(), Error> {
+        fn broadcast(&mut self, message_type: &str, payload: Vec<u8>) -> Result<(), Error> {
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("broadcast", message_type, payload));
             Ok(())
         }
-        fn initialize_block(&mut self, _previous_id: Option<BlockId>) -> Result<(), Error> {
+        fn initialize_block(&mut self, previous_id: Option<BlockId>) -> Result<(), Error> {
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("initialize_block", previous_id));
             Ok(())
         }
         fn summarize_block(&mut self) -> Result<Vec<u8>, Error> {
-            Ok(Default::default())
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("summarize_block"));
+            self.summarize_block_return_val
+                .replace(Ok(Default::default()))
         }
-        fn finalize_block(&mut self, _data: Vec<u8>) -> Result<BlockId, Error> {
+        fn finalize_block(&mut self, data: Vec<u8>) -> Result<BlockId, Error> {
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("finalize_block", data));
             Ok(Default::default())
         }
         fn cancel_block(&mut self) -> Result<(), Error> {
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("cancel_block"));
             Ok(())
         }
-        fn check_blocks(&mut self, _priority: Vec<BlockId>) -> Result<(), Error> {
+        fn check_blocks(&mut self, priority: Vec<BlockId>) -> Result<(), Error> {
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("check_blocks", priority));
             Ok(())
         }
         fn commit_block(&mut self, block_id: BlockId) -> Result<(), Error> {
-            self.chain.push(block_id);
-            self.write_chain();
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("commit_block", block_id));
             Ok(())
         }
-        fn ignore_block(&mut self, _block_id: BlockId) -> Result<(), Error> {
+        fn ignore_block(&mut self, block_id: BlockId) -> Result<(), Error> {
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("ignore_block", block_id));
             Ok(())
         }
-        fn fail_block(&mut self, _block_id: BlockId) -> Result<(), Error> {
+        fn fail_block(&mut self, block_id: BlockId) -> Result<(), Error> {
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("fail_block", block_id));
             Ok(())
         }
         fn get_blocks(
             &mut self,
             block_ids: Vec<BlockId>,
         ) -> Result<HashMap<BlockId, Block>, Error> {
-            let mut res = HashMap::new();
-            for id in &block_ids {
-                let index = self
-                    .chain
-                    .iter()
-                    .position(|val| val == id)
-                    .unwrap_or(self.chain.len());
-                res.insert(id.clone(), mock_block(index as u64));
-            }
-            Ok(res)
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("get_blocks", block_ids));
+            Ok(Default::default())
         }
         fn get_chain_head(&mut self) -> Result<Block, Error> {
-            let prev_num = self.chain.len().checked_sub(2).unwrap_or(0);
-            Ok(Block {
-                block_id: self.chain.last().unwrap().clone(),
-                previous_id: self.chain.get(prev_num).unwrap().clone(),
-                signer_id: PeerId::from(vec![]),
-                block_num: self.chain.len().checked_sub(1).unwrap_or(0) as u64,
-                payload: vec![],
-                summary: vec![],
-            })
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("get_chain_head"));
+            Ok(Default::default())
         }
         fn get_settings(
             &mut self,
-            _block_id: BlockId,
-            _settings: Vec<String>,
+            block_id: BlockId,
+            settings: Vec<String>,
         ) -> Result<HashMap<String, String>, Error> {
-            let mut settings: HashMap<String, String> = Default::default();
-            settings.insert(
-                "sawtooth.consensus.pbft.peers".to_string(),
-                "[\"00\", \"01\", \"02\", \"03\"]".to_string(),
-            );
-            Ok(settings)
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("get_settings", block_id, settings));
+            let settings = self.settings.borrow();
+            Ok(settings
+                .get(&block_id)
+                .unwrap_or_else(|| {
+                    // Fall back to defualt settings (in block 0)
+                    settings.get(&vec![0]).expect("Default settings not set")
+                })
+                .clone())
         }
         fn get_state(
             &mut self,
-            _block_id: BlockId,
-            _addresses: Vec<String>,
+            block_id: BlockId,
+            addresses: Vec<String>,
         ) -> Result<HashMap<String, Vec<u8>>, Error> {
+            self.calls
+                .borrow_mut()
+                .push(stringify_func_call!("get_state", block_id, addresses));
             Ok(Default::default())
         }
     }
 
-    /// Create a node, based on a given ID and chain head
-    fn mock_node(node_id: PeerId, chain_head: Block) -> PbftNode {
-        let service: Box<MockService> = Box::new(MockService {
-            // Create genesis block (but with actual ID)
-            chain: vec![mock_block_id(0)],
-        });
-        let cfg = mock_config(4);
-        PbftNode::new(&cfg, chain_head, service, node_id == vec![0])
-    }
-
-    /// Create a deterministic BlockId hash based on a block number
-    fn mock_block_id(num: u64) -> BlockId {
-        let mut sha = Sha256::new();
-        sha.update(format!("I'm a block with block num {}", num).as_bytes());
-        let mut bytes = Vec::new();
-        bytes.extend(sha.finish().iter());
-        BlockId::from(bytes)
-    }
-
-    /// Create a mock Block, including only the BlockId, the BlockId of the previous block, and the
-    /// block number
-    fn mock_block(num: u64) -> Block {
-        let previous_id = if num == 0 {
-            vec![]
-        } else {
-            mock_block_id(num - 1)
-        };
-
-        Block {
-            block_id: mock_block_id(num),
-            previous_id,
-            signer_id: PeerId::from(vec![]),
-            block_num: num,
-            payload: vec![],
-            summary: vec![],
-        }
-    }
-
-    /// Create a mock serialized PbftMessage
-    fn mock_msg(
-        msg_type: PbftMessageType,
-        view: u64,
-        seq_num: u64,
-        block: Block,
-        from: PeerId,
-    ) -> ParsedMessage {
-        let info = PbftMessageInfo::new_from(msg_type, view, seq_num, from);
-
-        let mut pbft_msg = PbftMessage::new();
-        pbft_msg.set_info(info);
-        pbft_msg.set_block_id(block.block_id);
-
-        ParsedMessage::from_pbft_message(pbft_msg).expect("Failed to parse PbftMessage")
+    /// Create a new PbftNode, PbftState, and MockService based on the given config, node ID, and
+    /// chain head
+    fn mock_node(
+        cfg: &PbftConfig,
+        node_id: PeerId,
+        chain_head: Block,
+    ) -> (PbftNode, PbftState, MockService) {
+        let service = MockService::new(cfg);
+        (
+            PbftNode::new(
+                cfg,
+                chain_head.clone(),
+                Box::new(service.clone()),
+                node_id == cfg.peers[0],
+            ),
+            PbftState::new(node_id.clone(), chain_head.block_num, cfg),
+            service,
+        )
     }
 
     fn panic_with_err(e: PbftError) {
@@ -1682,16 +1710,13 @@ mod tests {
     #[test]
     fn block_new_initial() {
         // NOTE: Special case for primary node
-        let mut node0 = mock_node(vec![0], mock_block(0));
-        let cfg = mock_config(4);
-        let mut state0 = PbftState::new(vec![0], 0, &cfg);
+        let (mut node0, mut state0, _) = mock_node(&mock_config(4), vec![0], mock_block(0));
         node0.on_block_new(mock_block(1), &mut state0).unwrap();
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.seq_num, 1);
 
         // Try the next block
-        let mut node1 = mock_node(vec![1], mock_block(0));
-        let mut state1 = PbftState::new(vec![], 0, &cfg);
+        let (mut node1, mut state1, _) = mock_node(&mock_config(4), vec![1], mock_block(0));
         node1
             .on_block_new(mock_block(1), &mut state1)
             .unwrap_or_else(panic_with_err);
@@ -1701,15 +1726,13 @@ mod tests {
     /// Make sure that a valid `PrePrepare` is accepted
     #[test]
     fn test_pre_prepare() {
-        let cfg = mock_config(4);
-        let mut node0 = mock_node(vec![0], mock_block(0));
-        let mut state0 = PbftState::new(vec![0], 0, &cfg);
+        let (mut node0, mut state0, _) = mock_node(&mock_config(4), vec![0], mock_block(0));
 
         // Add block to the log
         node0.msg_log.add_block(mock_block(1));
 
         // Add PrePrepare to log
-        let valid_msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, mock_block(1), vec![0]);
+        let valid_msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, vec![0], vec![1]);
         node0
             .handle_pre_prepare(valid_msg.clone(), &mut state0)
             .unwrap_or_else(panic_with_err);
@@ -1722,7 +1745,7 @@ mod tests {
                     PbftMessageType::PrePrepare,
                     valid_msg.info().get_seq_num(),
                     valid_msg.info().get_view(),
-                    &mock_block_id(1),
+                    &vec![1],
                 )
                 .len(),
             1
@@ -1733,12 +1756,10 @@ mod tests {
     /// Make sure that receiving a `BlockCommit` update works as expected
     #[test]
     fn block_commit() {
-        let mut node = mock_node(vec![0], mock_block(0));
-        let cfg = mock_config(4);
-        let mut state0 = PbftState::new(vec![0], 0, &cfg);
+        let (mut node, mut state0, _) = mock_node(&mock_config(4), vec![0], mock_block(0));
         state0.phase = PbftPhase::Finishing(false);
         assert_eq!(state0.seq_num, 1);
-        assert!(node.on_block_commit(mock_block_id(1), &mut state0).is_ok());
+        assert!(node.on_block_commit(vec![1], &mut state0).is_ok());
         assert_eq!(state0.phase, PbftPhase::PrePreparing);
         assert_eq!(state0.seq_num, 2);
     }
@@ -1746,18 +1767,15 @@ mod tests {
     /// Test the multicast protocol (`PrePrepare` => `Prepare` => `Commit`)
     #[test]
     fn multicast_protocol() {
-        let cfg = mock_config(4);
-
         // Make sure BlockNew is in the log
-        let mut node1 = mock_node(vec![1], mock_block(0));
-        let mut state1 = PbftState::new(vec![], 0, &cfg);
+        let (mut node1, mut state1, service1) = mock_node(&mock_config(4), vec![1], mock_block(0));
         let block = mock_block(1);
         node1
             .on_block_new(block.clone(), &mut state1)
             .unwrap_or_else(panic_with_err);
 
         // Receive a PrePrepare
-        let msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, block.clone(), vec![0]);
+        let msg = mock_msg(PbftMessageType::PrePrepare, 0, 1, vec![0], vec![1]);
         node1
             .on_peer_message(msg, &mut state1)
             .unwrap_or_else(panic_with_err);
@@ -1768,7 +1786,7 @@ mod tests {
         // Receive 3 `Prepare` messages (none from the primary)
         for peer in 1..4 {
             assert_eq!(state1.phase, PbftPhase::Preparing);
-            let msg = mock_msg(PbftMessageType::Prepare, 0, 1, block.clone(), vec![peer]);
+            let msg = mock_msg(PbftMessageType::Prepare, 0, 1, vec![peer], vec![1]);
             node1
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(panic_with_err);
@@ -1777,7 +1795,7 @@ mod tests {
         // Receive 3 `Commit` messages
         for peer in 0..3 {
             assert_eq!(state1.phase, PbftPhase::Committing);
-            let msg = mock_msg(PbftMessageType::Commit, 0, 1, block.clone(), vec![peer]);
+            let msg = mock_msg(PbftMessageType::Commit, 0, 1, vec![peer], vec![1]);
             node1
                 .on_peer_message(msg, &mut state1)
                 .unwrap_or_else(panic_with_err);
@@ -1785,31 +1803,17 @@ mod tests {
         assert_eq!(state1.phase, PbftPhase::Finishing(false));
 
         // Spoof the `commit_blocks()` call
-        assert!(node1.on_block_commit(mock_block_id(1), &mut state1).is_ok());
+        assert!(node1.on_block_commit(vec![1], &mut state1).is_ok());
         assert_eq!(state1.phase, PbftPhase::PrePreparing);
 
         // Make sure the block was actually committed
-        let mut f = File::open(BLOCK_FILE).unwrap();
-        let mut buffer = String::new();
-        f.read_to_string(&mut buffer).unwrap();
-        let deser: Vec<Vec<u8>> = serde_json::from_str(&buffer).unwrap();
-        let blocks: Vec<BlockId> = deser
-            .iter()
-            .filter(|&block| !block.is_empty())
-            .map(|ref block| BlockId::from(block.clone().clone()))
-            .collect();
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[1], mock_block_id(1));
-
-        remove_file(BLOCK_FILE).unwrap();
+        assert!(service1.was_called_with_args(stringify_func_call!("commit_block", vec![1])));
     }
 
     /// Make sure that view changes start correctly
     #[test]
     fn start_view_change() {
-        let mut node1 = mock_node(vec![1], mock_block(0));
-        let cfg = mock_config(4);
-        let mut state1 = PbftState::new(vec![], 0, &cfg);
+        let (mut node1, mut state1, _) = mock_node(&mock_config(4), vec![1], mock_block(0));
         assert_eq!(state1.mode, PbftMode::Normal);
 
         let new_view = state1.view + 1;
@@ -1823,9 +1827,7 @@ mod tests {
     /// Test that try_publish adds in the consensus seal
     #[test]
     fn try_publish() {
-        let mut node0 = mock_node(vec![0], mock_block(0));
-        let cfg = mock_config(4);
-        let mut state0 = PbftState::new(vec![0], 0, &cfg);
+        let (mut node0, mut state0, _) = mock_node(&mock_config(4), vec![0], mock_block(0));
 
         for i in 0..3 {
             let mut info = PbftMessageInfo::new();
