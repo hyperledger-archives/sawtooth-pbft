@@ -132,11 +132,11 @@ impl Engine for PbftEngine {
     }
 
     fn version(&self) -> String {
-        String::from(env!("CARGO_PKG_VERSION"))
+        "0.1".into()
     }
 
     fn name(&self) -> String {
-        String::from(env!("CARGO_PKG_NAME"))
+        "pbft".into()
     }
 }
 
