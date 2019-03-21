@@ -77,7 +77,7 @@ impl ParsedMessage {
     ///
     /// Attempts to parse the message contents as a `PbftMessage`, `PbftNewView`, or
     /// `PbftSeal` and wraps that in an internal enum.
-    pub fn from_peer_message(message: PeerMessage) -> Result<Self, PbftError> {
+    pub fn from_peer_message(message: PeerMessage, own_id: &[u8]) -> Result<Self, PbftError> {
         let deserialized_message = match message.header.message_type.as_str() {
             "Seal" => PbftMessageWrapper::Seal(
                 protobuf::parse_from_bytes::<PbftSeal>(&message.content).map_err(|err| {
@@ -96,7 +96,7 @@ impl ParsedMessage {
             ),
         };
 
-        let parsed_message = Self {
+        let mut parsed_message = Self {
             from_self: false,
             header_bytes: message.header_bytes,
             header_signature: message.header_signature,
@@ -115,6 +115,9 @@ impl ParsedMessage {
                 parsed_message.info().get_msg_type()
             )));
         }
+
+        // Make sure from_self is properly set
+        parsed_message.from_self = parsed_message.info().get_signer_id() == own_id;
 
         Ok(parsed_message)
     }
@@ -350,7 +353,7 @@ mod tests {
         peer_msg.header_signature = b"def".to_vec();
         peer_msg.content = msg_bytes;
 
-        let parsed3 = ParsedMessage::from_peer_message(peer_msg.clone())
+        let parsed3 = ParsedMessage::from_peer_message(peer_msg.clone(), &vec![1])
             .expect("PeerMessage parsing not successful");
         assert_eq!(msg.get_info().get_msg_type(), parsed3.info().get_msg_type());
         assert_eq!(msg.get_info().get_view(), parsed3.info().get_view());
@@ -365,11 +368,16 @@ mod tests {
         assert_eq!(peer_msg.content, parsed3.message_bytes);
         assert!(!parsed3.from_self);
 
+        // Validate that the from_self field is set correctly
+        let parsed4 = ParsedMessage::from_peer_message(peer_msg.clone(), &vec![0])
+            .expect("PeerMessage parsing not successful");
+        assert!(parsed4.from_self);
+
         // Validate that the PeerMessage's type is checked against the ParsedMessage's type
         peer_msg.header.message_type = "Seal".into();
-        assert!(ParsedMessage::from_peer_message(peer_msg.clone()).is_err());
+        assert!(ParsedMessage::from_peer_message(peer_msg.clone(), &vec![1]).is_err());
         peer_msg.header.message_type = "NewView".into();
-        assert!(ParsedMessage::from_peer_message(peer_msg).is_err());
+        assert!(ParsedMessage::from_peer_message(peer_msg, &vec![1]).is_err());
     }
 
     /// `PbftNewView` messages are structurally different from `PbftMessage`s and`PbftSeal`s, but
@@ -402,7 +410,7 @@ mod tests {
         peer_msg.header_signature = b"def".to_vec();
         peer_msg.content = msg_bytes;
 
-        let parsed2 = ParsedMessage::from_peer_message(peer_msg.clone())
+        let parsed2 = ParsedMessage::from_peer_message(peer_msg.clone(), &vec![1])
             .expect("PeerMessage parsing not successful");
         assert_eq!(&msg, parsed2.get_new_view_message());
         assert_eq!(peer_msg.header_bytes, parsed2.header_bytes);
@@ -410,11 +418,16 @@ mod tests {
         assert_eq!(peer_msg.content, parsed2.message_bytes);
         assert!(!parsed2.from_self);
 
+        // Validate that the from_self field is set correctly
+        let parsed3 = ParsedMessage::from_peer_message(peer_msg.clone(), &vec![0])
+            .expect("PeerMessage parsing not successful");
+        assert!(parsed3.from_self);
+
         // Validate that the PeerMessage's type is checked against the ParsedMessage's type
         peer_msg.header.message_type = "Seal".into();
-        assert!(ParsedMessage::from_peer_message(peer_msg.clone()).is_err());
+        assert!(ParsedMessage::from_peer_message(peer_msg.clone(), &vec![1]).is_err());
         peer_msg.header.message_type = "Commit".into();
-        assert!(ParsedMessage::from_peer_message(peer_msg).is_err());
+        assert!(ParsedMessage::from_peer_message(peer_msg, &vec![1]).is_err());
     }
 
     /// `PbftSeal` messages are structurally different from `PbftMessage`s and `PbftNewView`s, but
@@ -437,7 +450,7 @@ mod tests {
         peer_msg.header_signature = b"def".to_vec();
         peer_msg.content = msg_bytes;
 
-        let parsed1 = ParsedMessage::from_peer_message(peer_msg.clone())
+        let parsed1 = ParsedMessage::from_peer_message(peer_msg.clone(), &vec![1])
             .expect("PeerMessage parsing not successful");
         assert_eq!(&msg, parsed1.get_seal());
         assert_eq!(peer_msg.header_bytes, parsed1.header_bytes);
@@ -445,10 +458,15 @@ mod tests {
         assert_eq!(peer_msg.content, parsed1.message_bytes);
         assert!(!parsed1.from_self);
 
+        // Validate that the from_self field is set correctly
+        let parsed2 = ParsedMessage::from_peer_message(peer_msg.clone(), &vec![0])
+            .expect("PeerMessage parsing not successful");
+        assert!(parsed2.from_self);
+
         // Validate that the PeerMessage's type is checked against the ParsedMessage's type
         peer_msg.header.message_type = "NewView".into();
-        assert!(ParsedMessage::from_peer_message(peer_msg.clone()).is_err());
+        assert!(ParsedMessage::from_peer_message(peer_msg.clone(), &vec![1]).is_err());
         peer_msg.header.message_type = "Commit".into();
-        assert!(ParsedMessage::from_peer_message(peer_msg).is_err());
+        assert!(ParsedMessage::from_peer_message(peer_msg, &vec![1]).is_err());
     }
 }
