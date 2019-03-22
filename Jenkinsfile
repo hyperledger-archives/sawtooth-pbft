@@ -160,5 +160,11 @@ pipeline {
         success {
             archiveArtifacts 'build/*.deb, docs/build/html/**, docs/build/latex/*.pdf'
         }
+        aborted {
+            error "Aborted, exiting now"
+        }
+        failure {
+            error "Failed, exiting now"
+        }
     }
 }
