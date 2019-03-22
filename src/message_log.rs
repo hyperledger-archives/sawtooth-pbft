@@ -195,6 +195,11 @@ impl PbftLog {
                 .retain(|block| block.block_num >= current_seq_num - 1);
         }
     }
+
+    #[cfg(test)]
+    pub fn set_max_log_size(&mut self, size: u64) {
+        self.max_log_size = size;
+    }
 }
 
 #[cfg(test)]
@@ -276,7 +281,7 @@ mod tests {
         let mut log = PbftLog::new(&cfg);
 
         // Verify adding single message works
-        let msg1 = mock_msg(PbftMessageType::PrePrepare, 0, 1, vec![0], vec![1]);
+        let msg1 = mock_msg(PbftMessageType::PrePrepare, 0, 1, vec![0], vec![1], false);
         log.add_message(msg1.clone());
         assert_eq!(1, log.messages.len());
         assert!(log.messages.contains(&msg1));
@@ -286,11 +291,11 @@ mod tests {
         assert_eq!(1, log.messages.len());
 
         // Verify get_messages_of_type_seq() works
-        let msg2 = mock_msg(PbftMessageType::Commit, 0, 1, vec![0], vec![1]);
+        let msg2 = mock_msg(PbftMessageType::Commit, 0, 1, vec![0], vec![1], false);
         log.add_message(msg2.clone());
-        let msg3 = mock_msg(PbftMessageType::Commit, 0, 2, vec![0], vec![2]);
+        let msg3 = mock_msg(PbftMessageType::Commit, 0, 2, vec![0], vec![2], false);
         log.add_message(msg3.clone());
-        let msg4 = mock_msg(PbftMessageType::Commit, 1, 2, vec![0], vec![2]);
+        let msg4 = mock_msg(PbftMessageType::Commit, 1, 2, vec![0], vec![2], false);
         log.add_message(msg4.clone());
 
         let res1 = log.get_messages_of_type_seq(PbftMessageType::Commit, 1);
@@ -303,11 +308,11 @@ mod tests {
         assert!(res2.contains(&&msg4));
 
         // Verify get_messages_of_type_view() works
-        let msg5 = mock_msg(PbftMessageType::ViewChange, 0, 1, vec![0], vec![1]);
+        let msg5 = mock_msg(PbftMessageType::ViewChange, 0, 1, vec![0], vec![1], false);
         log.add_message(msg5.clone());
-        let msg6 = mock_msg(PbftMessageType::ViewChange, 1, 1, vec![0], vec![1]);
+        let msg6 = mock_msg(PbftMessageType::ViewChange, 1, 1, vec![0], vec![1], false);
         log.add_message(msg6.clone());
-        let msg7 = mock_msg(PbftMessageType::ViewChange, 1, 2, vec![0], vec![2]);
+        let msg7 = mock_msg(PbftMessageType::ViewChange, 1, 2, vec![0], vec![2], false);
         log.add_message(msg7.clone());
 
         let res3 = log.get_messages_of_type_view(PbftMessageType::ViewChange, 0);
@@ -320,7 +325,7 @@ mod tests {
         assert!(res4.contains(&&msg7));
 
         // Verify get_messages_of_type_seq_view() works
-        let msg8 = mock_msg(PbftMessageType::Commit, 0, 1, vec![1], vec![1]);
+        let msg8 = mock_msg(PbftMessageType::Commit, 0, 1, vec![1], vec![1], false);
         log.add_message(msg8.clone());
 
         let res5 = log.get_messages_of_type_seq_view(PbftMessageType::Commit, 1, 0);
@@ -341,7 +346,7 @@ mod tests {
         assert!(res8.contains(&&msg1));
 
         // Verify get_messages_of_type_seq_view_block() works
-        let msg9 = mock_msg(PbftMessageType::Commit, 0, 1, vec![0], vec![2]);
+        let msg9 = mock_msg(PbftMessageType::Commit, 0, 1, vec![0], vec![2], false);
         log.add_message(msg9.clone());
 
         let res9 = log.get_messages_of_type_seq_view_block(PbftMessageType::Commit, 1, 0, &vec![1]);
