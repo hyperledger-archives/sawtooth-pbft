@@ -156,7 +156,7 @@ fn handle_update(
             // ensured that the PbftMessage was in fact created and signed by the node that it
             // claims to be from by comparing the header's signer and the PbftMessage's signer
             let verified_signer_id = message.header.signer_id.clone();
-            let parsed_message = ParsedMessage::from_peer_message(message)?;
+            let parsed_message = ParsedMessage::from_peer_message(message, state.id.as_slice())?;
             let pbft_signer_id = parsed_message.info().get_signer_id().to_vec();
 
             if pbft_signer_id != verified_signer_id {
