@@ -15,7 +15,7 @@
 
 [package]
 name = "sawtooth-pbft-engine"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Bitwise IO, Inc"]
 description = "PBFT consensus algorithm for Hyperledger Sawtooth"
 license = "Apache-2.0"
