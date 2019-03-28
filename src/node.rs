@@ -23,7 +23,7 @@ use std::convert::From;
 use hex;
 use itertools::Itertools;
 use protobuf::{Message, RepeatedField};
-use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId};
+use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId, PeerInfo};
 use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
@@ -55,6 +55,7 @@ impl PbftNode {
     pub fn new(
         config: &PbftConfig,
         chain_head: Block,
+        connected_peers: Vec<PeerInfo>,
         service: Box<Service>,
         state: &mut PbftState,
     ) -> Self {
@@ -67,11 +68,20 @@ impl PbftNode {
         n.msg_log.add_block(chain_head.clone());
         state.chain_head = chain_head.block_id.clone();
 
-        // If starting up with a block that has a consensus seal, update the view
+        // If starting up from a non-genesis block, the node may need to perform some special
+        // actions
         if chain_head.block_num > 1 {
+            // If starting up with a block that has a consensus seal, update the view to match
             if let Ok(seal) = protobuf::parse_from_bytes::<PbftSeal>(&chain_head.payload) {
                 state.view = seal.get_info().get_view();
                 info!("Updated view to {} on startup", state.view);
+            }
+            // If connected to any peers already, send bootstrap commit messages to them
+            for peer in connected_peers {
+                n.broadcast_bootstrap_commit(peer.peer_id, state)
+                    .unwrap_or_else(|err| {
+                        error!("Failed to broadcast bootstrap commit due to error: {}", err)
+                    });
             }
         }
 
@@ -903,6 +913,88 @@ impl PbftNode {
         }
 
         Ok(())
+    }
+
+    /// Handle a `PeerConnected` update from the Validator
+    ///
+    /// A peer has just connected to this node. Send a bootstrap commit message if the peer is part
+    /// of the network and the node isn't at the genesis block.
+    pub fn on_peer_connected(
+        &mut self,
+        peer_id: PeerId,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        // Ignore if the peer is not a member of the PBFT network or the chain head is block 0
+        if !state.peer_ids.contains(&peer_id) || state.seq_num == 1 {
+            return Ok(());
+        }
+
+        self.broadcast_bootstrap_commit(peer_id, state)
+    }
+
+    /// When the whole network is starting "fresh" from a non-genesis block, none of the nodes will
+    /// have the `Commit` messages necessary to build the consensus seal for the last committed
+    /// block (the chain head). To bootstrap the network in this scenario, all nodes will send a
+    /// `Commit` message for their chain head whenever one of the PBFT members connects; when
+    /// > 2f + 1 nodes have connected and received these `Commit` messages, the nodes will be able
+    /// to build a seal using the messages.
+    fn broadcast_bootstrap_commit(
+        &mut self,
+        peer_id: PeerId,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        // The network must agree on a single view number for the Commit messages, so the view
+        // of the chain head's predecessor is used. For block 1 this is view 0; otherwise, it's the
+        // view of the block's consensus seal
+        let view = if state.seq_num == 2 {
+            0
+        } else {
+            self.msg_log
+                .get_block_with_id(&state.chain_head)
+                .ok_or_else(|| {
+                    PbftError::InternalError(format!(
+                        "Node does not have chain head ({:?}) in its log",
+                        state.chain_head
+                    ))
+                })
+                .and_then(|block| {
+                    protobuf::parse_from_bytes::<PbftSeal>(&block.payload).map_err(|err| {
+                        PbftError::SerializationError(
+                            "Error parsing seal from chain head".into(),
+                            err,
+                        )
+                    })
+                })?
+                .get_info()
+                .get_view()
+        };
+
+        // Construct the commit message for the chain head and send it to the connected peer
+        let mut commit = PbftMessage::new();
+        commit.set_info(PbftMessageInfo::new_from(
+            PbftMessageType::Commit,
+            view,
+            state.seq_num - 1,
+            state.id.clone(),
+        ));
+        commit.set_block_id(state.chain_head.clone());
+
+        let bytes = commit.write_to_bytes().map_err(|err| {
+            PbftError::SerializationError("Error writing commit to bytes".into(), err)
+        })?;
+
+        self.service
+            .send_to(
+                &peer_id,
+                String::from(PbftMessageType::Commit).as_str(),
+                bytes,
+            )
+            .map_err(|err| {
+                PbftError::ServiceError(
+                    format!("Failed to send Commit to {:?}", hex::encode(peer_id)),
+                    err,
+                )
+            })
     }
 
     // ---------- Methods for building & verifying proofs and signed messages from other nodes ----------
@@ -1751,6 +1843,7 @@ mod tests {
             PbftNode::new(
                 cfg,
                 chain_head.clone(),
+                vec![],
                 Box::new(service.clone()),
                 &mut state,
             ),
@@ -4689,5 +4782,94 @@ mod tests {
         };
         assert!(node.on_peer_message(extra_seal_msg1, &mut state).is_ok());
         assert!(service.was_called_with_args_once(stringify_func_call!("commit_block", vec![1])));
+    }
+
+    /// When the whole network is starting "fresh" from a non-genesis block, none of the nodes will
+    /// have the `Commit` messages necessary to build the consensus seal for the last committed
+    /// block (the chain head). To bootstrap the network in this scenario, all nodes will send a
+    /// `Commit` message for their chain head whenever one of the PBFT members connects; when
+    /// > 2f + 1 nodes have connected and received these `Commit` messages, the nodes will be able
+    /// to build a seal using the messages.
+    #[test]
+    #[allow(unused_must_use)]
+    fn test_broadcast_bootstrap_commit() {
+        // Initialize a node
+        let (mut node, mut state, service) = mock_node(&mock_config(4), vec![0], mock_block(0));
+        assert_eq!(1, state.seq_num);
+
+        // Verify commit isn't broadcast when chain head is block 0 (no seal needed for block)
+        node.on_peer_connected(vec![1], &mut state);
+        assert!(!service.was_called("send_to"));
+
+        // Simulate committing block 1
+        node.msg_log.add_block(mock_block(1));
+        assert!(node.on_block_commit(vec![1], &mut state).is_ok());
+        assert_eq!(2, state.seq_num);
+        assert_eq!(vec![1], state.chain_head);
+
+        // Verify peer connections from non-members are ignored
+        node.on_peer_connected(vec![4], &mut state);
+        assert!(!service.was_called("send_to"));
+
+        // Verify that a Commit with view 0 is sent when chain head is block 1
+        assert!(node.on_peer_connected(vec![1], &mut state).is_ok());
+        assert!(service.was_called_with_args(stringify_func_call!(
+            "send_to",
+            vec![1],
+            "Commit",
+            mock_msg(PbftMessageType::Commit, 0, 1, vec![0], vec![1], false).message_bytes
+        )));
+
+        // Simulate committing block 2 (with seal for block 1)
+        let key_pairs = mock_signer_network(3);
+        let mut block2 = mock_block(2);
+        block2.payload = mock_seal(
+            1,
+            1,
+            vec![1],
+            &key_pairs[0],
+            (1..3)
+                .map(|i| mock_vote(PbftMessageType::Commit, 1, 1, vec![1], &key_pairs[i]))
+                .collect::<Vec<_>>(),
+        )
+        .write_to_bytes()
+        .expect("Failed to write seal to bytes");
+        node.msg_log.add_block(block2);
+        assert!(node.on_block_commit(vec![2], &mut state).is_ok());
+        assert_eq!(3, state.seq_num);
+        assert_eq!(vec![2], state.chain_head);
+
+        // Verify that a Commit with view 1 (same as consensus seal in block 2) is sent
+        assert!(node.on_peer_connected(vec![2], &mut state).is_ok());
+        assert!(service.was_called_with_args(stringify_func_call!(
+            "send_to",
+            vec![2],
+            "Commit",
+            mock_msg(PbftMessageType::Commit, 1, 2, vec![0], vec![2], false).message_bytes
+        )));
+
+        // Verify Commit messages are sent to all peers that are already connected on node startup
+        let peers = vec![PeerInfo { peer_id: vec![2] }, PeerInfo { peer_id: vec![3] }];
+        let mut state2 = PbftState::new(vec![1], 2, &mock_config(4));
+        let service2 = MockService::new(&mock_config(4));
+        let _node2 = PbftNode::new(
+            &mock_config(4),
+            mock_block(2),
+            peers,
+            Box::new(service2.clone()),
+            &mut state2,
+        );
+        assert!(service2.was_called_with_args(stringify_func_call!(
+            "send_to",
+            vec![2],
+            "Commit",
+            mock_msg(PbftMessageType::Commit, 0, 2, vec![1], vec![2], false).message_bytes
+        )));
+        assert!(service2.was_called_with_args(stringify_func_call!(
+            "send_to",
+            vec![3],
+            "Commit",
+            mock_msg(PbftMessageType::Commit, 0, 2, vec![1], vec![2], false).message_bytes
+        )));
     }
 }

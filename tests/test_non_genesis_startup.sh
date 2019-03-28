@@ -1,0 +1,144 @@
+#!/bin/bash
+#
+# Copyright 2019 Intel Corporation
+# Copyright 2019 Cargill Incorporated
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This script tests that a network can start "fresh" from a non-genesis block.
+# This involves starting a PBFT network with 4 nodes, applying a workload,
+# waiting all 4 nodes reach block 10, stopping the nodes, restarting the nodes,
+# and verifying all nodes reach block 20.
+
+if [ -z "$ISOLATION_ID" ]; then export ISOLATION_ID=latest; fi
+
+set -eux
+
+# Clean up docker on exit, even if it failed
+function cleanup {
+    echo "Done testing"
+    echo "Dumping logs"
+    echo "-- Workload --"
+    docker-compose -p ${ISOLATION_ID} -f adhoc/workload.yaml logs
+    echo "-- Alpha --"
+    docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml logs
+    echo "-- Beta --"
+    docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml logs
+    echo "-- Gamma --"
+    docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml logs
+    echo "-- Delta --"
+    docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml logs
+    echo "-- Admin --"
+    docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml logs
+    echo "Shutting down all containers"
+    docker-compose -p ${ISOLATION_ID} -f adhoc/workload.yaml down --remove-orphans --volumes
+    docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml down --remove-orphans --volumes
+    docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml down --remove-orphans --volumes
+    docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml down --remove-orphans --volumes
+    docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml down --remove-orphans --volumes
+    docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml down --remove-orphans --volumes
+}
+
+trap cleanup EXIT
+
+echo "Ensuring sawtooth services are built"
+docker-compose -p ${ISOLATION_ID} -f tests/sawtooth-services.yaml build
+
+echo "Building PBFT engine"
+# Try to create these if they don't exist
+docker network create pbft_validators_${ISOLATION_ID} || true
+docker network create pbft_rest_apis_${ISOLATION_ID} || true
+docker volume create --name=pbft_shared_data_${ISOLATION_ID} || true
+if [ ! -f ./target/debug/pbft-engine ]; then
+  docker-compose -f adhoc/node.yaml run --rm pbft cargo build
+fi
+
+echo "Starting initial network"
+docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml up -d
+docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml up -d
+docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml up -d
+docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml up -d
+GENESIS=1 docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml up -d
+
+ADMIN=${ISOLATION_ID}_admin_1
+
+echo "Gathering list of initial keys and REST APIs"
+INIT_KEYS=($(docker exec ${ADMIN} bash -c '\
+  cd /shared_data/validators && paste $(ls -1) -d , | sed s/,/\ /g'))
+echo "Initial keys:" ${INIT_KEYS[*]}
+INIT_APIS=($(docker exec ${ADMIN} bash -c 'cd /shared_data/rest_apis && ls -d *'))
+echo "Initial APIs:" ${INIT_APIS[*]}
+
+echo "Waiting until network has started"
+docker exec -e API=${INIT_APIS[0]} ${ADMIN} bash -c 'while true; do \
+  BLOCK_LIST=$(sawtooth block list --url "http://$API:8008" 2>&1); \
+  if [[ $BLOCK_LIST == *"BLOCK_ID"* ]]; then \
+    echo "Network ready" && break; \
+  else \
+    echo "Still waiting..." && sleep 0.5; \
+  fi; done;'
+
+echo "Starting workload"
+RATE=1 docker-compose -p ${ISOLATION_ID} -f adhoc/workload.yaml up -d
+
+echo "Waiting for all nodes to reach block 10"
+docker exec ${ADMIN} bash -c '\
+  APIS=$(cd /shared_data/rest_apis && ls -d *); \
+  NODES_ON_10=0; \
+  until [ "$NODES_ON_10" -eq 4 ]; do \
+    NODES_ON_10=0; \
+    sleep 5; \
+    for api in $APIS; do \
+      BLOCK_LIST=$(sawtooth block list --url "http://$api:8008" \
+        | cut -f 1 -d " "); \
+      echo $api && echo $BLOCK_LIST;
+      if [[ $BLOCK_LIST == *"10"* ]]; then \
+        echo "API $api is on block 10" && ((NODES_ON_10++)); \
+      else \
+        echo "API $api is not yet on block 10"; \
+      fi; \
+    done; \
+  done;'
+echo "All nodes have reached block 10!"
+
+echo "Stopping all nodes"
+docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml stop
+docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml stop
+docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml stop
+docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml stop
+
+echo "Restarting the nodes"
+docker-compose -p ${ISOLATION_ID}-alpha -f adhoc/node.yaml start
+docker-compose -p ${ISOLATION_ID}-beta -f adhoc/node.yaml start
+docker-compose -p ${ISOLATION_ID}-gamma -f adhoc/node.yaml start
+docker-compose -p ${ISOLATION_ID}-delta -f adhoc/node.yaml start
+
+echo "Waiting for nodes to reach block 20"
+docker exec ${ADMIN} bash -c '\
+  APIS=$(cd /shared_data/rest_apis && ls -d *); \
+  NODES_ON_20=0; \
+  until [ "$NODES_ON_20" -eq 4 ]; do \
+    NODES_ON_20=0; \
+    sleep 5; \
+    for api in $APIS; do \
+      BLOCK_LIST=$(sawtooth block list --url "http://$api:8008" 2> /dev/null \
+        | cut -f 1 -d " "); \
+      echo $api && echo $BLOCK_LIST;
+      if [[ $BLOCK_LIST == *"20"* ]]; then \
+        echo "API $api is on block 20" && ((NODES_ON_20++)); \
+      else \
+        echo "API $api is not yet on block 20"; \
+      fi; \
+    done; \
+  done;'
+echo "All nodes have reached block 20!"

@@ -50,7 +50,7 @@ impl Engine for PbftEngine {
 
         let StartupState {
             chain_head,
-            peers: _peers,
+            peers,
             local_peer_info,
         } = startup_state;
 
@@ -73,7 +73,13 @@ impl Engine for PbftEngine {
 
         let mut working_ticker = timing::Ticker::new(self.config.block_duration);
 
-        let mut node = PbftNode::new(&self.config, chain_head, service, &mut pbft_state.write());
+        let mut node = PbftNode::new(
+            &self.config,
+            chain_head,
+            peers,
+            service,
+            &mut pbft_state.write(),
+        );
 
         node.start_idle_timeout(&mut pbft_state.write());
 
@@ -170,6 +176,7 @@ fn handle_update(
         }
         Ok(Update::PeerConnected(info)) => {
             info!("Received PeerConnected message with peer info: {:?}", info);
+            node.on_peer_connected(info.peer_id, state)?
         }
         Ok(Update::PeerDisconnected(id)) => {
             info!("Received PeerDisconnected for peer ID: {:?}", id);
