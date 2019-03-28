@@ -63,8 +63,9 @@ impl PbftNode {
             msg_log: PbftLog::new(config),
         };
 
-        // Add chain head to log
+        // Add chain head to log and update state
         n.msg_log.add_block(chain_head.clone());
+        state.chain_head = chain_head.block_id.clone();
 
         // If starting up with a block that has a consensus seal, update the view
         if chain_head.block_num > 1 {
@@ -740,10 +741,11 @@ impl PbftNode {
             });
         }
 
-        // Increment sequence number and update state to beginning of Normal mode
+        // Increment sequence number and update state
         state.seq_num += 1;
         state.mode = PbftMode::Normal;
         state.phase = PbftPhase::PrePreparing;
+        state.chain_head = block_id.clone();
 
         // If node(s) are waiting for a seal to commit the last block, send it now
         let requesters = self
@@ -1841,8 +1843,9 @@ mod tests {
     /// `PbftNode` after performing the following actions:
     ///
     /// 1. Add the chain head to the log
-    /// 2. If the chain head has a consensus seal, update view to match the seal's
-    /// 3. Initialize a new block by calling the `Service::initialize_block` method if the node is
+    /// 2. Set the state's chain head to the block ID of the chain head
+    /// 3. If the chain head has a consensus seal, update view to match the seal's
+    /// 4. Initialize a new block by calling the `Service::initialize_block` method if the node is
     ///    the primary
     #[test]
     fn test_node_init() {
@@ -1861,10 +1864,11 @@ mod tests {
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
 
-        // Verify chain head is added to the log, view is set, and primary calls
+        // Verify chain head is added to the log, chain head and view are set, and primary calls
         // Service::initialize_block()
         let (node1, state1, service1) = mock_node(&mock_config(4), vec![1], head.clone());
         assert!(node1.msg_log.get_block_with_id(&head.block_id).is_some());
+        assert_eq!(vec![2], state1.chain_head);
         assert_eq!(1, state1.view);
         assert!(service1.was_called_with_args(stringify_func_call!(
             "initialize_block",
@@ -3596,12 +3600,13 @@ mod tests {
     /// 1. The sequence number will be incremented by 1
     /// 2. The node’s phase will be reset to PrePreparing
     /// 3. The node’s mode will be set to Normal
-    /// 4. The idle timeout will be started
-    /// 5. The view will be incremented by 1 iff the node is at a forced view change
-    /// 6. The primary (and only the primary) will initialize a new block
+    /// 4. The node's chain head will be updated
+    /// 5. The idle timeout will be started
+    /// 6. The view will be incremented by 1 iff the node is at a forced view change
+    /// 7. The primary (and only the primary) will initialize a new block
     ///
-    /// (1-4) are necessary for the node to be ready to start the next iteration of the algorithm,
-    /// (5) is required to implement the regular view changes RFC, and (6) is a prerequisite for
+    /// (1-5) are necessary for the node to be ready to start the next iteration of the algorithm,
+    /// (6) is required to implement the regular view changes RFC, and (7) is a prerequisite for
     /// the primary to be able to publish a block for the next sequence number.
     ///
     /// The validator will send a notification to the PBFT engine when a block gets committed, and
@@ -3618,6 +3623,7 @@ mod tests {
         assert_eq!(2, state.seq_num);
         assert_eq!(PbftPhase::PrePreparing, state.phase);
         assert_eq!(PbftMode::Normal, state.mode);
+        assert_eq!(vec![1], state.chain_head);
         assert_eq!(0, state.view);
         assert!(state.idle_timeout.is_active());
         assert!(
@@ -3639,6 +3645,7 @@ mod tests {
         assert_eq!(3, state.seq_num);
         assert_eq!(PbftPhase::PrePreparing, state.phase);
         assert_eq!(PbftMode::Normal, state.mode);
+        assert_eq!(vec![2], state.chain_head);
         assert_eq!(1, state.view);
         assert!(state.idle_timeout.is_active());
         assert!(
