@@ -56,7 +56,7 @@ impl PbftNode {
         config: &PbftConfig,
         chain_head: Block,
         service: Box<Service>,
-        is_primary: bool,
+        state: &mut PbftState,
     ) -> Self {
         let mut n = PbftNode {
             service,
@@ -64,10 +64,18 @@ impl PbftNode {
         };
 
         // Add chain head to log
-        n.msg_log.add_block(chain_head);
+        n.msg_log.add_block(chain_head.clone());
+
+        // If starting up with a block that has a consensus seal, update the view
+        if chain_head.block_num > 1 {
+            if let Ok(seal) = protobuf::parse_from_bytes::<PbftSeal>(&chain_head.payload) {
+                state.view = seal.get_info().get_view();
+                info!("Updated view to {} on startup", state.view);
+            }
+        }
 
         // Primary initializes a block
-        if is_primary {
+        if state.is_primary() {
             n.service.initialize_block(None).unwrap_or_else(|err| {
                 error!("Couldn't initialize block on startup due to error: {}", err)
             });
@@ -1735,15 +1743,16 @@ mod tests {
         node_id: PeerId,
         chain_head: Block,
     ) -> (PbftNode, PbftState, MockService) {
+        let mut state = PbftState::new(node_id.clone(), chain_head.block_num, cfg);
         let service = MockService::new(cfg);
         (
             PbftNode::new(
                 cfg,
                 chain_head.clone(),
                 Box::new(service.clone()),
-                node_id == cfg.peers[0],
+                &mut state,
             ),
-            PbftState::new(node_id.clone(), chain_head.block_num, cfg),
+            state,
             service,
         )
     }
@@ -1832,22 +1841,39 @@ mod tests {
     /// `PbftNode` after performing the following actions:
     ///
     /// 1. Add the chain head to the log
-    /// 2. Initialize a new block by calling the `Service::initialize_block` method if the node is
+    /// 2. If the chain head has a consensus seal, update view to match the seal's
+    /// 3. Initialize a new block by calling the `Service::initialize_block` method if the node is
     ///    the primary
     #[test]
     fn test_node_init() {
-        // Verify chain head is added to the log and primary calls Service::initialize_block()
-        let head = mock_block(0);
-        let (node0, _, service0) = mock_node(&mock_config(4), vec![0], head.clone());
-        assert!(node0.msg_log.get_block_with_id(&head.block_id).is_some());
-        assert!(service0.was_called_with_args(stringify_func_call!(
+        // Create chain head with a consensus seal
+        let key_pairs = mock_signer_network(3);
+        let mut head = mock_block(2);
+        head.payload = mock_seal(
+            1,
+            1,
+            vec![1],
+            &key_pairs[0],
+            (1..3)
+                .map(|i| mock_vote(PbftMessageType::Commit, 1, 1, vec![1], &key_pairs[i]))
+                .collect::<Vec<_>>(),
+        )
+        .write_to_bytes()
+        .expect("Failed to write seal to bytes");
+
+        // Verify chain head is added to the log, view is set, and primary calls
+        // Service::initialize_block()
+        let (node1, state1, service1) = mock_node(&mock_config(4), vec![1], head.clone());
+        assert!(node1.msg_log.get_block_with_id(&head.block_id).is_some());
+        assert_eq!(1, state1.view);
+        assert!(service1.was_called_with_args(stringify_func_call!(
             "initialize_block",
             None as Option<BlockId>
         )));
 
         // Verify non-primary does not call Service::initialize_block()
-        let (_, _, service1) = mock_node(&mock_config(4), vec![1], head.clone());
-        assert!(!service1.was_called("initialize_block"));
+        let (_, _, service0) = mock_node(&mock_config(4), vec![0], head.clone());
+        assert!(!service0.was_called("initialize_block"));
     }
 
     /// To build a valid consensus seal or a valid `NewView` message, nodes must be able to convert

@@ -73,12 +73,7 @@ impl Engine for PbftEngine {
 
         let mut working_ticker = timing::Ticker::new(self.config.block_duration);
 
-        let mut node = PbftNode::new(
-            &self.config,
-            chain_head,
-            service,
-            pbft_state.read().is_primary(),
-        );
+        let mut node = PbftNode::new(&self.config, chain_head, service, &mut pbft_state.write());
 
         node.start_idle_timeout(&mut pbft_state.write());
 
