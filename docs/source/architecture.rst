@@ -46,7 +46,7 @@ Fault Tolerance
 A PBFT network consists of nodes that are ordered from 0 to `n-1`, where
 `n` is the total number of nodes in the network. The
 :doc:`on-chain setting <on-chain-settings>` ``sawtooth.consensus.pbft.members``
-lists all nodes and determines the node order.
+lists all PBFT member nodes and determines the node order.
 
 The PBFT algorithm guarantees network `safety
 <https://en.wikipedia.org/wiki/Liveness#Liveness_and_safety>`__
@@ -105,7 +105,8 @@ Information Storage
 
 Each node stores several key pieces of information as part of its state:
 
-* List of nodes in the network (also called "connected peers")
+* List of PBFT member nodes in the network (from
+  ``sawtooth.consensus.pbft.members``)
 
 * Current view number, which identifies the primary node
 
@@ -138,9 +139,9 @@ For more information, see :doc:`on-chain-settings`.
 Consensus Messages
 ==================
 
-When a node receives a new consensus message from a peer, it checks the message
-type and creates the appropriate language-specific object for that type. All
-PBFT consensus messages are serialized as `protobufs (protocol buffers)
+When a node receives a new consensus message from a member node, it checks the
+message type and creates the appropriate language-specific object for that type.
+All PBFT consensus messages are serialized as `protobufs (protocol buffers)
 <https://developers.google.com/protocol-buffers/>`__.
 
 Generally, the message object must be verified to make sure that everything is

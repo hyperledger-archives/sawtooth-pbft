@@ -11,8 +11,9 @@ transaction family
 
 - ``sawtooth.consensus.pbft.members`` (required)
 
-  List of the member nodes in a Sawtooth PBFT network; a JSON-formatted string
-  of ``[<public-key-1>, <public-key-2>, ..., <public-key-n>]``.
+  List of the member nodes in a Sawtooth PBFT network, as a JSON-formatted
+  string with the format
+  ``[<public-key-1>, <public-key-2>, ..., <public-key-n>]``.
 
   ``sawtooth.consensus.pbft.members`` could look something like this in a
   four-node network:
