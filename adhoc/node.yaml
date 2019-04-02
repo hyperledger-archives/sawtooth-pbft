@@ -52,7 +52,7 @@ services:
           -k /shared_data/keys/settings.priv \
           sawtooth.consensus.algorithm.name=pbft \
           sawtooth.consensus.algorithm.version=0.1 \
-          sawtooth.consensus.pbft.peers=\\['\\\"'$$(cd /shared_data/validators && paste $$(ls -1) -d , | sed s/,/\\\\\\\",\\\\\\\"/g)'\\\"'\\]
+          sawtooth.consensus.pbft.members=\\['\\\"'$$(cd /shared_data/validators && paste $$(ls -1) -d , | sed s/,/\\\\\\\",\\\\\\\"/g)'\\\"'\\]
           -o config.batch && \
         sawadm genesis \
           config-genesis.batch config.batch && \

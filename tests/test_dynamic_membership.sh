@@ -111,17 +111,17 @@ docker exec -e API=${INIT_APIS[0]} $ADMIN bash -c '\
   NEW_PEERS=$(cd /shared_data/validators && paste $(ls -1) -d , \
     | sed s/,/\\\",\\\"/g); \
   SETTING_PEERS=($(sawtooth settings list --url "http://$API:8008" \
-    --filter "sawtooth.consensus.pbft.peers" --format csv | sed -n 2p | \
+    --filter "sawtooth.consensus.pbft.members" --format csv | sed -n 2p | \
     sed "s/\"\",\"\"/\ /g")); \
   until [[ "${#SETTING_PEERS[@]}" -eq 5 ]]; do \
-    echo "Attempting to set sawtooth.consensus.pbft.peers..."; \
+    echo "Attempting to set sawtooth.consensus.pbft.members..."; \
     # Try to update setting \
     sawset proposal create -k /shared_data/keys/settings.priv \
-      --url "http://$API:8008" sawtooth.consensus.pbft.peers=[\"$NEW_PEERS\"]; \
+      --url "http://$API:8008" sawtooth.consensus.pbft.members=[\"$NEW_PEERS\"]; \
     # Wait and see if setting has been updated \
     sleep 5; \
     SETTING_PEERS=($(sawtooth settings list --url "http://$API:8008" \
-      --filter "sawtooth.consensus.pbft.peers" --format csv | sed -n 2p | \
+      --filter "sawtooth.consensus.pbft.members" --format csv | sed -n 2p | \
       sed "s/\"\",\"\"/\ /g")); \
   done;'
 
@@ -186,17 +186,17 @@ docker exec -e API=${INIT_APIS[0]} $ADMIN bash -c '\
   NEW_PEERS=$(cd /shared_data/validators && paste $(ls -1) -d , \
     | sed s/,/\\\",\\\"/g); \
   SETTING_PEERS=($(sawtooth settings list --url "http://$API:8008" \
-    --filter "sawtooth.consensus.pbft.peers" --format csv | sed -n 2p | \
+    --filter "sawtooth.consensus.pbft.members" --format csv | sed -n 2p | \
     sed "s/\"\",\"\"/\ /g")); \
   until [[ "${#SETTING_PEERS[@]}" -eq 6 ]]; do \
-    echo "Attempting to set sawtooth.consensus.pbft.peers..."; \
+    echo "Attempting to set sawtooth.consensus.pbft.members..."; \
     # Try to update setting \
     sawset proposal create -k /shared_data/keys/settings.priv \
-      --url "http://$API:8008" sawtooth.consensus.pbft.peers=[\"$NEW_PEERS\"]; \
+      --url "http://$API:8008" sawtooth.consensus.pbft.members=[\"$NEW_PEERS\"]; \
     # Wait and see if setting has been updated \
     sleep 5; \
     SETTING_PEERS=($(sawtooth settings list --url "http://$API:8008" \
-      --filter "sawtooth.consensus.pbft.peers" --format csv | sed -n 2p | \
+      --filter "sawtooth.consensus.pbft.members" --format csv | sed -n 2p | \
       sed "s/\"\",\"\"/\ /g")); \
   done;'
 
@@ -237,17 +237,17 @@ docker exec -e API=${INIT_APIS[0]} $ADMIN bash -c '\
   NEW_PEERS=$(cd /shared_data/validators && paste $(ls -1 | head -5) -d , \
     | sed s/,/\\\",\\\"/g); \
   SETTING_PEERS=($(sawtooth settings list --url "http://$API:8008" \
-    --filter "sawtooth.consensus.pbft.peers" --format csv | sed -n 2p | \
+    --filter "sawtooth.consensus.pbft.members" --format csv | sed -n 2p | \
     sed "s/\"\",\"\"/\ /g")); \
   until [[ "${#SETTING_PEERS[@]}" -eq 6 ]]; do \
-    echo "Attempting to set sawtooth.consensus.pbft.peers..."; \
+    echo "Attempting to set sawtooth.consensus.pbft.members..."; \
     # Try to update setting \
     sawset proposal create -k /shared_data/keys/settings.priv \
-      --url "http://$API:8008" sawtooth.consensus.pbft.peers=[\"$NEW_PEERS\"]; \
+      --url "http://$API:8008" sawtooth.consensus.pbft.members=[\"$NEW_PEERS\"]; \
     # Wait and see if setting has been updated \
     sleep 5; \
     SETTING_PEERS=($(sawtooth settings list --url "http://$API:8008" \
-      --filter "sawtooth.consensus.pbft.peers" --format csv | sed -n 2p | \
+      --filter "sawtooth.consensus.pbft.members" --format csv | sed -n 2p | \
       sed "s/\"\",\"\"/\ /g")); \
   done;'
 
