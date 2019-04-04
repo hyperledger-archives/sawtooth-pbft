@@ -138,6 +138,20 @@ pipeline {
             }
         }
 
+        stage('Run non-genesis startup tests') {
+            options {
+                timeout(time: 10, unit: 'MINUTES')
+            }
+            steps {
+                sh 'tests/test_non_genesis_startup.sh'
+            }
+            post {
+                always {
+                    sh 'docker run --rm -v $(pwd)/target:/target sawtooth-pbft-engine-local:${ISOLATION_ID} bash -c "chown -R ${JENKINS_UID} /target"'
+                }
+            }
+        }
+
         stage("Build Docs") {
             steps {
                 sh 'docker build . -f docs/Dockerfile -t sawtooth-pbft-docs:$ISOLATION_ID'

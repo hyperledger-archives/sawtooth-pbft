@@ -20,7 +20,7 @@
 use std::fmt;
 use std::time::Duration;
 
-use sawtooth_sdk::consensus::engine::PeerId;
+use sawtooth_sdk::consensus::engine::{BlockId, PeerId};
 
 use crate::config::PbftConfig;
 use crate::error::PbftError;
@@ -92,6 +92,9 @@ pub struct PbftState {
     /// The current view
     pub view: u64,
 
+    /// The block ID of the node's current chain head
+    pub chain_head: BlockId,
+
     /// Current phase of the algorithm
     pub phase: PbftPhase,
 
@@ -149,6 +152,7 @@ impl PbftState {
             id,
             seq_num: head_block_num + 1,
             view: 0,
+            chain_head: BlockId::new(),
             phase: PbftPhase::PrePreparing,
             mode: PbftMode::Normal,
             f,
