@@ -9,12 +9,12 @@ transaction family
 <https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications/settings_transaction_family.html>`__:
 
 
-- ``sawtooth.consensus.pbft.peers`` (required)
+- ``sawtooth.consensus.pbft.members`` (required)
 
-  List of the peers in a Sawtooth PBFT network; a JSON-formatted string of
-  ``[<public-key-1>, <public-key-2>, ..., <public-key-n>]``.
+  List of the member nodes in a Sawtooth PBFT network; a JSON-formatted string
+  of ``[<public-key-1>, <public-key-2>, ..., <public-key-n>]``.
 
-  ``sawtooth.consensus.pbft.peers`` could look something like this in a
+  ``sawtooth.consensus.pbft.members`` could look something like this in a
   four-node network:
 
   .. code-block:: console

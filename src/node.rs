@@ -851,7 +851,7 @@ impl PbftNode {
     /// Check the on-chain list of peers; if it has changed, update peers list and return true.
     ///
     /// # Panics
-    /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
+    /// + If the `sawtooth.consensus.pbft.members` setting is unset or invalid
     /// + If the network this node is on does not have enough nodes to be Byzantine fault tolernant
     fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) {
         // Get list of peers from settings (retry until a valid result is received)
@@ -862,7 +862,7 @@ impl PbftNode {
             || {
                 self.service.get_settings(
                     block_id.clone(),
-                    vec![String::from("sawtooth.consensus.pbft.peers")],
+                    vec![String::from("sawtooth.consensus.pbft.members")],
                 )
             },
         );
@@ -1289,7 +1289,7 @@ impl PbftNode {
     /// Verify the given consenus seal
     ///
     /// # Panics
-    /// + If the `sawtooth.consensus.pbft.peers` setting is unset or invalid
+    /// + If the `sawtooth.consensus.pbft.members` setting is unset or invalid
     fn verify_consensus_seal(
         &mut self,
         seal: &PbftSeal,
@@ -1344,7 +1344,7 @@ impl PbftNode {
             || {
                 self.service.get_settings(
                     previous_id.clone(),
-                    vec![String::from("sawtooth.consensus.pbft.peers")],
+                    vec![String::from("sawtooth.consensus.pbft.members")],
                 )
             },
         );
@@ -1642,7 +1642,7 @@ mod tests {
             // Set the default settings
             let mut default_settings = HashMap::new();
             default_settings.insert(
-                "sawtooth.consensus.pbft.peers".to_string(),
+                "sawtooth.consensus.pbft.members".to_string(),
                 serde_json::to_string(&peers).unwrap(),
             );
             service
@@ -2272,7 +2272,7 @@ mod tests {
         // Set the MockService to return a different peers list for block_id=[1]
         let mut block_1_settings = HashMap::new();
         block_1_settings.insert(
-            "sawtooth.consensus.pbft.peers".to_string(),
+            "sawtooth.consensus.pbft.members".to_string(),
             serde_json::to_string(
                 &vec![
                     key_pairs[0].pub_key.clone(),
@@ -3751,7 +3751,7 @@ mod tests {
     /// existing member malfunctioning.
     ///
     /// Membership changes in Sawtooth PBFT are dictated by the on-chain setting
-    /// `sawtooth.consensus.pbft.peers`, which contains a list of the network’s peers. When this
+    /// `sawtooth.consensus.pbft.members`, which contains a list of the network’s peers. When this
     /// on-chain setting is updated in a block and that block gets committed, the PBFT nodes must
     /// update their local lists of members and value of `f` (the maximum number of faulty nodes)
     /// to match the changes.
@@ -3781,7 +3781,7 @@ mod tests {
             vec![6],
         ];
         block_1_settings.insert(
-            "sawtooth.consensus.pbft.peers".to_string(),
+            "sawtooth.consensus.pbft.members".to_string(),
             serde_json::to_string(&block_1_peers.iter().map(hex::encode).collect::<Vec<_>>())
                 .unwrap(),
         );
@@ -3800,7 +3800,7 @@ mod tests {
             vec![6],
         ];
         block_2_settings.insert(
-            "sawtooth.consensus.pbft.peers".to_string(),
+            "sawtooth.consensus.pbft.members".to_string(),
             serde_json::to_string(&block_2_peers.iter().map(hex::encode).collect::<Vec<_>>())
                 .unwrap(),
         );
@@ -3810,7 +3810,7 @@ mod tests {
             .insert(vec![2], block_2_settings);
         let mut block_3_settings = HashMap::new();
         block_3_settings.insert(
-            "sawtooth.consensus.pbft.peers".to_string(),
+            "sawtooth.consensus.pbft.members".to_string(),
             serde_json::to_string(
                 &vec![vec![0], vec![1], vec![2]]
                     .iter()

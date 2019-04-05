@@ -91,7 +91,7 @@ impl PbftConfig {
     /// Load configuration from on-chain Sawtooth settings.
     ///
     /// Configuration loads the following settings:
-    /// + `sawtooth.consensus.pbft.peers` (required)
+    /// + `sawtooth.consensus.pbft.members` (required)
     /// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
     /// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30s)
     /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 30s)
@@ -103,7 +103,7 @@ impl PbftConfig {
     ///
     /// # Panics
     /// + If block duration is greater than the idle timeout
-    /// + If the `sawtooth.consensus.pbft.peers` setting is not provided or is invalid
+    /// + If the `sawtooth.consensus.pbft.members` setting is not provided or is invalid
     pub fn load_settings(&mut self, block_id: BlockId, service: &mut Service) {
         debug!("Getting on-chain settings for config");
         let settings: HashMap<String, String> = retry_until_ok(
@@ -113,7 +113,7 @@ impl PbftConfig {
                 service.get_settings(
                     block_id.clone(),
                     vec![
-                        String::from("sawtooth.consensus.pbft.peers"),
+                        String::from("sawtooth.consensus.pbft.members"),
                         String::from("sawtooth.consensus.pbft.block_duration"),
                         String::from("sawtooth.consensus.pbft.idle_timeout"),
                         String::from("sawtooth.consensus.pbft.commit_timeout"),
@@ -126,8 +126,8 @@ impl PbftConfig {
             },
         );
 
-        // Get the peers associated with this node (including ourselves). Panic if it is not provided;
-        // the network cannot function without this setting.
+        // Get the peers associated with this node (including ourselves). Panic if it is not
+        // provided; the network cannot function without this setting.
         let peers = get_peers_from_settings(&settings);
 
         self.peers = peers;
@@ -234,17 +234,17 @@ fn merge_millis_setting_if_set(
 /// Get the peers as a Vec<PeerId> from settings
 ///
 /// # Panics
-/// + If the `sawtooth.consenus.pbft.peers` setting is unset or invalid
+/// + If the `sawtooth.consenus.pbft.members` setting is unset or invalid
 pub fn get_peers_from_settings<S: std::hash::BuildHasher>(
     settings: &HashMap<String, String, S>,
 ) -> Vec<PeerId> {
     let peers_setting_value = settings
-        .get("sawtooth.consensus.pbft.peers")
-        .expect("'sawtooth.consensus.pbft.peers' is empty; this setting must exist to use PBFT");
+        .get("sawtooth.consensus.pbft.members")
+        .expect("'sawtooth.consensus.pbft.members' is empty; this setting must exist to use PBFT");
 
     let peers: Vec<String> = serde_json::from_str(peers_setting_value).unwrap_or_else(|err| {
         panic!(
-            "Unable to parse value at 'sawtooth.consensus.pbft.peers' due to error: {:?}",
+            "Unable to parse value at 'sawtooth.consensus.pbft.members' due to error: {:?}",
             err
         )
     });

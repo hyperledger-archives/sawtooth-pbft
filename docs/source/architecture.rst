@@ -45,7 +45,7 @@ Fault Tolerance
 
 A PBFT network consists of nodes that are ordered from 0 to `n-1`, where
 `n` is the total number of nodes in the network. The
-:doc:`on-chain setting <on-chain-settings>` ``sawtooth.consensus.pbft.peers``
+:doc:`on-chain setting <on-chain-settings>` ``sawtooth.consensus.pbft.members``
 lists all nodes and determines the node order.
 
 The PBFT algorithm guarantees network `safety
@@ -70,7 +70,7 @@ A `view` is the period of time that a given node is the primary, so a `view
 change` means switching to a different primary node. The next primary is
 selected in a round-robin (circular) fashion, according to the order of nodes
 listed in the :doc:`on-chain setting <on-chain-settings>`
-``sawtooth.consensus.pbft.peers``.
+``sawtooth.consensus.pbft.members``.
 
 In a four-node network, for example, the first node (node 0) is the primary at
 view 0, the second node (node 1) is the primary at view 1, and so on.  When the
@@ -416,7 +416,7 @@ View changing mode has the following steps:
    operation.
 
 The next primary node is determined by the node ID, in sequential order, based
-on the order of nodes in the ``sawtooth.consensus.pbft.peers`` on-chain setting.
+on the order of nodes in the ``sawtooth.consensus.pbft.members`` on-chain setting.
 For more information, see :ref:`view-changes-choosing-primary-label`.
 
 

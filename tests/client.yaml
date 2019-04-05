@@ -43,7 +43,7 @@ services:
           -k /etc/sawtooth/keys/validator.priv \
           sawtooth.consensus.algorithm.name=pbft \
           sawtooth.consensus.algorithm.version=0.1 \
-          sawtooth.consensus.pbft.peers=\\['\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"'\\] \
+          sawtooth.consensus.pbft.members=\\['\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"'\\] \
           sawtooth.consensus.pbft.block_duration=100 \
           sawtooth.consensus.pbft.view_change_timeout=4000 \
           sawtooth.consensus.pbft.message_timeout=10 \
