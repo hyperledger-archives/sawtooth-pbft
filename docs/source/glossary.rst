@@ -44,6 +44,10 @@ Glossary
   Block duration
     How many seconds to wait before trying to publish a block.
 
+  Member node
+    Sawtooth node that participates in PBFT consensus. Membership is controlled
+    by the on-chain setting ``sawtooth.consensus.pbft.members``.
+
   Message
     Block, with additional information (see `Message
     Types <message-types.html>`__).
