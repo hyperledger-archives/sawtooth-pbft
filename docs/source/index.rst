@@ -6,6 +6,7 @@ Table of Contents
     :maxdepth: 2
 
     introduction-to-sawtooth-pbft.rst
+    using-pbft-consensus.rst
     architecture.rst
     on-chain-settings.rst
     installing-and-running-pbft.rst
