@@ -1,43 +1,61 @@
+**********************
+PBFT On-Chain Settings
+**********************
 
-.. _pbft-on-chain-settings-label:
+Sawtooth PBFT includes on-chain settings for configuring PBFT consensus on a
+Hyperledger Sawtooth network. The `Settings transaction
+processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications/settings_transaction_family.html>`__
+(or an equivalent) is required to process these settings.
 
-On-Chain Settings
-=================
+.. tip::
 
-The following on-chain settings are configurable, using the `Settings
-transaction family
-<https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications/settings_transaction_family.html>`__:
+   To display the existing settings, use `sawtooth settings
+   list <https://sawtooth.hyperledger.org/docs/core/releases/latest/cli/sawtooth.html#sawtooth-settings-list>`__.
 
+   To change a setting, use `sawset proposal
+   create <https://sawtooth.hyperledger.org/docs/core/releases/latest/cli/sawset.html#sawset-proposal-create>`__.
+   This command requires a signing key (the ``--key`` option) that specifies the
+   public key of a user or validator that has permission to change settings. See
+   ``sawtooth.identity.allowed_keys`` in `Configuring Validator and Transactor
+   Permissions <https://sawtooth.hyperledger.org/docs/core/releases/latest/sysadmin_guide/configuring_permissions.html>`__.
 
-- ``sawtooth.consensus.pbft.members`` (required)
+- | ``sawtooth.consensus.pbft.block_duration``
+  | (Optional; default 200 ms)
+  | How often to try to publish a block.
 
-  List of the member nodes in a Sawtooth PBFT network, as a JSON-formatted
-  string with the format
-  ``[<public-key-1>, <public-key-2>, ..., <public-key-n>]``.
+- | ``sawtooth.consensus.pbft.commit_timeout``
+  | (Optional; default 30 sec)
+  | How long to wait between block commits before determining that the primary
+  | node is faulty.
 
-  ``sawtooth.consensus.pbft.members`` could look something like this in a
-  four-node network:
+- | ``sawtooth.consensus.pbft.forced_view_change_period``
+  | (Optional; default 30 blocks)
+  | Number of blocks to commit before forcing a view change.
 
-  .. code-block:: console
+- | ``sawtooth.consensus.pbft.idle_timeout``
+  | (Optional; default 30 sec)
+  | How long to wait for the next ``BlockNew`` and ``PrePrepare`` messages
+  | before determining that the primary node is faulty. The idle timeout must be
+  | longer than the block duration.
 
-     [
-        "0203f3a0f914c9d80825b72346eeae42e884094ae3d0bd3c544c4c7e8ed37a3e6c",
-        "02f83c8fb57bb8dc4c72a4ba0846e5c14bc02228e1d627f5c2dcafa209b7c5ffd2",
-        "dc26a7099e81bb02869cc8ae57da030fbe4cf276b38ab37d2cc815fec63a14ab",
-        "df8e8388ced559bd35c2b05199ca9f8fbebb420979715003355dcb7363016c1d"
-     ]
+- | ``sawtooth.consensus.pbft.max_log_size``
+  | (Optional; default 1000 messages)
+  | Maximum number of messages that can be in the log.
 
-- | ``sawtooth.consensus.pbft.block_duration`` (optional, default 200 ms)
-  | How often to try to publish a block
+- | ``sawtooth.consensus.pbft.members``
+  | (Required)
+  | List of validator public keys for the member nodes in the PBFT network,
+  | as a comma-separated list (in a JSON-formatted string):
+  | ``[public-key-1, public-key-2, ..., public-key-n]``
 
-- | ``sawtooth.consensus.pbft.commit_timeout`` (optional, default 4000 ms)
-  | How long to wait between block commits before deeming a primary node faulty
+- | ``sawtooth.consensus.pbft.message_timeout``
+  | (Optional; default 10 ms)
+  | How long to wait for updates from the consensus API.
 
-- | ``sawtooth.consensus.pbft.message_timeout`` (optional, default 10 ms)
-  | How long to wait for updates from the Consensus API
-
-- | ``sawtooth.consensus.pbft.max_log_size`` (optional, default 1000 messages)
-  | The maximum number of messages that can be in the log
+- | ``sawtooth.consensus.pbft.view_change_duration``
+  | (Optional; default 5 sec)
+  | How long to wait for a valid ``NewView`` message before starting the next
+  | view change. For more information, see :ref:`view-changing-mode-label`.
 
 
 .. Licensed under Creative Commons Attribution 4.0 International License
