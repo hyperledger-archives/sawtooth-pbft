@@ -202,6 +202,12 @@ pub fn test_handle_update(
 
 fn log_any_error(res: Result<(), PbftError>) {
     if let Err(e) = res {
-        error!("{}", e)
+        // Treat errors that result from other nodes' messages as warnings
+        match e {
+            PbftError::SigningError(_)
+            | PbftError::FaultyPrimary(_)
+            | PbftError::InvalidMessage(_) => warn!("{}", e),
+            _ => error!("{}", e),
+        }
     }
 }
