@@ -69,8 +69,9 @@ be installed.
 
    * To adjust the :ref:`PBFT on-chain settings <pbft-on-chain-settings-label>`,
      edit the testing Compose file and change the ``sawset proposal create``
-     parameters for the four validator containers. This example shows the
-     settings in ``test_liveness.yaml`` for the first validator container:
+     parameters for the four validator containers. For more information, see
+     :doc:`on-chain-settings`. This example shows the settings in
+     ``test_liveness.yaml`` for the first validator container:
 
     .. code-block:: yaml
 
@@ -80,8 +81,6 @@ be installed.
             ...
             sawtooth.consensus.pbft.members=\\['\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"'\\] \
             sawtooth.consensus.pbft.block_duration=100 \
-            sawtooth.consensus.pbft.checkpoint_period=10 \
-            sawtooth.consensus.pbft.view_change_timeout=4000 \
             sawtooth.consensus.pbft.message_timeout=10 \
             sawtooth.consensus.pbft.max_log_size=1000 \
           ...
