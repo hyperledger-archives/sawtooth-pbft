@@ -139,92 +139,133 @@ For more information, see :doc:`on-chain-settings`.
 Consensus Messages
 ==================
 
-When a node receives a new consensus message from a member node, it checks the
-message type and creates the appropriate language-specific object for that type.
 All PBFT consensus messages are serialized as `protobufs (protocol buffers)
 <https://developers.google.com/protocol-buffers/>`__.
 
-Generally, the message object must be verified to make sure that everything is
-legitimate. The PBFT algorithm handles consensus-related verification, such as
-making sure that messages match and that there are the correct number of
-messages.  The Sawtooth validator verifies the non-consensus parts of a message,
-such as ensuring that the message has a valid signature.
+When a node receives a new consensus message from another node, it parses the
+protobuf into a native Rust struct (``ParsedMessage``) that allows for easier
+handling of the message. After parsing, the node performs a series of checks to
+ensure the validity of the message:
+
+1. The ``signer_id`` of the PBFT message must match the ``signer_id`` of the
+   ``PeerMessage`` that contains it.
+
+2. The message must be from a known PBFT member (the ``signer_id`` of the PBFT
+   message must be in the ``sawtooth.consensus.pbft.members`` list)
+
+The first check verifies that the PBFT message was created and signed by the
+node that it claims to be from. The ``PeerMessage``, which acts as a wrapper for
+the PBFT message, contains a signature of the PBFT message and a ``signer_id``;
+this signature and ID are verified by the validator to ensure that the contents
+of the ``PeerMessage`` are legitimate. PBFT then ensures that the ``signer_id``
+of the PBFT message matches the one the validator used, which guarantees the
+origin of the PBFT message.
+
+The second check ensures that only nodes that are accepted members of the PBFT
+network are able to participate in the consensus process.
+
+Any messages that fail to parse or pass the required checks are ignored. If a
+message is successfully parsed and passes verification, it is passed to a
+handler for that specific message type (see `Message Types`) where it may go
+through further checks, be stored in the message log, or trigger some actions.
 
 
 Message Definitions
 -------------------
 
-Most Sawtooth PBFT messages use the ``PbftMessage`` message format, as shown
-below. An auxiliary ``PbftViewChange`` format is used to request a view change
-when a node suspects that the primary is faulty or unresponsive.
+Most Sawtooth PBFT messages use the ``PbftMessage`` protobuf, as shown below.
+The ``PbftNewView``, ``PbftSignedVote``, and ``PbftSeal`` protobufs are
+structurally different from ``PbftMessage`` and are used for messages that
+require different sets of data to be exchanged.
 
 Sawtooth PBFT also uses some of the message types defined in the consensus API,
-such as ``BlockNew`` and ``BlockCommit`` (as well as the system ``Shutdown``
-message). These messages are called "updates" to distinguish them from the
-consensus messages.
+such as ``BlockNew`` and ``BlockCommit``. These messages are called "updates" to
+distinguish them from the PBFT-specific messages. For more information on the
+consensus API's ``Update`` messages, see the `Consensus API RFC
+<https://github.com/hyperledger/sawtooth-rfcs/blob/master/text/0004-consensus-api.md#updates>`__.
 
 .. code-block:: protobuf
 
-   // PBFT-specific block information (don't need to keep sending the whole payload
-   // around the network)
-   message PbftBlock {
-     bytes block_id = 1;
+    // Represents all common information used in a PBFT message
+    message PbftMessageInfo {
+      // Type of the message
+      string msg_type = 1;
 
-     bytes signer_id = 2;
+      // View number
+      uint64 view = 2;
 
-     uint64 block_num = 3;
+      // Sequence number
+      uint64 seq_num = 3;
 
-     bytes summary = 4;
-   }
+      // Node who signed the message
+      bytes signer_id = 4;
+    }
 
-   // Represents all common information used in a PBFT message
-   message PbftMessageInfo {
-     // Type of the message
-     string msg_type = 1;
 
-     // View number
-     uint64 view = 2;
+    // A generic PBFT message (PrePrepare, Prepare, Commit, ViewChange, SealRequest)
+    message PbftMessage {
+      // Message information
+      PbftMessageInfo info = 1;
 
-     // Sequence number (helps with ordering the log)
-     uint64 seq_num = 3;
+      // The block this message is for
+      bytes block_id = 2;
+    }
 
-     // Node who signed the message
-     bytes signer_id = 4;
-   }
+    // A message sent by the new primary to signify that the new view should be
+    // started
+    message PbftNewView {
+      // Message information
+      PbftMessageInfo info = 1;
 
-   // A generic PBFT message (PrePrepare, Prepare, Commit)
-   message PbftMessage {
-     // Message information
-     PbftMessageInfo info = 1;
+      // A list of ViewChange messages to prove this view change (must contain at
+      // least 2f messages)
+      repeated PbftSignedVote view_changes = 2;
+    }
 
-     // The actual message
-     PbftBlock block = 2;
-   }
+    message PbftSignedVote {
+      // Serialized ConsensusPeerMessage header
+      bytes header_bytes = 1;
 
-   // View change message, for when a node suspects the primary node is faulty
-   message PbftViewChange {
-     // Message information
-     PbftMessageInfo info = 1;
-   }
+      // Signature of the serialized ConsensusPeerMessageHeader
+      bytes header_signature = 2;
+
+      // Serialized PBFT message
+      bytes message_bytes = 3;
+    }
+
+    message PbftSeal {
+      // Message information
+      PbftMessageInfo info = 1;
+
+      // ID of the block this seal verifies
+      bytes block_id = 2;
+
+      // A list of Commit votes to prove the block commit (must contain at least 2f
+      // votes)
+      repeated PbftSignedVote commit_votes = 3;
+    }
 
 Message Types
 -------------
 
 A Sawtooth PBFT message has one of the following types:
 
-* ``PrePrepare``: Sent by the primary node when it has received a new block from
-  the validator (as a ``BlockNew`` update).
+* ``PrePrepare``: Sent by the primary node after it has published a new block
 
-* ``Prepare``: Broadcast from every node after a ``PrePrepare`` has been received
-  for the current working block. This message is used to verify the ``PrePrepare``
-  message and to signify that the block is ready to be checked.
+* ``Prepare``: Broadcast by every node in the ``Preparing`` phase
 
-* ``Commit``: Broadcast from every node after a ``BlockValid`` update has been
-  received for the current working block. This message is used to determine if
-  there is consensus for committing the current working block.
+* ``Commit``: Broadcast by every node in the ``Committing`` phase
 
-* ``ViewChange``: Sent by any node that suspects that the primary node is
-  faulty. Sufficient ``ViewChange`` messages will trigger a view change.
+* ``ViewChange``: Sent by any node that suspects that the primary is faulty
+
+* ``NewView``: Sent by the node that will be the new primary to complete a view
+  change
+
+* ``Seal``: Proves that a block was committed after ``2f + 1`` nodes agreed to
+  commit it
+
+* ``SealRequest``: Sent by a node that is requesting a consensus seal for the
+  block that was committed at a given sequence number
 
 
 .. _pbft-operation-label:
