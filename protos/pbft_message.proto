@@ -23,7 +23,7 @@ message PbftMessageInfo {
   // View number
   uint64 view = 2;
 
-  // Sequence number (helps with ordering the log)
+  // Sequence number
   uint64 seq_num = 3;
 
   // Node who signed the message
@@ -31,7 +31,7 @@ message PbftMessageInfo {
 }
 
 
-// A generic PBFT message (PrePrepare, Prepare, Commit)
+// A generic PBFT message (PrePrepare, Prepare, Commit, ViewChange, SealRequest)
 message PbftMessage {
   // Message information
   PbftMessageInfo info = 1;
