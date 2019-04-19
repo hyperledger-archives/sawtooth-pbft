@@ -256,11 +256,9 @@ Initialization
 
 When the Sawtooth PBFT consensus engine starts, it does the following:
 
-* Sets the initial sequence number in state to 0
+* Loads its configuration
 
-* Sets the initial view in state to 0
-
-* Creates the message log, with all fields empty
+* Initializes its state and message log
 
 * Establishes timers and counters for block durations and view changes,
   based on the on-chain settings
