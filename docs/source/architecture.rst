@@ -112,6 +112,8 @@ Each node stores several key pieces of information as part of its state:
 
 * Current sequence number, which is also the number of the block being processed
 
+* The current head of the chain
+
 * If in normal mode, the step of the algorithm it’s on
   (see :ref:`normal-mode-label`)
 
