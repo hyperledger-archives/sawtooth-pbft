@@ -112,6 +112,8 @@ Each node stores several key pieces of information as part of its state:
 
 * Current sequence number, which is also the number of the block being processed
 
+* The current head of the chain
+
 * If in normal mode, the step of the algorithm it’s on
   (see :ref:`normal-mode-label`)
 
@@ -254,40 +256,12 @@ Initialization
 
 When the Sawtooth PBFT consensus engine starts, it does the following:
 
-* Sets the initial sequence number in state to 0
+* Loads its configuration
 
-* Sets the initial view in state to 0
-
-* Creates the message log, with all fields empty
+* Initializes its state and message log
 
 * Establishes timers and counters for block durations and view changes,
   based on the on-chain settings
-
-
-.. prepared-committed-conditions-label:
-
-Node Conditions (``Prepared`` and ``Committed``)
-------------------------------------------------
-
-.. note::
-
-   This section uses the following terms:
-
-   * ``Prepared`` means a node is ready to start Normal mode. ``Prepared`` is
-     true for the current node if the following messages are present in its
-     log:
-
-       - The original ``BlockNew`` message
-       - A ``PrePrepare`` message that matches the original message (in the
-         current view)
-       - :math:`2f + 1` matching ``Prepare`` messages from different nodes that
-         match the ``PrePrepare`` message (including its own)
-
-   * ``Committed`` means that a node considers the current block ready to be
-     committed. Specifically, ``committed`` is true for the current node if:
-
-     - This node is ``Prepared``
-     - The node has accepted :math:`2f + 1` ``Commit`` messages, including its own
 
 
 .. _normal-mode-label:
@@ -299,79 +273,73 @@ In Normal mode, nodes check blocks and approve them to be committed to the
 blockchain. The Sawtooth PBFT algorithm usually operates in normal mode unless a
 :ref:`view change <view-changing-mode-label>` is necessary.
 
-Normal mode includes the following steps:
 
-1. The nodes receive a ``BlockNew`` message from the consensus API, which
-   represents several batched client requests.
+Procedure
+^^^^^^^^^
 
-   - The primary node checks that the message is legitimate by looking at the
-     ``signer_id`` of the block in the ``BlockNew`` message and making sure it
-     is the next block in the chain. Next, the primary assigns a sequence number
-     to the message and broadcasts a ``PrePrepare`` message to all nodes.
+The normal mode proceeds as follows:
 
-   - If the message is legitimate, all nodes tentatively update their working
-     blocks. The secondary nodes also start a commit timer, in case the primary
-     doesn't finish committing this block.
+1. All nodes begin in the ``PrePreparing`` phase; the purpose of this phase is
+   for the primary to publish a new block and endorse the block with a
+   ``PrePrepare`` message.
 
-#. All nodes receive and validate ``PrePrepare`` messages. This message is
-   valid if:
+   - The primary node will send a request to its validator to initialize a new
+     block. After a configurable timeout (determined by the
+     ``sawtooth.consensus.pbft.block_duration`` setting), the primary will send
+     a request to the validator to finalize the block and broadcast it to the
+     network.
 
-    - The ``signer_id`` and ``summary`` of block inside ``PrePrepare`` match the
-      corresponding fields of the original ``BlockNew`` block
-    - The view in ``PrePrepare`` message corresponds to this node’s current view
-    - This message hasn’t already been accepted with a different ``summary``
+   - After receiving the block in a ``BlockNew`` update and ensuring that the
+     block is valid, all nodes will store the block in their PBFT logs.
 
-   If the ``PrePrepare`` is invalid, the node starts a view change.
+   - After receiving the ``BlockNew`` update, the primary will broadcast a
+     ``PrePrepare`` message for that block to all of the nodes in the network.
+     When the nodes receive this ``PrePrepare`` message, they will make sure it
+     is valid; if it is, they will add it to their respective logs and move on
+     to the ``Preparing`` phase.
 
-#. Once the ``PrePrepare`` message is determined to be valid, the primary and
-   secondary nodes perform different operations:
+#. In the ``Preparing`` phase, all secondary nodes (not the primary) broadcast a
+   ``Prepare`` message that matches the accepted ``PrePrepare`` message. Each
+   node will then add its own ``Prepare`` to its log, then accept ``Prepare``
+   messages from other nodes and add them to its log. Once a node has ``2f + 1``
+   ``Prepare`` messages in its log that match the accepted ``PrePrepare``, it
+   will move on to the ``Committing`` phase.
 
-    - The primary ensures that the message matches the ``BlockNew`` update, then
-      broadcasts a ``Prepare`` message.
-    - Each secondary node updates its own sequence number from the message's
-      sequence number, then broadcasts a ``Prepare`` message.
+#. The ``Committing`` phase is similar to the ``Preparing`` phase; nodes
+   broadcast a ``Commit`` message to all nodes in the network, wait until there
+   are ``2f + 1`` ``Commit`` messages in their logs, then move on to the
+   ``Finishing`` phase. The only major difference between the ``Preparing`` and
+   ``Committing`` phases is that in the ``Committing`` phase, the primary node
+   is allowed to broadcast a message.
 
-#. Each node receives ``Prepare`` messages and checks them all against their
-   associated ``PrePrepare`` message in the node’s message log.
+#. Once in the ``Finishing`` phase, each node will tell its validator to commit
+   the block for which they have a matching ``PrePrepare``, ``2f + 1``
+   ``Prepare`` messages, and ``2f + 1`` ``Commit`` messages. The node will then
+   wait for a ``BlockCommit`` notification from its validator to signal that the
+   block has been successfully committed to the chain. After receiving this
+   confirmation, the node will update its state as follows:
 
-#. Once a node is :ref:`prepared <prepared-committed-conditions-label>`, it
-   calls ``check_blocks()`` on the current working block and waits for a
-   response from the validator.
+   - Increment its sequence number by 1
 
-   - If the node receives a ``BlockValid`` update, it broadcasts a ``Commit``
-     message to all other nodes.
+   - Update its current chain head to the block that was just committed
 
-    - If the response is a ``BlockInvalid`` update, the node proposes a view
-      change.
+   - Reset its phase to ``PrePreparing``
 
-#. When a node is :ref:`committed <prepared-committed-conditions-label>`,
-   it calls ``commit_block()`` to approve the block to be committed and advances
-   the chain head.
+   Finally, the primary node will initialize a new block to start the process
+   all over again.
 
-#. When a node receives a ``BlockCommit`` update, the action depends on whether
-   it's a primary or secondary node:
+This diagram summarizes the four Normal mode phases, the messages sent, and the
+interactions with the validators. N1 is the primary node; N2, N3, and N4 are
+secondary nodes.
 
-   - The primary node calls ``initialize_block()``
-   - A secondary node stops its commit timer
-
-#. If ``block_duration`` has elapsed, the primary tries to call
-   ``summarize_block()`` with the current working block. If the working block is
-   not ready (``BlockNotReady`` or ``InvalidState`` occurs), nothing happens.
-   Otherwise, it calls ``finalize_block()``. This, in turn, sends out a
-   ``BlockNew`` update to the network, which starts the next cycle of Normal
-   mode.
-
-This diagram shows the messages sent during Normal mode and the interactions
-with the validators. N1 is the primary node; N2, N3, and N4 are secondary nodes.
-
-.. figure:: images/message_passing.png
-    :alt: PBFT messages passed during normal operation
+.. figure:: images/normal_mode_procedure.png
+    :alt: PBFT normal operation procedure
 
 
 .. _log-pruning-label:
 
-Log Pruning in Normal Mode
---------------------------
+Log Pruning
+^^^^^^^^^^^
 
 Sawtooth PBFT does not implement a checkpointing procedure (garbage collection
 of the log). Instead, each node cleans the log periodically during normal
@@ -419,75 +387,6 @@ View changing mode has the following steps:
 The next primary node is determined by the node ID, in sequential order, based
 on the order of nodes in the ``sawtooth.consensus.pbft.members`` on-chain setting.
 For more information, see :ref:`view-changes-choosing-primary-label`.
-
-
-.. _algorithm-phases-label:
-
-Summary: Algorithm Phases
--------------------------
-
-The Sawtooth PBFT algorithm follows a state-machine replication pattern that
-defines the necessary phases, transitions, and actions for the algorithm.
-In the following diagram, the ring of blue ovals shows the phases in
-Normal mode, and the gray boxes represent the algorithm's actions.
-
-.. figure:: images/pbft_states.png
-   :alt: Sawtooth PBFT phases
-
-   :caption:
-   Phases and transitions for Sawtooth PBFT
-
-The PBFT phases are:
-
-* ``NotStarted``: No blocks are being processed and no new ``BlockNew`` updates
-  have been received. The node is ready to receive a ``BlockNew`` update for
-  the next block.
-
-* ``PrePreparing``: A ``BlockNew`` update has been received through the
-  consensus API. The node is ready to receive a ``PrePrepare`` message for the
-  block corresponding to the ``BlockNew`` update.
-
-* ``Preparing``: A ``PrePrepare`` message has been received and is valid.
-  The node is ready to receive ``Prepare`` messages that correspond to this
-  ``PrePrepare`` message.
-
-* ``Checking``: The node is
-  :ref:`prepared <prepared-committed-conditions-label>`, which means that it
-  has a ``BlockNew`` message, a ``PrePrepare`` message, and :math:`2f + 1`
-  corresponding ``Prepare`` messages. The node is ready to receive a
-  ``BlockValid`` update.
-
-* ``Committing``: A ``BlockValid`` has been received. The node is ready to
-  receive ``Commit`` messages.
-
-* ``Finished``: :ref:`Committed <prepared-committed-conditions-label>` is true
-  and the block has been committed to the chain. The node is ready to receive a
-  ``BlockCommit`` update.
-
-.. note::
-
-   Any phase can be interrupted if the commit timeout expires, which forces the
-   node into :ref:`View Changing mode <view-changing-mode-label>`.
-
-Sawtooth PBFT defines the following transitions between the algorithm's phases:
-
-- ``NotStarted`` → ``PrePreparing``: Caused by receiving a ``BlockNew`` update
-  for the next block.
-
-- ``PrePreparing`` → ``Preparing``: Caused by receiving a ``PrePrepare`` message
-  corresponding to the ``BlockNew`` update.
-
-- ``Preparing`` → ``Checking``: Caused when the node is
-  ":ref:`prepared <prepared-committed-conditions-label>`".
-
-- ``Checking`` → ``Committing``: Caused by receiving a ``BlockValid`` update
-  corresponding to the current working block.
-
-- ``Committing`` → ``Finished``: Caused when the node is
-  ":ref:`committed <prepared-committed-conditions-label>`".
-
-- ``Finished`` → ``NotStarted``: Caused by receiving a ``BlockCommit`` update
-  for the current working block.
 
 
 .. Licensed under Creative Commons Attribution 4.0 International License
