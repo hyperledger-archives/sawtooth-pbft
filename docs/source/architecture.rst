@@ -402,32 +402,83 @@ exceeds this value, Sawtooth PBFT uses these rules to prune the log:
 View Changing Mode
 ------------------
 
-A `view change` switches to a different primary node. A view change can be
-trigged if the primary node is unresponsive, as determined by its failure to
-commit the current working block within a specified amount of time.
+A `view change` switches to a different primary node. A node starts a new view
+change if any of the following occur:
 
-When a secondary node receives a ``BlockNew`` message, it starts a commit timer.
-If that node receives a ``Commit`` message before the time expires, it cancels
-the timer and proceeds as normal. If the timer expires, it considers the primary
-node to be faulty and requests a view change by sending a ``ViewChange``
-message.  However, view changing mode does not occur until enough other nodes
-agree (send their own ``ViewChange`` messages).
+- The `idle timeout` expires - when a node enters the ``PrePreparing`` phase,
+  it will start its idle timeout. If the node receives a new block and a
+  matching ``PrePrepare`` from the primary for its current sequence number
+  before the timeout expires, it will stop the timeout; if not, the node will
+  initiate a view change when the timeout expires.
 
-View changing mode has the following steps:
+- The `commit timeout` expires - when a node enters the ``Preparing`` phase, it
+  will start its commit timeout. If the node is able to move on to the
+  ``Finishing`` phase and send a request to the validator to commit the block
+  before the timeout expires, it will stop the timeout; if not, the node will
+  initiate a view change when the timeout expires.
 
-1. Any node who decides the primary is faulty sends a ``ViewChange`` message to
-   all nodes. This message contains the node’s current sequence number (block
-   number) and  its current view.
+- The `view change timeout` expires - when a node starts a view change to view
+  ``v``, it will start a view change timeout. If the node is able to complete
+  the view change before the timeout expires, it will stop the timeout; if not,
+  it will initiate a new view change to view ``v + 1``.
 
-#. After sending the ``ViewChange`` message, the node enters View Changing mode.
+- Multiple ``PrePrepare`` messages are received for the same view and sequence
+  number but different blocks - this indicates the primary is faulty, since
+  this behavior is invalid.
 
-#. Once a node receives :math:`2f + 1` ``ViewChange`` messages (including
-   its own), it changes its own view to :math:`v + 1`, and resumes Normal
-   operation.
+- A ``Prepare`` message is received from the primary - this indicates the
+  primary is faulty, since this behavior is invalid.
 
-The next primary node is determined by the node ID, in sequential order, based
-on the order of nodes in the ``sawtooth.consensus.pbft.members`` on-chain setting.
-For more information, see :ref:`view-changes-choosing-primary-label`.
+- ``f + 1`` ``ViewChange`` messages are received for the same view - this
+  ensures that a node does not wait too long to start a view change; since only
+  ``f`` nodes (at most) can be faulty at any given time, if more than ``f``
+  nodes decide to start a view change, other nodes can safely join them to
+  perform that view change.
+
+To start a view change, a node will do the following:
+
+1. Update its mode to ``ViewChanging(v)``, where ``v`` is the view the node is
+   changing to
+#. Stop both the idle and and commit timeouts, since these are not needed again
+   until after the view change
+#. Stop the view change timeout if it's been started; it will be restarted with a
+   new value later
+#. Broadcast a ``ViewChange`` message for the new view
+
+``ViewChange`` messages are accepted and added to the log if they satisfy these
+criteria:
+
+- They are for a later view than the node's current view
+
+- If the node is in the mode ``ViewChanging(v)``, the view in the message must
+  be greater than or equal to ``v``
+
+Once a node has received ``2f + 1`` ``ViewChange`` messages for the new view, it
+will start its view change timeout; this timeout ensures that the new primary
+starts the new view in a timely manner. The duration of the timeout is
+calculated based on a base duration (determined by the
+``sawtooth.consensus.pbft.view_change_duration`` setting) using the formula:
+:math:`(DesiredViewNumber - CurrentViewNumber) * ViewChangeDuration`.
+
+When the primary for the new view receives ``2f + 1`` ``ViewChange`` messages,
+it will broadcast a ``NewView`` message to the network, signifying that the view
+change is complete. As a proof that this view change is valid, the primary will
+include ``2f + 1`` signed ``ViewChange`` messages from other nodes in the
+``NewView`` message (the primary's own "vote" is implicit), which will be
+validated by the other nodes.
+
+If a node receives the new primary's valid ``NewView`` message before its view
+change timeout expires, it will:
+
+1. Stop the view change timeout
+
+2. Update its view to match the new value
+
+3. Revert back to Normal mode
+
+However, if a node's view change timeout expires before it receives a
+``NewView``, it will stop the timeout and initiate a brand new view change for
+view ``v + 1`` (where ``v`` is the view it was attempting to change to before).
 
 
 .. Licensed under Creative Commons Attribution 4.0 International License
