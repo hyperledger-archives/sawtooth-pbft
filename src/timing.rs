@@ -98,7 +98,6 @@ impl Timeout {
         self.duration
     }
 
-    #[cfg(test)]
     pub fn is_active(&self) -> bool {
         self.state == TimeoutState::Active
     }

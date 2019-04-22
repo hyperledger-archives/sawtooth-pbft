@@ -382,14 +382,14 @@ impl PbftNode {
             PbftMode::ViewChanging(v) => msg_view > v,
             PbftMode::Normal => true,
         };
-        let has_required_view_changes = self
+        let start_view_change = self
             .msg_log
             // Only get ViewChanges with matching view
             .get_messages_of_type_view(PbftMessageType::ViewChange, msg_view)
             // Check if there are at least f + 1 ViewChanges
             .len() as u64
             > state.f;
-        if is_later_view && has_required_view_changes {
+        if is_later_view && start_view_change {
             info!(
                 "{}: Received f + 1 ViewChange messages; starting early view change",
                 state
@@ -398,17 +398,33 @@ impl PbftNode {
             return self.start_view_change(state, msg_view);
         }
 
-        // If this node is the new primary and the required 2f ViewChange messages (not including
-        // the primary's own) are present in the log, broadcast the NewView message
         let messages = self
             .msg_log
-            .get_messages_of_type_view(PbftMessageType::ViewChange, msg_view)
+            .get_messages_of_type_view(PbftMessageType::ViewChange, msg_view);
+
+        // If there are 2f + 1 ViewChange messages and the view change timeout is not already
+        // started, update the timeout and start it
+        if !state.view_change_timeout.is_active() && messages.len() as u64 > state.f * 2 {
+            state.view_change_timeout = Timeout::new(
+                state
+                    .view_change_duration
+                    .checked_mul((msg_view - state.view) as u32)
+                    .expect("View change timeout has overflowed"),
+            );
+            state.view_change_timeout.start();
+        }
+
+        // If this node is the new primary and the required 2f ViewChange messages (not including
+        // the primary's own) are present in the log, broadcast the NewView message
+        let messages_from_other_nodes = messages
             .iter()
             .filter(|msg| !msg.from_self)
             .cloned()
             .collect::<Vec<_>>();
 
-        if state.is_primary_at_view(msg_view) && messages.len() as u64 >= 2 * state.f {
+        if state.is_primary_at_view(msg_view)
+            && messages_from_other_nodes.len() as u64 >= 2 * state.f
+        {
             let mut new_view = PbftNewView::new();
 
             new_view.set_info(PbftMessageInfo::new_from(
@@ -418,7 +434,9 @@ impl PbftNode {
                 state.id.clone(),
             ));
 
-            new_view.set_view_changes(Self::signed_votes_from_messages(messages.as_slice()));
+            new_view.set_view_changes(Self::signed_votes_from_messages(
+                messages_from_other_nodes.as_slice(),
+            ));
 
             trace!("Created NewView message: {:?}", new_view);
 
@@ -1566,14 +1584,9 @@ impl PbftNode {
         state.idle_timeout.stop();
         state.commit_timeout.stop();
 
-        // Update the view change timeout and start it
-        state.view_change_timeout = Timeout::new(
-            state
-                .view_change_duration
-                .checked_mul((view - state.view) as u32)
-                .expect("View change timeout has overflowed"),
-        );
-        state.view_change_timeout.start();
+        // Stop the view change timeout if it is already active (will be restarted when 2f + 1
+        // ViewChange messages for the new view are received)
+        state.view_change_timeout.stop();
 
         // Broadcast the view change message
         self.broadcast_pbft_message(
@@ -3905,12 +3918,8 @@ mod tests {
     ///    to change to
     /// 2. Stop both the idle and commit timeouts, since these are not needed during the view
     ///    change procedure
-    /// 3. Start the view change timeout with an appropriate duration
+    /// 3. Stop the view change timeout if it is already started
     /// 4. Broadcast a `ViewChange` message for the new view
-    ///
-    /// The appropriate duration of the view change timeout is calculated based on a base duration
-    /// (defined by the state object’s `view_change_duration` field) using the formula: `(desired
-    /// view number - node’s current view number) * view_change_duration`.
     ///
     /// These actions should only be performed once for a particular view change, however; a view
     /// change can be initiated based on multiple conditions, and it’s possible for several of
@@ -3923,21 +3932,18 @@ mod tests {
     #[test]
     #[allow(unused_must_use)]
     fn test_view_change_starting() {
-        // Initialize a new node; start its idle and commit timeouts
+        // Initialize a new node; start its idle, commit, and view change timeouts
         let (mut node, mut state, service) = mock_node(&mock_config(4), vec![0], mock_block(0));
         state.idle_timeout.start();
         state.commit_timeout.start();
+        state.view_change_timeout.start();
 
         // Start a view change for view 1 and verify that the state is updated appropriately
         assert!(node.start_view_change(&mut state, 1).is_ok());
         assert_eq!(PbftMode::ViewChanging(1), state.mode);
         assert!(!state.idle_timeout.is_active());
         assert!(!state.commit_timeout.is_active());
-        assert!(state.view_change_timeout.is_active());
-        assert_eq!(
-            state.view_change_duration,
-            state.view_change_timeout.duration()
-        );
+        assert!(!state.view_change_timeout.is_active());
         assert!(service.was_called_with_args(stringify_func_call!(
             "broadcast",
             "ViewChange",
@@ -3955,18 +3961,12 @@ mod tests {
         // Start another view change for view 2 and verify that the state is updated appropriately
         state.idle_timeout.start();
         state.commit_timeout.start();
+        state.view_change_timeout.start();
         assert!(node.start_view_change(&mut state, 2).is_ok());
         assert_eq!(PbftMode::ViewChanging(2), state.mode);
         assert!(!state.idle_timeout.is_active());
         assert!(!state.commit_timeout.is_active());
-        assert!(state.view_change_timeout.is_active());
-        assert_eq!(
-            state
-                .view_change_duration
-                .checked_mul(2)
-                .expect("Couldn't double view change duration"),
-            state.view_change_timeout.duration()
-        );
+        assert!(!state.view_change_timeout.is_active());
         assert!(service.was_called_with_args(stringify_func_call!(
             "broadcast",
             "ViewChange",
@@ -4110,13 +4110,20 @@ mod tests {
     ///
     /// These conditions ensure that no old (stale) view change messages are added to the log.
     ///
+    /// When a node has `2f + 1` `ViewChange` messages for a view, it will start its view change
+    /// timeout to ensure that the new primary produces a `NewView` in a reasonable amount of time.
+    /// The appropriate duration of the view change timeout is calculated based on a base duration
+    /// (defined by the state object’s `view_change_duration` field) using the formula: `(desired
+    /// view number - node’s current view number) * view_change_duration`.
+    ///
     /// When the new primary for the view specified in the `ViewChange` message has `2f + 1`
     /// `ViewChange` messages for that view, it will broadcast a `NewView` message to the network.
     /// Only the new primary should broadcast the `NewView` message.
     ///
-    /// This test ensures that only non-stale `ViewChange` messages are accepted and that the new
-    /// primary (and only the new primary) broadcasts a `NewView` when it has the required messages
-    /// in its log.
+    /// This test ensures that only non-stale `ViewChange` messages are accepted, nodes start their
+    /// view change timeouts with the appropriate duration when `2f + 1` `ViewChange` messages are
+    /// received, and that the new primary (and only the new primary) broadcasts a `NewView` when
+    /// it has the required messages in its log.
     #[test]
     #[allow(unused_must_use)]
     fn test_view_change_acceptance() {
@@ -4184,6 +4191,8 @@ mod tests {
         assert!(service.was_called_with_args(stringify_func_call!("broadcast", "NewView")));
 
         // Verify NewView is not broadcasted when node is not the new primary
+        state.view_change_timeout.stop();
+        state.view = 4;
         state.mode = PbftMode::ViewChanging(5);
         assert!(node
             .on_peer_message(
@@ -4203,6 +4212,45 @@ mod tests {
         );
         // Verify broadcast only happened once (for view 4, not this view)
         assert!(service.was_called_with_args_once(stringify_func_call!("broadcast", "NewView")));
+
+        // Verify view change timeout is started
+        assert!(state.view_change_timeout.is_active());
+        assert_eq!(
+            state.view_change_duration,
+            state.view_change_timeout.duration()
+        );
+
+        // Verify view change timeout uses the appropriate duration, and that it is not started
+        // until 2f + 1 ViewChanges are received
+        state.view_change_timeout.stop();
+        state.mode = PbftMode::ViewChanging(6);
+        assert!(node
+            .on_peer_message(
+                mock_msg(PbftMessageType::ViewChange, 6, 0, vec![0], vec![], true),
+                &mut state
+            )
+            .is_ok());
+        assert!(node
+            .on_peer_message(
+                mock_msg(PbftMessageType::ViewChange, 6, 0, vec![1], vec![], false),
+                &mut state
+            )
+            .is_ok());
+        assert!(!state.view_change_timeout.is_active());
+        assert!(node
+            .on_peer_message(
+                mock_msg(PbftMessageType::ViewChange, 6, 0, vec![2], vec![], false),
+                &mut state,
+            )
+            .is_ok());
+        assert!(state.view_change_timeout.is_active());
+        assert_eq!(
+            state
+                .view_change_duration
+                .checked_mul(2)
+                .expect("Couldn't double view change duration"),
+            state.view_change_timeout.duration()
+        );
     }
 
     /// When the node that will become primary as the result of a view change has accepted `2f + 1`
