@@ -37,15 +37,18 @@ This implementation has been adapted for use in a blockchain context; it
 includes extensions such as regular `view changes` (leader changes) and
 a `consensus seal` to verify block finality.
 
-For implementation details, see the `rustdoc for Sawtooth PBFT
-<https://sawtooth.hyperledger.org/docs/pbft/nightly/master/pbft_doc/pbft_engine/index.html>`__.
-
 .. note::
 
-   Sawtooth PBFT is currently a prototype. For project status, see
-   `README.md <https://github.com/hyperledger/sawtooth-pbft/blob/master/README.md>`__
-   in the
-   `Sawtooth PBFT repository <https://github.com/hyperledger/sawtooth-pbft>`__.
+   Sawtooth PBFT uses the terms "primary" and "secondary" to refer to the role
+   of nodes in the network, which differs slightly from the terminology used in
+   the PBFT paper.
+
+   - "Primary" is synonymous with "leader"
+   - "Secondary" is synonymous with "follower" and "backup"
+   - "Node" is synonymous with "server" and "replica"
+
+For implementation details, see the `rustdoc for Sawtooth PBFT
+<https://sawtooth.hyperledger.org/docs/pbft/nightly/master/pbft_doc/pbft_engine/index.html>`__.
 
 
 .. Licensed under Creative Commons Attribution 4.0 International License
