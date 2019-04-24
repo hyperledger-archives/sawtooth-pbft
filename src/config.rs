@@ -64,7 +64,7 @@ pub struct PbftConfig {
     /// How many blocks to commit before forcing a view change for fairness
     pub forced_view_change_period: u64,
 
-    /// How large the PbftLog is allowed to get
+    /// How large the PbftLog is allowed to get before being pruned
     pub max_log_size: u64,
 
     /// Where to store PbftState
@@ -97,7 +97,6 @@ impl PbftConfig {
     /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 30s)
     /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
     /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
-    /// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
     /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
     ///
     /// # Panics
@@ -118,7 +117,6 @@ impl PbftConfig {
                         String::from("sawtooth.consensus.pbft.commit_timeout"),
                         String::from("sawtooth.consensus.pbft.view_change_duration"),
                         String::from("sawtooth.consensus.pbft.forced_view_change_period"),
-                        String::from("sawtooth.consensus.pbft.max_log_size"),
                     ],
                 )
             },
@@ -163,11 +161,6 @@ impl PbftConfig {
             &settings,
             &mut self.forced_view_change_period,
             "sawtooth.consensus.pbft.forced_view_change_period",
-        );
-        merge_setting_if_set(
-            &settings,
-            &mut self.max_log_size,
-            "sawtooth.consensus.pbft.max_log_size",
         );
     }
 }

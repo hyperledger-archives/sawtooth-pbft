@@ -38,10 +38,6 @@ processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transactio
   | before determining that the primary node is faulty. The idle timeout must be
   | longer than the block duration.
 
-- | ``sawtooth.consensus.pbft.max_log_size``
-  | (Optional; default 1000 messages)
-  | Maximum number of messages that can be in the log.
-
 - | ``sawtooth.consensus.pbft.members``
   | (Required)
   | List of validator public keys for the member nodes in the PBFT network,
