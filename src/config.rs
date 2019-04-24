@@ -29,8 +29,8 @@ use serde_json;
 
 use crate::timing::retry_until_ok;
 
-/// Contains the initial configuration loaded from on-chain settings, if present, or defaults in
-/// their absence.
+/// Contains the initial configuration loaded from on-chain settings and local configuration. The
+/// `members` list is required; all other settings are optional (defaults used in their absence)
 #[derive(Debug)]
 pub struct PbftConfig {
     // Members of the PBFT network
@@ -125,7 +125,7 @@ impl PbftConfig {
         // function without this setting, since there is no way of knowing which nodes are members.
         self.members = get_members_from_settings(&settings);
 
-        // Get various durations
+        // Get durations
         merge_millis_setting_if_set(
             &settings,
             &mut self.block_publishing_delay,
@@ -155,7 +155,7 @@ impl PbftConfig {
             );
         }
 
-        // Get various integer constants
+        // Get integer constants
         merge_setting_if_set(
             &settings,
             &mut self.forced_view_change_period,
