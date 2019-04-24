@@ -48,10 +48,6 @@ processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transactio
   | as a comma-separated list (in a JSON-formatted string):
   | ``[public-key-1, public-key-2, ..., public-key-n]``
 
-- | ``sawtooth.consensus.pbft.message_timeout``
-  | (Optional; default 10 ms)
-  | How long to wait for updates from the consensus API.
-
 - | ``sawtooth.consensus.pbft.view_change_duration``
   | (Optional; default 5 sec)
   | How long to wait for a valid ``NewView`` message before starting the next

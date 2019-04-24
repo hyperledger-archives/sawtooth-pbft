@@ -39,8 +39,8 @@ pub struct PbftConfig {
     /// How long to wait in between trying to publish blocks
     pub block_publishing_delay: Duration,
 
-    /// How long to wait for a message to arrive
-    pub message_timeout: Duration,
+    /// How long to wait for an update to arrive from the validator
+    pub update_recv_timeout: Duration,
 
     /// The base time to use for retrying with exponential backoff
     pub exponential_retry_base: Duration,
@@ -76,7 +76,7 @@ impl PbftConfig {
         PbftConfig {
             members: Vec::new(),
             block_publishing_delay: Duration::from_millis(200),
-            message_timeout: Duration::from_millis(10),
+            update_recv_timeout: Duration::from_millis(10),
             exponential_retry_base: Duration::from_millis(100),
             exponential_retry_max: Duration::from_secs(60),
             idle_timeout: Duration::from_secs(30),
@@ -97,7 +97,6 @@ impl PbftConfig {
     /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 30s)
     /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
     /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
-    /// + `sawtooth.consensus.pbft.message_timeout` (optional, default 10 ms)
     /// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
     /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
     ///
@@ -119,7 +118,6 @@ impl PbftConfig {
                         String::from("sawtooth.consensus.pbft.commit_timeout"),
                         String::from("sawtooth.consensus.pbft.view_change_duration"),
                         String::from("sawtooth.consensus.pbft.forced_view_change_period"),
-                        String::from("sawtooth.consensus.pbft.message_timeout"),
                         String::from("sawtooth.consensus.pbft.max_log_size"),
                     ],
                 )
@@ -135,11 +133,6 @@ impl PbftConfig {
             &settings,
             &mut self.block_publishing_delay,
             "sawtooth.consensus.pbft.block_publishing_delay",
-        );
-        merge_millis_setting_if_set(
-            &settings,
-            &mut self.message_timeout,
-            "sawtooth.consensus.pbft.message_timeout",
         );
         merge_secs_setting_if_set(
             &settings,

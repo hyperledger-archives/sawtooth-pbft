@@ -85,7 +85,7 @@ impl Engine for PbftEngine {
 
         // Main event loop; keep going until PBFT receives a Shutdown message or is disconnected
         loop {
-            let incoming_message = updates.recv_timeout(self.config.message_timeout);
+            let incoming_message = updates.recv_timeout(self.config.update_recv_timeout);
             let state = &mut **pbft_state.write();
 
             trace!("{} received message {:?}", state, incoming_message);

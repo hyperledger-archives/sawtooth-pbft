@@ -94,6 +94,9 @@ fn main() {
     if let Some(max) = args.exponential_retry_max {
         pbft_config.exponential_retry_max = Duration::from_secs(max);
     }
+    if let Some(timeout) = args.update_recv_timeout {
+        pbft_config.update_recv_timeout = Duration::from_millis(timeout);
+    }
 
     let pbft_engine = engine::PbftEngine::new(pbft_config);
 
@@ -136,7 +139,9 @@ fn parse_args() -> PbftCliArgs {
         (@arg exponential_retry_base: -b --exponential_retry_base +takes_value
          "base timeout for exponential backoff (milliseconds)")
         (@arg exponential_retry_max: -m --exponential_retry_max +takes_value
-         "max timeout for exponential backoff (seconds)"))
+         "max timeout for exponential backoff (seconds)")
+        (@arg update_recv_timeout: -u --update_recv_timeout +takes_value
+         "timeout for receiving an update from the validator (milliseconds)"))
     .get_matches();
 
     let log_config = matches.value_of("logconfig").map(|s| s.into());
@@ -164,6 +169,11 @@ fn parse_args() -> PbftCliArgs {
         .unwrap_or("")
         .parse::<u64>()
         .ok();
+    let update_recv_timeout = matches
+        .value_of("update_recv_timeout")
+        .unwrap_or("")
+        .parse::<u64>()
+        .ok();
 
     PbftCliArgs {
         log_config,
@@ -171,6 +181,7 @@ fn parse_args() -> PbftCliArgs {
         endpoint,
         exponential_retry_base,
         exponential_retry_max,
+        update_recv_timeout,
     }
 }
 
@@ -181,4 +192,5 @@ pub struct PbftCliArgs {
     endpoint: String,
     exponential_retry_base: Option<u64>,
     exponential_retry_max: Option<u64>,
+    update_recv_timeout: Option<u64>,
 }
