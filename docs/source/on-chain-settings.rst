@@ -24,7 +24,7 @@ processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transactio
   | How often to try to publish a block.
 
 - | ``sawtooth.consensus.pbft.commit_timeout``
-  | (Optional; default 30 sec)
+  | (Optional; default 30000 ms)
   | How long to wait between block commits before determining that the primary
   | node is faulty.
 
@@ -33,7 +33,7 @@ processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transactio
   | Number of blocks to commit before forcing a view change.
 
 - | ``sawtooth.consensus.pbft.idle_timeout``
-  | (Optional; default 30 sec)
+  | (Optional; default 30000 ms)
   | How long to wait for the next ``BlockNew`` and ``PrePrepare`` messages
   | before determining that the primary node is faulty. The idle timeout must be
   | longer than the block duration.
@@ -45,7 +45,7 @@ processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transactio
   | ``[public-key-1, public-key-2, ..., public-key-n]``
 
 - | ``sawtooth.consensus.pbft.view_change_duration``
-  | (Optional; default 5 sec)
+  | (Optional; default 5000 ms)
   | How long to wait for a valid ``NewView`` message before starting the next
   | view change. For more information, see :ref:`view-changing-mode-label`.
 

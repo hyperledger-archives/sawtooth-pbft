@@ -92,7 +92,7 @@ fn main() {
         pbft_config.exponential_retry_base = Duration::from_millis(base);
     }
     if let Some(max) = args.exponential_retry_max {
-        pbft_config.exponential_retry_max = Duration::from_secs(max);
+        pbft_config.exponential_retry_max = Duration::from_millis(max);
     }
     if let Some(timeout) = args.update_recv_timeout {
         pbft_config.update_recv_timeout = Duration::from_millis(timeout);
@@ -139,7 +139,7 @@ fn parse_args() -> PbftCliArgs {
         (@arg exponential_retry_base: -b --exponential_retry_base +takes_value
          "base timeout for exponential backoff (milliseconds)")
         (@arg exponential_retry_max: -m --exponential_retry_max +takes_value
-         "max timeout for exponential backoff (seconds)")
+         "max timeout for exponential backoff (milliseconds)")
         (@arg update_recv_timeout: -u --update_recv_timeout +takes_value
          "timeout for receiving an update from the validator (milliseconds)")
         (@arg max_log_size: -l --max_log_size +takes_value
