@@ -67,8 +67,8 @@ pub struct PbftConfig {
     /// How large the PbftLog is allowed to get before being pruned
     pub max_log_size: u64,
 
-    /// Where to store PbftState
-    pub storage: String,
+    /// Where to store PbftState ("memory" or "disk+/path/to/file")
+    pub storage_location: String,
 }
 
 impl PbftConfig {
@@ -84,7 +84,7 @@ impl PbftConfig {
             view_change_duration: Duration::from_secs(5),
             forced_view_change_period: 30,
             max_log_size: 1000,
-            storage: "memory".into(),
+            storage_location: "memory".into(),
         }
     }
 
@@ -97,7 +97,6 @@ impl PbftConfig {
     /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 30s)
     /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
     /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
-    /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
     ///
     /// # Panics
     /// + If block duration is greater than the idle timeout

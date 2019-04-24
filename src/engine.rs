@@ -60,7 +60,7 @@ impl Engine for PbftEngine {
 
         info!("PBFT config loaded: {:?}", self.config);
 
-        let mut pbft_state = get_storage(&self.config.storage, || {
+        let mut pbft_state = get_storage(&self.config.storage_location, || {
             PbftState::new(
                 local_peer_info.peer_id.clone(),
                 chain_head.block_num,
