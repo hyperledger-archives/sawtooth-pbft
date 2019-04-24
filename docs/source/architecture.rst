@@ -301,8 +301,7 @@ When the Sawtooth PBFT consensus engine starts, it does the following:
 
 * Initializes its state and message log
 
-* Establishes timers and counters for block durations and view changes,
-  based on the on-chain settings
+* Establishes timers and counters
 
 
 .. _normal-mode-label:
@@ -326,7 +325,7 @@ The normal mode proceeds as follows:
 
    - The primary node will send a request to its validator to initialize a new
      block. After a configurable timeout (determined by the
-     ``sawtooth.consensus.pbft.block_duration`` setting), the primary will send
+     ``sawtooth.consensus.pbft.block_publishing_delay`` setting), the primary will send
      a request to the validator to finalize the block and broadcast it to the
      network.
 

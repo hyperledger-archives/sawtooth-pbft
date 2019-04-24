@@ -80,7 +80,7 @@ be installed.
           sawset proposal create \
             ...
             sawtooth.consensus.pbft.members=\\['\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"'\\] \
-            sawtooth.consensus.pbft.block_duration=100 \
+            sawtooth.consensus.pbft.block_publishing_delay=100 \
             sawtooth.consensus.pbft.message_timeout=10 \
             sawtooth.consensus.pbft.max_log_size=1000 \
           ...

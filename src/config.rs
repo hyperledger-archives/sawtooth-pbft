@@ -37,7 +37,7 @@ pub struct PbftConfig {
     pub members: Vec<PeerId>,
 
     /// How long to wait in between trying to publish blocks
-    pub block_duration: Duration,
+    pub block_publishing_delay: Duration,
 
     /// How long to wait for a message to arrive
     pub message_timeout: Duration,
@@ -49,7 +49,7 @@ pub struct PbftConfig {
     pub exponential_retry_max: Duration,
 
     /// How long to wait for the next BlockNew + PrePrepare before determining primary is faulty
-    /// Should be longer than block_duration
+    /// Must be longer than block_publishing_delay
     pub idle_timeout: Duration,
 
     /// How long to wait (after Pre-Preparing) for the node to commit the block before starting a
@@ -75,7 +75,7 @@ impl PbftConfig {
     pub fn default() -> Self {
         PbftConfig {
             members: Vec::new(),
-            block_duration: Duration::from_millis(200),
+            block_publishing_delay: Duration::from_millis(200),
             message_timeout: Duration::from_millis(10),
             exponential_retry_base: Duration::from_millis(100),
             exponential_retry_max: Duration::from_secs(60),
@@ -92,7 +92,7 @@ impl PbftConfig {
     ///
     /// Configuration loads the following settings:
     /// + `sawtooth.consensus.pbft.members` (required)
-    /// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
+    /// + `sawtooth.consensus.pbft.block_publishing_delay` (optional, default 200 ms)
     /// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30s)
     /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 30s)
     /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
@@ -114,7 +114,7 @@ impl PbftConfig {
                     block_id.clone(),
                     vec![
                         String::from("sawtooth.consensus.pbft.members"),
-                        String::from("sawtooth.consensus.pbft.block_duration"),
+                        String::from("sawtooth.consensus.pbft.block_publishing_delay"),
                         String::from("sawtooth.consensus.pbft.idle_timeout"),
                         String::from("sawtooth.consensus.pbft.commit_timeout"),
                         String::from("sawtooth.consensus.pbft.view_change_duration"),
@@ -133,8 +133,8 @@ impl PbftConfig {
         // Get various durations
         merge_millis_setting_if_set(
             &settings,
-            &mut self.block_duration,
-            "sawtooth.consensus.pbft.block_duration",
+            &mut self.block_publishing_delay,
+            "sawtooth.consensus.pbft.block_publishing_delay",
         );
         merge_millis_setting_if_set(
             &settings,
@@ -157,11 +157,11 @@ impl PbftConfig {
             "sawtooth.consensus.pbft.view_change_duration",
         );
 
-        // Check to make sure block_duration < idle_timeout
-        if self.block_duration >= self.idle_timeout {
+        // Check to make sure block_publishing_delay < idle_timeout
+        if self.block_publishing_delay >= self.idle_timeout {
             panic!(
-                "Block duration ({:?}) must be less than the idle timeout ({:?})",
-                self.block_duration, self.idle_timeout
+                "Block publishing delay ({:?}) must be less than the idle timeout ({:?})",
+                self.block_publishing_delay, self.idle_timeout
             );
         }
 

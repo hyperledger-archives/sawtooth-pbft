@@ -19,7 +19,7 @@ processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transactio
    ``sawtooth.identity.allowed_keys`` in `Configuring Validator and Transactor
    Permissions <https://sawtooth.hyperledger.org/docs/core/releases/latest/sysadmin_guide/configuring_permissions.html>`__.
 
-- | ``sawtooth.consensus.pbft.block_duration``
+- | ``sawtooth.consensus.pbft.block_publishing_delay``
   | (Optional; default 200 ms)
   | How often to try to publish a block.
 
