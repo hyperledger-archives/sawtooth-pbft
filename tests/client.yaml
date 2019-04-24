@@ -44,8 +44,6 @@ services:
           sawtooth.consensus.algorithm.name=pbft \
           sawtooth.consensus.algorithm.version=0.1 \
           sawtooth.consensus.pbft.members=\\['\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"'\\] \
-          sawtooth.consensus.pbft.block_publishing_delay=100 \
-          sawtooth.consensus.pbft.view_change_timeout=4000 \
           -o config.batch && \
         sawadm genesis \
           config-genesis.batch config.batch && \
