@@ -101,8 +101,8 @@ pub struct PbftState {
     /// Normal operation or view changing
     pub mode: PbftMode,
 
-    /// Map of peers in the network, including ourselves
-    pub peer_ids: Vec<PeerId>,
+    /// List of members in the PBFT network, including this node
+    pub member_ids: Vec<PeerId>,
 
     /// The maximum number of faulty nodes in the network
     pub f: u64,
@@ -143,7 +143,7 @@ impl PbftState {
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(id: PeerId, head_block_num: u64, config: &PbftConfig) -> Self {
         // Maximum number of faulty nodes in this network. Panic if there are not enough nodes.
-        let f = ((config.peers.len() - 1) / 3) as u64;
+        let f = ((config.members.len() - 1) / 3) as u64;
         if f == 0 {
             panic!("This network does not contain enough nodes to be fault tolerant");
         }
@@ -156,7 +156,7 @@ impl PbftState {
             phase: PbftPhase::PrePreparing,
             mode: PbftMode::Normal,
             f,
-            peer_ids: config.peers.clone(),
+            member_ids: config.members.clone(),
             idle_timeout: Timeout::new(config.idle_timeout),
             commit_timeout: Timeout::new(config.commit_timeout),
             view_change_timeout: Timeout::new(config.view_change_duration),
@@ -169,14 +169,14 @@ impl PbftState {
 
     /// Obtain the ID for the primary node in the network
     pub fn get_primary_id(&self) -> PeerId {
-        let primary_index = (self.view as usize) % self.peer_ids.len();
-        self.peer_ids[primary_index].clone()
+        let primary_index = (self.view as usize) % self.member_ids.len();
+        self.member_ids[primary_index].clone()
     }
 
     /// Obtain the ID for the primary node at the specified view
     pub fn get_primary_id_at_view(&self, view: u64) -> PeerId {
-        let primary_index = (view as usize) % self.peer_ids.len();
-        self.peer_ids[primary_index].clone()
+        let primary_index = (view as usize) % self.member_ids.len();
+        self.member_ids[primary_index].clone()
     }
 
     /// Tell if this node is currently the primary
@@ -228,7 +228,7 @@ mod tests {
     use crate::test_helpers::*;
 
     /// This test will verify that calling `PbftState::new` will properly initialize a state struct
-    /// and fail if there are not enough peers.
+    /// and fail if there are not enough members.
     #[test]
     fn test_state_initialization() {
         // Verify normal initialization
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(0, state.view);
         assert_eq!(PbftPhase::PrePreparing, state.phase);
         assert_eq!(PbftMode::Normal, state.mode);
-        assert_eq!(cfg.peers, state.peer_ids);
+        assert_eq!(cfg.members, state.member_ids);
         assert_eq!(1, state.f);
         assert_eq!(cfg.idle_timeout, state.idle_timeout.duration());
         assert_eq!(cfg.commit_timeout, state.commit_timeout.duration());

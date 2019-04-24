@@ -25,7 +25,7 @@ use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId};
 /// Create a mock configuration given a number of nodes
 pub fn mock_config(num_nodes: u8) -> PbftConfig {
     let mut config = PbftConfig::default();
-    config.peers = (0..num_nodes).map(|id| vec![id as u8]).collect();
+    config.members = (0..num_nodes).map(|id| vec![id as u8]).collect();
     config
 }
 

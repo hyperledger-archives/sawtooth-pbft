@@ -33,8 +33,8 @@ use crate::timing::retry_until_ok;
 /// their absence.
 #[derive(Debug)]
 pub struct PbftConfig {
-    // Peers that this node is connected to
-    pub peers: Vec<PeerId>,
+    // Members of the PBFT network
+    pub members: Vec<PeerId>,
 
     /// How long to wait in between trying to publish blocks
     pub block_duration: Duration,
@@ -74,7 +74,7 @@ pub struct PbftConfig {
 impl PbftConfig {
     pub fn default() -> Self {
         PbftConfig {
-            peers: Vec::new(),
+            members: Vec::new(),
             block_duration: Duration::from_millis(200),
             message_timeout: Duration::from_millis(10),
             exponential_retry_base: Duration::from_millis(100),
@@ -126,11 +126,9 @@ impl PbftConfig {
             },
         );
 
-        // Get the peers associated with this node (including ourselves). Panic if it is not
-        // provided; the network cannot function without this setting.
-        let peers = get_peers_from_settings(&settings);
-
-        self.peers = peers;
+        // Get the on-chain list of PBFT members or panic if it is not provided; the network cannot
+        // function without this setting, since there is no way of knowing which nodes are members.
+        self.members = get_members_from_settings(&settings);
 
         // Get various durations
         merge_millis_setting_if_set(
@@ -231,25 +229,25 @@ fn merge_millis_setting_if_set(
     )
 }
 
-/// Get the peers as a Vec<PeerId> from settings
+/// Get the list of PBFT members as a Vec<PeerId> from settings
 ///
 /// # Panics
 /// + If the `sawtooth.consenus.pbft.members` setting is unset or invalid
-pub fn get_peers_from_settings<S: std::hash::BuildHasher>(
+pub fn get_members_from_settings<S: std::hash::BuildHasher>(
     settings: &HashMap<String, String, S>,
 ) -> Vec<PeerId> {
-    let peers_setting_value = settings
+    let members_setting_value = settings
         .get("sawtooth.consensus.pbft.members")
         .expect("'sawtooth.consensus.pbft.members' is empty; this setting must exist to use PBFT");
 
-    let peers: Vec<String> = serde_json::from_str(peers_setting_value).unwrap_or_else(|err| {
+    let members: Vec<String> = serde_json::from_str(members_setting_value).unwrap_or_else(|err| {
         panic!(
             "Unable to parse value at 'sawtooth.consensus.pbft.members' due to error: {:?}",
             err
         )
     });
 
-    peers
+    members
         .into_iter()
         .map(|s| {
             hex::decode(s).unwrap_or_else(|err| {
