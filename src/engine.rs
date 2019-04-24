@@ -71,7 +71,7 @@ impl Engine for PbftEngine {
 
         info!("PBFT state created: {}", **pbft_state.read());
 
-        let mut working_ticker = timing::Ticker::new(self.config.block_duration);
+        let mut block_duration_ticker = timing::Ticker::new(self.config.block_duration);
 
         let mut node = PbftNode::new(
             &self.config,
@@ -99,34 +99,32 @@ impl Engine for PbftEngine {
                 Err(err) => log_any_error(Err(err)),
             }
 
-            working_ticker.tick(|| {
-                log_any_error(node.try_publish(state));
+            block_duration_ticker.tick(|| log_any_error(node.try_publish(state)));
 
-                // Every so often, check to see if the idle timeout has expired; initiate
-                // ViewChange if necessary
-                if node.check_idle_timeout_expired(state) {
-                    warn!("Idle timeout expired; proposing view change");
-                    log_any_error(node.start_view_change(state, state.view + 1));
-                }
+            // Every so often, check to see if the idle timeout has expired; initiate
+            // ViewChange if necessary
+            if node.check_idle_timeout_expired(state) {
+                warn!("Idle timeout expired; proposing view change");
+                log_any_error(node.start_view_change(state, state.view + 1));
+            }
 
-                // If the commit timeout has expired, initiate a view change
-                if node.check_commit_timeout_expired(state) {
-                    warn!("Commit timeout expired; proposing view change");
-                    log_any_error(node.start_view_change(state, state.view + 1));
-                }
+            // If the commit timeout has expired, initiate a view change
+            if node.check_commit_timeout_expired(state) {
+                warn!("Commit timeout expired; proposing view change");
+                log_any_error(node.start_view_change(state, state.view + 1));
+            }
 
-                // Check the view change timeout if the node is view changing so we can start a new
-                // view change if we don't get a NewView in time
-                if let PbftMode::ViewChanging(v) = state.mode {
-                    if node.check_view_change_timeout_expired(state) {
-                        warn!(
-                            "View change timeout expired; proposing view change for view {}",
-                            v + 1
-                        );
-                        log_any_error(node.start_view_change(state, v + 1));
-                    }
+            // Check the view change timeout if the node is view changing so we can start a new
+            // view change if we don't get a NewView in time
+            if let PbftMode::ViewChanging(v) = state.mode {
+                if node.check_view_change_timeout_expired(state) {
+                    warn!(
+                        "View change timeout expired; proposing view change for view {}",
+                        v + 1
+                    );
+                    log_any_error(node.start_view_change(state, v + 1));
                 }
-            });
+            }
         }
 
         Ok(())
