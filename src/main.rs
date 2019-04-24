@@ -131,21 +131,21 @@ fn parse_args() -> PbftCliArgs {
         (version: crate_version!())
         (about: "PBFT consensus for Sawtooth")
         (@arg connect: -C --connect +takes_value
-         "connection endpoint for validator")
+         "connection endpoint for validator (default 'tcp://localhost:5050')")
         (@arg verbose: -v --verbose +multiple
          "increase output verbosity")
         (@arg logconfig: -L --log_config +takes_value
          "path to logging config file")
         (@arg exponential_retry_base: -b --exponential_retry_base +takes_value
-         "base timeout for exponential backoff (milliseconds)")
+         "base timeout for exponential backoff (default 100 ms)")
         (@arg exponential_retry_max: -m --exponential_retry_max +takes_value
-         "max timeout for exponential backoff (milliseconds)")
+         "max timeout for exponential backoff (default 60000 ms)")
         (@arg update_recv_timeout: -u --update_recv_timeout +takes_value
-         "timeout for receiving an update from the validator (milliseconds)")
+         "timeout for receiving an update from the validator (default 10 ms)")
         (@arg max_log_size: -l --max_log_size +takes_value
-         "how large the PBFT log is allowed to get before being pruned")
+         "how large the PBFT log is allowed to get before being pruned (default 10000 messages)")
         (@arg storage_location: -s --storage_location +takes_value
-         "where to store PBFT's state ('memory' or 'disk+/path/to/file')"))
+         "where to store PBFT's state ('memory' or 'disk+/path/to/file'; default 'memory')"))
     .get_matches();
 
     let log_config = matches.value_of("logconfig").map(|s| s.into());

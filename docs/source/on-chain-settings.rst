@@ -20,16 +20,16 @@ processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transactio
    Permissions <https://sawtooth.hyperledger.org/docs/core/releases/latest/sysadmin_guide/configuring_permissions.html>`__.
 
 - | ``sawtooth.consensus.pbft.block_publishing_delay``
-  | (Optional; default 200 ms)
+  | (Optional; default 1000 ms)
   | How often to try to publish a block.
 
 - | ``sawtooth.consensus.pbft.commit_timeout``
-  | (Optional; default 30000 ms)
+  | (Optional; default 10000 ms)
   | How long to wait between block commits before determining that the primary
   | node is faulty.
 
 - | ``sawtooth.consensus.pbft.forced_view_change_period``
-  | (Optional; default 30 blocks)
+  | (Optional; default 100 blocks)
   | Number of blocks to commit before forcing a view change.
 
 - | ``sawtooth.consensus.pbft.idle_timeout``

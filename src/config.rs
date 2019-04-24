@@ -75,15 +75,15 @@ impl PbftConfig {
     pub fn default() -> Self {
         PbftConfig {
             members: Vec::new(),
-            block_publishing_delay: Duration::from_millis(200),
+            block_publishing_delay: Duration::from_millis(1000),
             update_recv_timeout: Duration::from_millis(10),
             exponential_retry_base: Duration::from_millis(100),
             exponential_retry_max: Duration::from_millis(60000),
             idle_timeout: Duration::from_millis(30000),
-            commit_timeout: Duration::from_millis(30000),
+            commit_timeout: Duration::from_millis(10000),
             view_change_duration: Duration::from_millis(5000),
-            forced_view_change_period: 30,
-            max_log_size: 1000,
+            forced_view_change_period: 100,
+            max_log_size: 10000,
             storage_location: "memory".into(),
         }
     }
@@ -92,11 +92,11 @@ impl PbftConfig {
     ///
     /// Configuration loads the following settings:
     /// + `sawtooth.consensus.pbft.members` (required)
-    /// + `sawtooth.consensus.pbft.block_publishing_delay` (optional, default 200 ms)
+    /// + `sawtooth.consensus.pbft.block_publishing_delay` (optional, default 1000 ms)
     /// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30000 ms)
-    /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 30000 ms)
+    /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 10000 ms)
     /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5000 ms)
-    /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
+    /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 100 blocks)
     ///
     /// # Panics
     /// + If block duration is greater than the idle timeout
