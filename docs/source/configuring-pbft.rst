@@ -1,10 +1,69 @@
-**********************
-PBFT On-Chain Settings
-**********************
+****************
+Configuring PBFT
+****************
 
-Sawtooth PBFT includes on-chain settings for configuring PBFT consensus on a
-Hyperledger Sawtooth network. The `Settings transaction
-processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications/settings_transaction_family.html>`__
+Sawtooth PBFT is configured in two ways:
+
+- Local settings - Command-line (CLI) options when running the PBFT executable
+  or service
+
+- Network settings - On-chain settings that are defined for the Sawtooth network
+
+
+.. _cli-options-label:
+
+=========================
+PBFT Command-Line Options
+=========================
+
+Sawtooth PBFT uses command-line options to provide local configuration. These
+options only affect the local behavior of a PBFT node, not the network as a
+whole. The PBFT consensus engine, ``pbft-engine``, has the following
+command-line options:
+
+- | ``-C, --connect CONNECT``
+  | (Optional; default ``tcp://localhost:5050``)
+  | Connection endpoint for validator
+
+- | ``-b, --exponential_retry_base BASE``
+  | (Optional; default 100 ms)
+  | Base timeout for exponential backoff used for validator requests
+
+- | ``-m, --exponential_retry_max MAX``
+  | (Optional; default 60000 ms)
+  | Max timeout for exponential backoff used for validator requests
+
+- | ``-L, --log_config LOG_CONFIG``
+  | (Optional)
+  | Path to logging config file; if not present, console logging is used
+
+- | ``-l, --max_log_size MAX_LOG_SIZE``
+  | (Optional; default 10000 messages)
+  | How large the PBFT log is allowed to get before being pruned
+
+- | ``-s, --storage_location STORAGE_LOCATION``
+  | (Optional; default ``memory``)
+  | Where to store PBFT's state: ``memory`` or ``disk+/path/to/file``
+
+- | ``-u, --update_recv_timeout TIMEOUT``
+  | (Optional; default 10 ms)
+  | Timeout for receiving an update from the validator
+
+- | ``-v``
+  | (Optional)
+  | Increase output verbosity
+
+
+.. _on-chain-settings-label:
+
+======================
+PBFT On-Chain Settings
+======================
+
+Sawtooth PBFT includes on-chain settings for network-wide configuration on a
+Hyperledger Sawtooth network. These settings affect how the whole network
+operates, so it is desirable that they be the same on all nodes. The `Settings
+transaction processor <https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications/settings_transaction_family.html>`__
 (or an equivalent) is required to process these settings.
 
 .. tip::

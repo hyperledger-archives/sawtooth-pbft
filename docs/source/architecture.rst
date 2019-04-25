@@ -45,7 +45,7 @@ Fault Tolerance
 
 A PBFT network consists of nodes that are ordered from 0 to `n-1`, where
 `n` is the total number of nodes in the network. The
-:doc:`on-chain setting <on-chain-settings>` ``sawtooth.consensus.pbft.members``
+:ref:`on-chain setting <on-chain-settings-label>` ``sawtooth.consensus.pbft.members``
 lists all PBFT member nodes and determines the node order.
 
 The PBFT algorithm guarantees network `safety
@@ -69,7 +69,7 @@ View Changes: Choosing a New Primary
 A `view` is the period of time that a given node is the primary, so a `view
 change` means switching to a different primary node. The next primary is
 selected in a round-robin (circular) fashion, according to the order of nodes
-listed in the :doc:`on-chain setting <on-chain-settings>`
+listed in the :ref:`on-chain setting <on-chain-settings-label>`
 ``sawtooth.consensus.pbft.members``.
 
 In a four-node network, for example, the first node (node 0) is the primary at
@@ -133,7 +133,7 @@ by the `Settings transaction processor
 These settings list each node in the network, set the view-change period (how
 often the primary changes), and specify other items such as the block publishing
 frequency, timeout periods, and message log size.
-For more information, see :doc:`on-chain-settings`.
+For more information, see :doc:`configuring-pbft`.
 
 
 .. _consensus-messages-label:
@@ -386,9 +386,10 @@ of the log). Instead, each node cleans the log periodically during normal
 operation.
 
 Log size is controlled on each node with the ``--max_log_size`` option when
-starting the PBFT consensus engine. When a block is committed, each node
-compares the size of its log against the maximum size. If the log exceeds this
-value, Sawtooth PBFT uses these rules to prune the log:
+starting the PBFT consensus engine (see :ref:`cli-options-label`). When a
+block is committed, each node compares the size of its log against the maximum
+size. If the log exceeds this value, Sawtooth PBFT uses these rules to prune the
+log:
 
 - Keep blocks and messages for the sequence number of the block that was just
   committed, plus those for any higher (newer) sequence numbers

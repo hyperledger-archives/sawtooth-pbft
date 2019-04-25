@@ -67,10 +67,10 @@ be installed.
      Docker Compose files for testing, such as ``grafana.yaml``, ``client.yaml``,
      and ``pbft_unit_tests.yaml``.
 
-   * To adjust the :ref:`PBFT on-chain settings <pbft-on-chain-settings-label>`,
+   * To adjust the :ref:`PBFT on-chain settings <on-chain-settings-label>`,
      edit the testing Compose file and change the ``sawset proposal create``
      parameters for the four validator containers. For more information, see
-     :doc:`on-chain-settings`. This example shows the settings in
+     :ref:`on-chain-settings-label`. This example shows the settings in
      ``test_liveness.yaml`` for the first validator container:
 
     .. code-block:: yaml
