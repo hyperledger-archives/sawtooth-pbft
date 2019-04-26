@@ -67,11 +67,11 @@ be installed.
      Docker Compose files for testing, such as ``grafana.yaml``, ``client.yaml``,
      and ``pbft_unit_tests.yaml``.
 
-   * To adjust the :ref:`PBFT on-chain settings <on-chain-settings-label>`,
-     edit the testing Compose file and change the ``sawset proposal create``
-     parameters for the four validator containers. For more information, see
+   * To adjust the :ref:`<on-chain-settings-label>`, edit the testing Compose
+     file and change the ``sawset proposal create`` parameter for the genesis
+     validator container (``validator-0``). For more information, see
      :ref:`on-chain-settings-label`. This example shows the settings in
-     ``test_liveness.yaml`` for the first validator container:
+     ``test_liveness.yaml``:
 
     .. code-block:: yaml
 
@@ -79,8 +79,22 @@ be installed.
           ...
           sawset proposal create \
             ...
+            sawtooth.consensus.algorithm.name=pbft \
+            sawtooth.consensus.algorithm.version=0.1 \
             sawtooth.consensus.pbft.members=\\['\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"'\\] \
-            sawtooth.consensus.pbft.block_publishing_delay=100 \
+          ...
+
+   * To adjust the :ref:`<cli-options-label>`, edit the testing Compose file and
+     change the options used with the ``pbft-engine`` command for each PBFT
+     container. For more information, see :ref:`<cli-options-label>`. This
+     example shows the options in ``test_liveness.yaml`` for the ``pbft-0``
+     container:
+
+     .. code-block:: yaml
+
+        pbft-0
+          ...
+          command: ./target/debug/pbft-engine --connect tcp://validator-0:5050 -vv
           ...
 
 
