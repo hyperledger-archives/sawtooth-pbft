@@ -132,7 +132,7 @@ pub struct PbftState {
     pub exponential_retry_max: Duration,
 
     /// How many blocks to commit before forcing a view change for fairness
-    pub forced_view_change_period: u64,
+    pub forced_view_change_interval: u64,
 }
 
 impl PbftState {
@@ -163,7 +163,7 @@ impl PbftState {
             view_change_duration: config.view_change_duration,
             exponential_retry_base: config.exponential_retry_base,
             exponential_retry_max: config.exponential_retry_max,
-            forced_view_change_period: config.forced_view_change_period,
+            forced_view_change_interval: config.forced_view_change_interval,
         }
     }
 
@@ -218,7 +218,7 @@ impl PbftState {
     }
 
     pub fn at_forced_view_change(&self) -> bool {
-        self.seq_num % self.forced_view_change_period == 0
+        self.seq_num % self.forced_view_change_interval == 0
     }
 }
 
@@ -251,8 +251,8 @@ mod tests {
         assert_eq!(cfg.exponential_retry_base, state.exponential_retry_base);
         assert_eq!(cfg.exponential_retry_max, state.exponential_retry_max);
         assert_eq!(
-            cfg.forced_view_change_period,
-            state.forced_view_change_period
+            cfg.forced_view_change_interval,
+            state.forced_view_change_interval
         );
 
         // Verify panic if f == 0

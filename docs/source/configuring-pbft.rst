@@ -87,7 +87,7 @@ transaction processor <https://sawtooth.hyperledger.org/docs/core/releases/lates
   | How long to wait between block commits before determining that the primary
   | node is faulty.
 
-- | ``sawtooth.consensus.pbft.forced_view_change_period``
+- | ``sawtooth.consensus.pbft.forced_view_change_interval``
   | (Optional; default 100 blocks)
   | Number of blocks to commit before forcing a view change.
 

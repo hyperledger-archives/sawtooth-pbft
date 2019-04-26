@@ -62,7 +62,7 @@ pub struct PbftConfig {
     pub view_change_duration: Duration,
 
     /// How many blocks to commit before forcing a view change for fairness
-    pub forced_view_change_period: u64,
+    pub forced_view_change_interval: u64,
 
     /// How large the PbftLog is allowed to get before being pruned
     pub max_log_size: u64,
@@ -82,7 +82,7 @@ impl PbftConfig {
             idle_timeout: Duration::from_millis(30000),
             commit_timeout: Duration::from_millis(10000),
             view_change_duration: Duration::from_millis(5000),
-            forced_view_change_period: 100,
+            forced_view_change_interval: 100,
             max_log_size: 10000,
             storage_location: "memory".into(),
         }
@@ -96,7 +96,7 @@ impl PbftConfig {
     /// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30000 ms)
     /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 10000 ms)
     /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5000 ms)
-    /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 100 blocks)
+    /// + `sawtooth.consensus.pbft.forced_view_change_interval` (optional, default 100 blocks)
     ///
     /// # Panics
     /// + If block duration is greater than the idle timeout
@@ -115,7 +115,7 @@ impl PbftConfig {
                         String::from("sawtooth.consensus.pbft.idle_timeout"),
                         String::from("sawtooth.consensus.pbft.commit_timeout"),
                         String::from("sawtooth.consensus.pbft.view_change_duration"),
-                        String::from("sawtooth.consensus.pbft.forced_view_change_period"),
+                        String::from("sawtooth.consensus.pbft.forced_view_change_interval"),
                     ],
                 )
             },
@@ -158,8 +158,8 @@ impl PbftConfig {
         // Get integer constants
         merge_setting_if_set(
             &settings,
-            &mut self.forced_view_change_period,
-            "sawtooth.consensus.pbft.forced_view_change_period",
+            &mut self.forced_view_change_interval,
+            "sawtooth.consensus.pbft.forced_view_change_interval",
         );
     }
 }

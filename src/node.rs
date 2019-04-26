@@ -3740,8 +3740,8 @@ mod tests {
         state.idle_timeout.stop();
         state.phase = PbftPhase::Finishing(false);
 
-        // Set the node's forced_view_change_period to 3 and its mode to ViewChanging
-        state.forced_view_change_period = 3;
+        // Set the node's forced_view_change_interval to 3 and its mode to ViewChanging
+        state.forced_view_change_interval = 3;
         state.mode = PbftMode::ViewChanging(1);
 
         // Simulate block commit notification for block 2; verify that node properly updates its

@@ -130,7 +130,7 @@ Sawtooth PBFT configures the network with on-chain settings, which are processed
 by the `Settings transaction processor
 <https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications/settings_transaction_family.html>`__ (or an equivalent).
 
-These settings list each node in the network, set the view-change period (how
+These settings list each node in the network, set the view-change interval (how
 often the primary changes), and specify other items such as the block publishing
 frequency, timeout periods, and message log size.
 For more information, see :doc:`configuring-pbft`.
