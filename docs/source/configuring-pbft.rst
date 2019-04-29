@@ -95,7 +95,7 @@ transaction processor <https://sawtooth.hyperledger.org/docs/core/releases/lates
   | (Optional; default 30000 ms)
   | How long to wait for the next ``BlockNew`` and ``PrePrepare`` messages
   | before determining that the primary node is faulty. The idle timeout must be
-  | longer than the block duration.
+  | longer than the block publishing delay.
 
 - | ``sawtooth.consensus.pbft.members``
   | (Required)

@@ -99,7 +99,7 @@ impl Engine for PbftEngine {
                 Err(err) => log_any_error(Err(err)),
             }
 
-            // If the block duration has passed, attempt to publish a block
+            // If the block publishing delay has passed, attempt to publish a block
             block_publishing_ticker.tick(|| log_any_error(node.try_publish(state)));
 
             // If the idle timeout has expired, initiate a view change
