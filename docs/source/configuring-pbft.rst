@@ -84,8 +84,8 @@ transaction processor <https://sawtooth.hyperledger.org/docs/core/releases/lates
 
 - | ``sawtooth.consensus.pbft.commit_timeout``
   | (Optional; default 10000 ms)
-  | How long to wait between block commits before determining that the primary
-  | node is faulty.
+  | How long to wait (after Pre-Preparing) for the node to commit the block
+  | before determining that the primary node is faulty.
 
 - | ``sawtooth.consensus.pbft.forced_view_change_interval``
   | (Optional; default 100 blocks)
