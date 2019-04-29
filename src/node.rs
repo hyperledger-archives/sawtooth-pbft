@@ -28,7 +28,7 @@ use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
 
-use crate::config::{get_peers_from_settings, PbftConfig};
+use crate::config::{get_members_from_settings, PbftConfig};
 use crate::error::PbftError;
 use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
@@ -99,7 +99,7 @@ impl PbftNode {
     /// Handle a peer message from another PbftNode
     ///
     /// Handle all messages from other nodes. Such messages include `PrePrepare`, `Prepare`,
-    /// `Commit`, `ViewChange`, and `NewView`. Make sure the message is from a known peer. If the
+    /// `Commit`, `ViewChange`, and `NewView`. Make sure the message is from a PBFT member. If the
     /// node is view changing, ignore all messages that aren't `ViewChange`s or `NewView`s.
     pub fn on_peer_message(
         &mut self,
@@ -108,10 +108,10 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         trace!("{}: Got peer message: {}", state, msg.info());
 
-        // Make sure this message is from a known peer
-        if !state.peer_ids.contains(&msg.info().signer_id) {
+        // Make sure this message is from a known member of the PBFT network
+        if !state.member_ids.contains(&msg.info().signer_id) {
             return Err(PbftError::InvalidMessage(format!(
-                "Received message from node ({:?}) that is not a known peer",
+                "Received message from node ({:?}) that is not a member of the PBFT network",
                 hex::encode(msg.info().get_signer_id()),
             )));
         }
@@ -866,14 +866,14 @@ impl PbftNode {
         Ok(())
     }
 
-    /// Check the on-chain list of peers; if it has changed, update peers list and return true.
+    /// Check the on-chain list of members; if it has changed, update members list and return true.
     ///
     /// # Panics
     /// + If the `sawtooth.consensus.pbft.members` setting is unset or invalid
     /// + If the network this node is on does not have enough nodes to be Byzantine fault tolernant
     fn update_membership(&mut self, block_id: BlockId, state: &mut PbftState) {
-        // Get list of peers from settings (retry until a valid result is received)
-        trace!("Getting on-chain list of peers to check for membership updates");
+        // Get list of members from settings (retry until a valid result is received)
+        trace!("Getting on-chain list of members to check for membership updates");
         let settings = retry_until_ok(
             state.exponential_retry_base,
             state.exponential_retry_max,
@@ -884,12 +884,12 @@ impl PbftNode {
                 )
             },
         );
-        let on_chain_peers = get_peers_from_settings(&settings);
+        let on_chain_members = get_members_from_settings(&settings);
 
-        if on_chain_peers != state.peer_ids {
-            info!("Updating membership: {:?}", on_chain_peers);
-            state.peer_ids = on_chain_peers;
-            let f = (state.peer_ids.len() - 1) / 3;
+        if on_chain_members != state.member_ids {
+            info!("Updating membership: {:?}", on_chain_members);
+            state.member_ids = on_chain_members;
+            let f = (state.member_ids.len() - 1) / 3;
             if f == 0 {
                 panic!("This network no longer contains enough nodes to be fault tolerant");
             }
@@ -943,7 +943,7 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         // Ignore if the peer is not a member of the PBFT network or the chain head is block 0
-        if !state.peer_ids.contains(&peer_id) || state.seq_num == 1 {
+        if !state.member_ids.contains(&peer_id) || state.seq_num == 1 {
             return Ok(());
         }
 
@@ -1215,18 +1215,18 @@ impl PbftNode {
                     Ok(ids)
                 })?;
 
-        // All of the votes must come from known peers, and the primary can't explicitly vote
+        // All of the votes must come from PBFT members, and the primary can't explicitly vote
         // itself, since broacasting the NewView is an implicit vote. Check that the votes received
-        // are from a subset of "peers - primary".
+        // are from a subset of "members - primary".
         let peer_ids: HashSet<_> = state
-            .peer_ids
+            .member_ids
             .iter()
             .cloned()
             .filter(|pid| pid != &PeerId::from(new_view.get_info().get_signer_id()))
             .collect();
 
         trace!(
-            "Comparing voter IDs ({:?}) with peer IDs - primary ({:?})",
+            "Comparing voter IDs ({:?}) with member IDs - primary ({:?})",
             voter_ids,
             peer_ids
         );
@@ -1350,12 +1350,12 @@ impl PbftNode {
                     Ok(ids)
                 })?;
 
-        // All of the votes in a seal must come from known peers, and the primary can't explicitly
+        // All of the votes in a seal must come from PBFT members, and the primary can't explicitly
         // vote itself, since building a consensus seal is an implicit vote. Check that the votes
-        // received are from a subset of "peers - seal creator". Use the list of peers from the
+        // received are from a subset of "members - seal creator". Use the list of members from the
         // block previous to the one this seal verifies, since that represents the state of the
         // network at the time this block was voted on.
-        trace!("Getting on-chain list of peers to verify seal");
+        trace!("Getting on-chain list of members to verify seal");
         let settings = retry_until_ok(
             state.exponential_retry_base,
             state.exponential_retry_max,
@@ -1366,24 +1366,24 @@ impl PbftNode {
                 )
             },
         );
-        let peers = get_peers_from_settings(&settings);
+        let members = get_members_from_settings(&settings);
 
-        // Verify that the seal's signer is a known peer
-        if !peers.contains(&seal.get_info().get_signer_id().to_vec()) {
+        // Verify that the seal's signer is a PBFT member
+        if !members.contains(&seal.get_info().get_signer_id().to_vec()) {
             return Err(PbftError::InvalidMessage(format!(
                 "Consensus seal is signed by an unknown peer: {:?}",
                 seal.get_info().get_signer_id()
             )));
         }
 
-        let peer_ids: HashSet<_> = peers
+        let peer_ids: HashSet<_> = members
             .iter()
             .cloned()
             .filter(|pid| pid.as_slice() != seal.get_info().get_signer_id())
             .collect();
 
         trace!(
-            "Comparing voter IDs ({:?}) with on-chain peer IDs - primary ({:?})",
+            "Comparing voter IDs ({:?}) with on-chain member IDs - primary ({:?})",
             voter_ids,
             peer_ids
         );
@@ -1644,9 +1644,9 @@ mod tests {
     }
 
     impl MockService {
-        /// Create a new `MockService` and set the peers setting based on the `PbftConfig`
+        /// Create a new `MockService` and set the members setting based on the `PbftConfig`
         fn new(cfg: &PbftConfig) -> Self {
-            let peers: Vec<_> = cfg.peers.iter().map(hex::encode).collect();
+            let members: Vec<_> = cfg.members.iter().map(hex::encode).collect();
             let service = MockService {
                 calls: Default::default(),
                 settings: Default::default(),
@@ -1656,7 +1656,7 @@ mod tests {
             let mut default_settings = HashMap::new();
             default_settings.insert(
                 "sawtooth.consensus.pbft.members".to_string(),
-                serde_json::to_string(&peers).unwrap(),
+                serde_json::to_string(&members).unwrap(),
             );
             service
                 .settings
@@ -1836,7 +1836,7 @@ mod tests {
     /// Create a mock configuration for the list of signers generated by `mock_signer_network`
     fn mock_config_from_signer_network(keys: &[KeyPair]) -> PbftConfig {
         let mut config = PbftConfig::default();
-        config.peers = keys
+        config.members = keys
             .iter()
             .map(|key_pair| key_pair.pub_key.clone())
             .collect();
@@ -2200,7 +2200,7 @@ mod tests {
             .verify_new_view(&vote_for_different_view, &mut state)
             .is_err());
 
-        // Test verification of a NewView that contains a vote from an unknown peer
+        // Test verification of a NewView that contains a vote from a non-member
         let vote_from_unknown_peer = mock_new_view(
             1,
             1,
@@ -2262,8 +2262,8 @@ mod tests {
     ///    c. Sequence number must match the consensus seal’s sequence number
     /// 2. The seal’s signer (as determined by the seal’s `signer_id`) and all of the vote’s
     ///    signers are nodes that were members of the network at the time the block was voted on
-    ///    (this is checked by getting the on-chain list of peers for the block previous to the one
-    ///    the seal verifies, as specified in the `previous_id` argument to the
+    ///    (this is checked by getting the on-chain list of members for the block previous to the
+    ///    one the seal verifies, as specified in the `previous_id` argument to the
     ///    `verify_consensus_seal` method)
     /// 3. None of the votes are from the seal’s signer (producing a seal is an implicit vote from
     ///    the node that constructed it, so including its own vote would be double-voting)
@@ -2282,7 +2282,7 @@ mod tests {
             mock_block(0),
         );
 
-        // Set the MockService to return a different peers list for block_id=[1]
+        // Set the MockService to return a different members list for block_id=[1]
         let mut block_1_settings = HashMap::new();
         block_1_settings.insert(
             "sawtooth.consensus.pbft.members".to_string(),
@@ -2319,7 +2319,7 @@ mod tests {
             .is_ok());
 
         // Test verification of a valid seal that has a vote from a node not in the previous block
-        // (using previous_id=[1] gets the list of peers set above)
+        // (using previous_id=[1] gets the list of members set above)
         let vote_not_in_prev_block = mock_seal(
             0,
             2,
@@ -2950,18 +2950,18 @@ mod tests {
 
     /// A node should ignore all messages that aren’t from known members of the network, but accept
     /// those that are. Messages that originate from unknown nodes should not be treated as valid
-    /// messages, since PBFT has closed membership and only a network-accepted list of peers are
+    /// messages, since PBFT has closed membership and only a network-accepted list of members are
     /// allowed to participate.
     ///
-    /// This test ensures that the node properly identifies messages that come from known peers and
-    /// those that don’t.
+    /// This test ensures that the node properly identifies messages that come from PBFT members
+    /// and those that don’t.
     #[test]
     fn test_message_signer_membership() {
         // Create a new node
         let (mut node, mut state, _) = mock_node(&mock_config(4), vec![0], mock_block(0));
 
-        // Call the node’s on_peer_message() method with a message from a peer that’s not in the
-        // network; verify that the result is an Err
+        // Call the node’s on_peer_message() method with a message from a peer that’s not a member
+        // of the network; verify that the result is an Err
         assert!(node
             .on_peer_message(
                 mock_msg(PbftMessageType::Commit, 0, 1, vec![4], vec![1], false),
@@ -2969,8 +2969,8 @@ mod tests {
             )
             .is_err());
 
-        // Call on_peer_message() again with a message from a peer that is in the network; verify
-        // the result is Ok
+        // Call on_peer_message() again with a message from a peer that is a member of the network;
+        // verify the result is Ok
         assert!(node
             .on_peer_message(
                 mock_msg(PbftMessageType::Commit, 0, 1, vec![3], vec![1], false),
@@ -3740,8 +3740,8 @@ mod tests {
         state.idle_timeout.stop();
         state.phase = PbftPhase::Finishing(false);
 
-        // Set the node's forced_view_change_period to 3 and its mode to ViewChanging
-        state.forced_view_change_period = 3;
+        // Set the node's forced_view_change_interval to 3 and its mode to ViewChanging
+        state.forced_view_change_interval = 3;
         state.mode = PbftMode::ViewChanging(1);
 
         // Simulate block commit notification for block 2; verify that node properly updates its
@@ -3764,10 +3764,10 @@ mod tests {
     /// existing member malfunctioning.
     ///
     /// Membership changes in Sawtooth PBFT are dictated by the on-chain setting
-    /// `sawtooth.consensus.pbft.members`, which contains a list of the network’s peers. When this
-    /// on-chain setting is updated in a block and that block gets committed, the PBFT nodes must
-    /// update their local lists of members and value of `f` (the maximum number of faulty nodes)
-    /// to match the changes.
+    /// `sawtooth.consensus.pbft.members`, which contains a list of the network’s members. When
+    /// this on-chain setting is updated in a block and that block gets committed, the PBFT nodes
+    /// must update their local lists of members and value of `f` (the maximum number of faulty
+    /// nodes) to match the changes.
     ///
     /// This functionality is tested using a mock consensus `Service` that will produce different
     /// values for different `block_id`s. Testing will ensure that the list of members in the
@@ -3781,10 +3781,10 @@ mod tests {
         // Initialize a node with a 6 node config
         let (mut node, mut state, service) = mock_node(&mock_config(6), vec![0], mock_block(0));
 
-        // Update the mock Service's get_settings() method to return a peers list with an added
+        // Update the mock Service's get_settings() method to return a members list with an added
         // node at block 1, re-ordered at block 2, and a network that is too small at block 3
         let mut block_1_settings = HashMap::new();
-        let block_1_peers = vec![
+        let block_1_members = vec![
             vec![0],
             vec![1],
             vec![2],
@@ -3795,7 +3795,7 @@ mod tests {
         ];
         block_1_settings.insert(
             "sawtooth.consensus.pbft.members".to_string(),
-            serde_json::to_string(&block_1_peers.iter().map(hex::encode).collect::<Vec<_>>())
+            serde_json::to_string(&block_1_members.iter().map(hex::encode).collect::<Vec<_>>())
                 .unwrap(),
         );
         service
@@ -3803,7 +3803,7 @@ mod tests {
             .borrow_mut()
             .insert(vec![1], block_1_settings);
         let mut block_2_settings = HashMap::new();
-        let block_2_peers = vec![
+        let block_2_members = vec![
             vec![1],
             vec![0],
             vec![2],
@@ -3814,7 +3814,7 @@ mod tests {
         ];
         block_2_settings.insert(
             "sawtooth.consensus.pbft.members".to_string(),
-            serde_json::to_string(&block_2_peers.iter().map(hex::encode).collect::<Vec<_>>())
+            serde_json::to_string(&block_2_members.iter().map(hex::encode).collect::<Vec<_>>())
                 .unwrap(),
         );
         service
@@ -3837,19 +3837,19 @@ mod tests {
             .borrow_mut()
             .insert(vec![3], block_3_settings);
 
-        // Simulate block commit for block 1; verify node's peers list is updated properly and f is
+        // Simulate block commit for block 1; verify node's members list is updated properly and f is
         // now 2
         assert!(node.on_block_commit(vec![1], &mut state).is_ok());
-        assert_eq!(block_1_peers, state.peer_ids);
+        assert_eq!(block_1_members, state.member_ids);
         assert_eq!(2, state.f);
 
-        // Simulate block commit for block 2; verify node's peers list is updated properly and f is
+        // Simulate block commit for block 2; verify node's members list is updated properly and f is
         // still 2
         assert!(node.on_block_commit(vec![2], &mut state).is_ok());
-        assert_eq!(block_2_peers, state.peer_ids);
+        assert_eq!(block_2_members, state.member_ids);
         assert_eq!(2, state.f);
 
-        // Simulate block commit for block 3; verify that it panics (not enough peers)
+        // Simulate block commit for block 3; verify that it panics (not enough members)
         node.on_block_commit(vec![3], &mut state);
     }
 

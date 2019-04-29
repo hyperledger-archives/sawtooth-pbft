@@ -92,7 +92,10 @@ fn main() {
         pbft_config.exponential_retry_base = Duration::from_millis(base);
     }
     if let Some(max) = args.exponential_retry_max {
-        pbft_config.exponential_retry_max = Duration::from_secs(max);
+        pbft_config.exponential_retry_max = Duration::from_millis(max);
+    }
+    if let Some(timeout) = args.update_recv_timeout {
+        pbft_config.update_recv_timeout = Duration::from_millis(timeout);
     }
 
     let pbft_engine = engine::PbftEngine::new(pbft_config);
@@ -128,15 +131,21 @@ fn parse_args() -> PbftCliArgs {
         (version: crate_version!())
         (about: "PBFT consensus for Sawtooth")
         (@arg connect: -C --connect +takes_value
-         "connection endpoint for validator")
+         "connection endpoint for validator (default 'tcp://localhost:5050')")
         (@arg verbose: -v --verbose +multiple
          "increase output verbosity")
         (@arg logconfig: -L --log_config +takes_value
          "path to logging config file")
         (@arg exponential_retry_base: -b --exponential_retry_base +takes_value
-         "base timeout for exponential backoff (milliseconds)")
+         "base timeout for exponential backoff (default 100 ms)")
         (@arg exponential_retry_max: -m --exponential_retry_max +takes_value
-         "max timeout for exponential backoff (seconds)"))
+         "max timeout for exponential backoff (default 60000 ms)")
+        (@arg update_recv_timeout: -u --update_recv_timeout +takes_value
+         "timeout for receiving an update from the validator (default 10 ms)")
+        (@arg max_log_size: -l --max_log_size +takes_value
+         "how large the PBFT log is allowed to get before being pruned (default 10000 messages)")
+        (@arg storage_location: -s --storage_location +takes_value
+         "where to store PBFT's state ('memory' or 'disk+/path/to/file'; default 'memory')"))
     .get_matches();
 
     let log_config = matches.value_of("logconfig").map(|s| s.into());
@@ -164,6 +173,17 @@ fn parse_args() -> PbftCliArgs {
         .unwrap_or("")
         .parse::<u64>()
         .ok();
+    let update_recv_timeout = matches
+        .value_of("update_recv_timeout")
+        .unwrap_or("")
+        .parse::<u64>()
+        .ok();
+    let max_log_size = matches
+        .value_of("max_log_size")
+        .unwrap_or("")
+        .parse::<u64>()
+        .ok();
+    let storage_location = matches.value_of("storage_location").map(String::from);
 
     PbftCliArgs {
         log_config,
@@ -171,6 +191,9 @@ fn parse_args() -> PbftCliArgs {
         endpoint,
         exponential_retry_base,
         exponential_retry_max,
+        update_recv_timeout,
+        max_log_size,
+        storage_location,
     }
 }
 
@@ -181,4 +204,7 @@ pub struct PbftCliArgs {
     endpoint: String,
     exponential_retry_base: Option<u64>,
     exponential_retry_max: Option<u64>,
+    update_recv_timeout: Option<u64>,
+    max_log_size: Option<u64>,
+    storage_location: Option<String>,
 }

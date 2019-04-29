@@ -60,7 +60,7 @@ impl Engine for PbftEngine {
 
         info!("PBFT config loaded: {:?}", self.config);
 
-        let mut pbft_state = get_storage(&self.config.storage, || {
+        let mut pbft_state = get_storage(&self.config.storage_location, || {
             PbftState::new(
                 local_peer_info.peer_id.clone(),
                 chain_head.block_num,
@@ -71,7 +71,7 @@ impl Engine for PbftEngine {
 
         info!("PBFT state created: {}", **pbft_state.read());
 
-        let mut block_duration_ticker = timing::Ticker::new(self.config.block_duration);
+        let mut block_publishing_ticker = timing::Ticker::new(self.config.block_publishing_delay);
 
         let mut node = PbftNode::new(
             &self.config,
@@ -85,7 +85,7 @@ impl Engine for PbftEngine {
 
         // Main event loop; keep going until PBFT receives a Shutdown message or is disconnected
         loop {
-            let incoming_message = updates.recv_timeout(self.config.message_timeout);
+            let incoming_message = updates.recv_timeout(self.config.update_recv_timeout);
             let state = &mut **pbft_state.write();
 
             trace!("{} received message {:?}", state, incoming_message);
@@ -99,10 +99,10 @@ impl Engine for PbftEngine {
                 Err(err) => log_any_error(Err(err)),
             }
 
-            block_duration_ticker.tick(|| log_any_error(node.try_publish(state)));
+            // If the block duration has passed, attempt to publish a block
+            block_publishing_ticker.tick(|| log_any_error(node.try_publish(state)));
 
-            // Every so often, check to see if the idle timeout has expired; initiate
-            // ViewChange if necessary
+            // If the idle timeout has expired, initiate a view change
             if node.check_idle_timeout_expired(state) {
                 warn!("Idle timeout expired; proposing view change");
                 log_any_error(node.start_view_change(state, state.view + 1));

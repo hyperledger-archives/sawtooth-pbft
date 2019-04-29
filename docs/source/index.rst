@@ -8,7 +8,7 @@ Table of Contents
     introduction-to-sawtooth-pbft.rst
     using-pbft-consensus.rst
     architecture.rst
-    on-chain-settings.rst
+    configuring-pbft.rst
     installing-and-running-pbft.rst
     glossary.rst
 

@@ -29,18 +29,18 @@ use serde_json;
 
 use crate::timing::retry_until_ok;
 
-/// Contains the initial configuration loaded from on-chain settings, if present, or defaults in
-/// their absence.
+/// Contains the initial configuration loaded from on-chain settings and local configuration. The
+/// `members` list is required; all other settings are optional (defaults used in their absence)
 #[derive(Debug)]
 pub struct PbftConfig {
-    // Peers that this node is connected to
-    pub peers: Vec<PeerId>,
+    // Members of the PBFT network
+    pub members: Vec<PeerId>,
 
     /// How long to wait in between trying to publish blocks
-    pub block_duration: Duration,
+    pub block_publishing_delay: Duration,
 
-    /// How long to wait for a message to arrive
-    pub message_timeout: Duration,
+    /// How long to wait for an update to arrive from the validator
+    pub update_recv_timeout: Duration,
 
     /// The base time to use for retrying with exponential backoff
     pub exponential_retry_base: Duration,
@@ -49,7 +49,7 @@ pub struct PbftConfig {
     pub exponential_retry_max: Duration,
 
     /// How long to wait for the next BlockNew + PrePrepare before determining primary is faulty
-    /// Should be longer than block_duration
+    /// Must be longer than block_publishing_delay
     pub idle_timeout: Duration,
 
     /// How long to wait (after Pre-Preparing) for the node to commit the block before starting a
@@ -62,29 +62,29 @@ pub struct PbftConfig {
     pub view_change_duration: Duration,
 
     /// How many blocks to commit before forcing a view change for fairness
-    pub forced_view_change_period: u64,
+    pub forced_view_change_interval: u64,
 
-    /// How large the PbftLog is allowed to get
+    /// How large the PbftLog is allowed to get before being pruned
     pub max_log_size: u64,
 
-    /// Where to store PbftState
-    pub storage: String,
+    /// Where to store PbftState ("memory" or "disk+/path/to/file")
+    pub storage_location: String,
 }
 
 impl PbftConfig {
     pub fn default() -> Self {
         PbftConfig {
-            peers: Vec::new(),
-            block_duration: Duration::from_millis(200),
-            message_timeout: Duration::from_millis(10),
+            members: Vec::new(),
+            block_publishing_delay: Duration::from_millis(1000),
+            update_recv_timeout: Duration::from_millis(10),
             exponential_retry_base: Duration::from_millis(100),
-            exponential_retry_max: Duration::from_secs(60),
-            idle_timeout: Duration::from_secs(30),
-            commit_timeout: Duration::from_secs(30),
-            view_change_duration: Duration::from_secs(5),
-            forced_view_change_period: 30,
-            max_log_size: 1000,
-            storage: "memory".into(),
+            exponential_retry_max: Duration::from_millis(60000),
+            idle_timeout: Duration::from_millis(30000),
+            commit_timeout: Duration::from_millis(10000),
+            view_change_duration: Duration::from_millis(5000),
+            forced_view_change_interval: 100,
+            max_log_size: 10000,
+            storage_location: "memory".into(),
         }
     }
 
@@ -92,14 +92,11 @@ impl PbftConfig {
     ///
     /// Configuration loads the following settings:
     /// + `sawtooth.consensus.pbft.members` (required)
-    /// + `sawtooth.consensus.pbft.block_duration` (optional, default 200 ms)
-    /// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30s)
-    /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 30s)
-    /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5s)
-    /// + `sawtooth.consensus.pbft.forced_view_change_period` (optional, default 30 blocks)
-    /// + `sawtooth.consensus.pbft.message_timeout` (optional, default 10 ms)
-    /// + `sawtooth.consensus.pbft.max_log_size` (optional, default 1000 messages)
-    /// + `sawtooth.consensus.pbft.storage` (optional, default `"memory"`)
+    /// + `sawtooth.consensus.pbft.block_publishing_delay` (optional, default 1000 ms)
+    /// + `sawtooth.consensus.pbft.idle_timeout` (optional, default 30000 ms)
+    /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 10000 ms)
+    /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5000 ms)
+    /// + `sawtooth.consensus.pbft.forced_view_change_interval` (optional, default 100 blocks)
     ///
     /// # Panics
     /// + If block duration is greater than the idle timeout
@@ -114,69 +111,55 @@ impl PbftConfig {
                     block_id.clone(),
                     vec![
                         String::from("sawtooth.consensus.pbft.members"),
-                        String::from("sawtooth.consensus.pbft.block_duration"),
+                        String::from("sawtooth.consensus.pbft.block_publishing_delay"),
                         String::from("sawtooth.consensus.pbft.idle_timeout"),
                         String::from("sawtooth.consensus.pbft.commit_timeout"),
                         String::from("sawtooth.consensus.pbft.view_change_duration"),
-                        String::from("sawtooth.consensus.pbft.forced_view_change_period"),
-                        String::from("sawtooth.consensus.pbft.message_timeout"),
-                        String::from("sawtooth.consensus.pbft.max_log_size"),
+                        String::from("sawtooth.consensus.pbft.forced_view_change_interval"),
                     ],
                 )
             },
         );
 
-        // Get the peers associated with this node (including ourselves). Panic if it is not
-        // provided; the network cannot function without this setting.
-        let peers = get_peers_from_settings(&settings);
+        // Get the on-chain list of PBFT members or panic if it is not provided; the network cannot
+        // function without this setting, since there is no way of knowing which nodes are members.
+        self.members = get_members_from_settings(&settings);
 
-        self.peers = peers;
-
-        // Get various durations
+        // Get durations
         merge_millis_setting_if_set(
             &settings,
-            &mut self.block_duration,
-            "sawtooth.consensus.pbft.block_duration",
+            &mut self.block_publishing_delay,
+            "sawtooth.consensus.pbft.block_publishing_delay",
         );
         merge_millis_setting_if_set(
-            &settings,
-            &mut self.message_timeout,
-            "sawtooth.consensus.pbft.message_timeout",
-        );
-        merge_secs_setting_if_set(
             &settings,
             &mut self.idle_timeout,
             "sawtooth.consensus.pbft.idle_timeout",
         );
-        merge_secs_setting_if_set(
+        merge_millis_setting_if_set(
             &settings,
             &mut self.commit_timeout,
             "sawtooth.consensus.pbft.commit_timeout",
         );
-        merge_secs_setting_if_set(
+        merge_millis_setting_if_set(
             &settings,
             &mut self.view_change_duration,
             "sawtooth.consensus.pbft.view_change_duration",
         );
 
-        // Check to make sure block_duration < idle_timeout
-        if self.block_duration >= self.idle_timeout {
+        // Check to make sure block_publishing_delay < idle_timeout
+        if self.block_publishing_delay >= self.idle_timeout {
             panic!(
-                "Block duration ({:?}) must be less than the idle timeout ({:?})",
-                self.block_duration, self.idle_timeout
+                "Block publishing delay ({:?}) must be less than the idle timeout ({:?})",
+                self.block_publishing_delay, self.idle_timeout
             );
         }
 
-        // Get various integer constants
+        // Get integer constants
         merge_setting_if_set(
             &settings,
-            &mut self.forced_view_change_period,
-            "sawtooth.consensus.pbft.forced_view_change_period",
-        );
-        merge_setting_if_set(
-            &settings,
-            &mut self.max_log_size,
-            "sawtooth.consensus.pbft.max_log_size",
+            &mut self.forced_view_change_interval,
+            "sawtooth.consensus.pbft.forced_view_change_interval",
         );
     }
 }
@@ -205,19 +188,6 @@ fn merge_setting_if_set_and_map<U, F, T>(
     }
 }
 
-fn merge_secs_setting_if_set(
-    settings_map: &HashMap<String, String>,
-    setting_field: &mut Duration,
-    setting_key: &str,
-) {
-    merge_setting_if_set_and_map(
-        settings_map,
-        setting_field,
-        setting_key,
-        Duration::from_secs,
-    )
-}
-
 fn merge_millis_setting_if_set(
     settings_map: &HashMap<String, String>,
     setting_field: &mut Duration,
@@ -231,25 +201,25 @@ fn merge_millis_setting_if_set(
     )
 }
 
-/// Get the peers as a Vec<PeerId> from settings
+/// Get the list of PBFT members as a Vec<PeerId> from settings
 ///
 /// # Panics
 /// + If the `sawtooth.consenus.pbft.members` setting is unset or invalid
-pub fn get_peers_from_settings<S: std::hash::BuildHasher>(
+pub fn get_members_from_settings<S: std::hash::BuildHasher>(
     settings: &HashMap<String, String, S>,
 ) -> Vec<PeerId> {
-    let peers_setting_value = settings
+    let members_setting_value = settings
         .get("sawtooth.consensus.pbft.members")
         .expect("'sawtooth.consensus.pbft.members' is empty; this setting must exist to use PBFT");
 
-    let peers: Vec<String> = serde_json::from_str(peers_setting_value).unwrap_or_else(|err| {
+    let members: Vec<String> = serde_json::from_str(members_setting_value).unwrap_or_else(|err| {
         panic!(
             "Unable to parse value at 'sawtooth.consensus.pbft.members' due to error: {:?}",
             err
         )
     });
 
-    peers
+    members
         .into_iter()
         .map(|s| {
             hex::decode(s).unwrap_or_else(|err| {

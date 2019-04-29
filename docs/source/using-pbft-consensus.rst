@@ -23,7 +23,7 @@ restricted membership. It has the following requirements:
 
 * The on-chain configuration setting ``sawtooth.consensus.pbft.members`` must
   list all PBFT member nodes in the network. For more information, see
-  :doc:`on-chain-settings`.
+  :ref:`on-chain-settings-label`.
 
 See the Hyperledger Sawtooth documentation for information on using PBFT
 consensus:
