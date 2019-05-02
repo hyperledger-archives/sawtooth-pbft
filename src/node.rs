@@ -467,6 +467,13 @@ impl PbftNode {
             }
         }
 
+        // If this node was the primary before, cancel any block that may have been initialized
+        if state.is_primary() {
+            self.service.cancel_block().unwrap_or_else(|err| {
+                info!("Failed to cancel block when becoming secondary: {:?}", err);
+            });
+        }
+
         // Update view
         state.view = new_view.get_info().get_view();
         state.view_change_timeout.stop();
@@ -4266,8 +4273,9 @@ mod tests {
     /// 4. Set its mode to Normal
     /// 5. Start the idle timeout
     ///
-    /// In addition, the new primary node (and only the new primary) will initialize a new block
-    /// for the current sequence number.
+    /// In addition, the node that was previously the primary will cancel any block it may have
+    /// initialized, and the new primary node (and only the new primary) will initialize a new
+    /// block for the current sequence number.
     ///
     /// Furthermore, `NewView` messages can be for any future view, not just the view after the one
     /// the node is on; they must also be acceptable even if the node is not in the ViewChanging
@@ -4332,8 +4340,8 @@ mod tests {
         assert!(service.was_called("initialize_block"));
 
         // Verify that a valid NewView for any future view is accepted and node updates its state
-        // appropriately (node 1 is not the new primary so it won't init new block again, phase
-        // should remain Finishing)
+        // appropriately (node 1 is the old primary, so it will cancel any initialized block and it
+        // won't init new block again, phase should remain Finishing)
         state.phase = PbftPhase::Finishing(false);
         state.idle_timeout.stop();
         state.view_change_timeout.start();
@@ -4357,6 +4365,7 @@ mod tests {
         assert_eq!(PbftMode::Normal, state.mode);
         assert!(!state.view_change_timeout.is_active());
         assert!(state.idle_timeout.is_active());
+        assert!(service.was_called_with_args(stringify_func_call!("cancel_block")));
         assert!(service.was_called_with_args_once(stringify_func_call!("initialize_block")));
     }
 
