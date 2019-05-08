@@ -1,5 +1,5 @@
-Architecture
-************
+PBFT Architecture
+*****************
 
 The Sawtooth PBFT algorithm is a voting-based consensus algorithm with Byzantine
 fault tolerance, which ensures `safety and liveness
