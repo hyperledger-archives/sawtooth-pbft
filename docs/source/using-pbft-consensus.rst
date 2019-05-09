@@ -11,8 +11,11 @@ restricted membership. It has the following requirements:
 * A PBFT network must be fully peered; that is, all nodes must be directly
   connected to all other nodes. Static peering is recommended.
 
-* Each node on the network must install and run the PBFT consensus engine,
-  ``sawtooth-pbft-engine``.
+* Each node on the network must install and run the PBFT consensus engine.
+
+  - Package: ``sawtooth-pbft-engine``
+  - Executable: ``pbft-engine``
+  - Service: ``sawtooth-pbft-engine.service``
 
 * Each node must run the Settings transaction processor (or an equivalent) to
   handle the PBFT and Sawtooth on-chain settings.
