@@ -36,12 +36,11 @@ restricted membership. It has the following requirements:
   list all PBFT member nodes in the network. For more information, see
   :ref:`on-chain-settings-label`.
 
-See the Hyperledger Sawtooth documentation for information on using PBFT
-consensus:
+For the procedure to configure PBFT, see the Hyperledger Sawtooth documentation:
 
 * Developers: `Creating a Sawtooth
   Network <https://sawtooth.hyperledger.org/docs/core/releases/latest/app_developers_guide/creating_sawtooth_network.html>`__
-  shows how to create a test network with PBFT consensus for your application
+  shows how to create a test network with PBFT consensus for an application
   development environment.
 
 * Sawtooth administrators: `Setting Up a Sawtooth
