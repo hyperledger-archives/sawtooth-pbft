@@ -60,18 +60,6 @@ Glossary
     changes when the primary is deemed faulty (see
     :ref:`view-changes-choosing-primary-label`).
 
-  :math:`n`
-    The total number of nodes in the network.
-
-  :math:`f`
-    The maximum number of faulty nodes.
-
-  :math:`v`
-    The current view number (how many primary node changes have occurred).
-
-  :math:`p`
-    The primary server number; :math:`p = v \mod n`.
-
 
 .. Licensed under Creative Commons Attribution 4.0 International License
 .. https://creativecommons.org/licenses/by/4.0/
