@@ -24,6 +24,14 @@ restricted membership. It has the following requirements:
   using the on-chain settings ``sawtooth.consensus.algorithm.name`` and
   ``sawtooth.consensus.algorithm.version``.
 
+  - The PBFT consensus engine name is ``pbft``.
+
+  - The version number is in the file ``sawtooth-pbft/Cargo.toml`` (see the
+    `sawtooth-pbft <https://github.com/hyperledger/sawtooth-pbft/>`_ repository)
+    as ``version = "{major}.{minor}.{patch}"``. Use only the first two digits
+    (major and minor release numbers); omit the patch number.  For example, if
+    the version is 1.0.3, use ``1.0`` for the version setting.
+
 * The on-chain configuration setting ``sawtooth.consensus.pbft.members`` must
   list all PBFT member nodes in the network. For more information, see
   :ref:`on-chain-settings-label`.
