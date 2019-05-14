@@ -41,9 +41,6 @@ Glossary
   Consensus seal
     Proof that a block underwent consensus.
 
-  Block publishing delay
-    How many milliseconds to wait before trying to publish a block.
-
   Member node
     Sawtooth node that participates in PBFT consensus. Membership is controlled
     by the on-chain setting ``sawtooth.consensus.pbft.members``.
