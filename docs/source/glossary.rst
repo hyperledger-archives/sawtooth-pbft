@@ -13,8 +13,9 @@ Glossary
     uses the terms `server` or `replica` instead of `node`.
 
   Validator
-    Component of a node responsible for interactions with the blockchain.
-    Interactions with the validator are abstracted by the Consensus API.
+    Sawtooth component that is responsible for interactions with the
+    blockchain. The validator interacts with the consensus engine through the
+    consensus API.
 
   Block
     A part of the
@@ -50,8 +51,10 @@ Glossary
     being committed to.
 
   View
-    The period of time of PBFT when the current primary is in charge. The view
-    changes when the primary is deemed faulty (see
+    The period of time when the current primary node is in charge. The
+    view changes at regular intervals (controlled by the on-chain setting
+    ``sawtooth.consensus.pbft.forced_view_change_interval``), and when the
+    primary node is deemed faulty. For more information, see
     :ref:`view-changes-choosing-primary-label`).
 
   Consensus API
@@ -71,6 +74,10 @@ Glossary
     the business logic, also called a `smart contract`, for the transaction
     processor.) For more information, see the `Hyperledger Sawtooth
     documentation <https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications.html>`__.
+
+  Working block
+    Sawtooth block that has been initialized (but not finalized) and is
+    currently being evaluated to determine if it can be committed.
 
 
 .. Licensed under Creative Commons Attribution 4.0 International License
