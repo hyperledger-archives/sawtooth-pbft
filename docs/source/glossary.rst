@@ -49,8 +49,7 @@ Glossary
     by the on-chain setting ``sawtooth.consensus.pbft.members``.
 
   Message
-    Block, with additional information (see `Message
-    Types <message-types.html>`__).
+    Block, with additional information (see :ref:`pbft-arch-message-types`).
 
   Working block
     The block that has been initialized but not finalized, and is currently
@@ -58,8 +57,8 @@ Glossary
 
   View
     The period of time of PBFT when the current primary is in charge. The view
-    changes when the primary is deemed faulty, as described in
-    `View Changes <#view-changes>`__.
+    changes when the primary is deemed faulty (see
+    :ref:`view-changes-choosing-primary-label`).
 
   :math:`n`
     The total number of nodes in the network.

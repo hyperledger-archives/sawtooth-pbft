@@ -168,8 +168,9 @@ network are able to participate in the consensus process.
 
 Any messages that fail to parse or pass the required checks are ignored. If a
 message is successfully parsed and passes verification, it is passed to a
-handler for that specific message type (see `Message Types`) where it may go
-through further checks, be stored in the message log, or trigger some actions.
+handler for that specific message type (see :ref:`pbft-arch-message-types`),
+where it may go through further checks, be stored in the message log, or trigger
+some actions.
 
 
 Message Definitions
@@ -246,6 +247,8 @@ consensus API's ``Update`` messages, see the `Consensus API RFC
       // votes)
       repeated PbftSignedVote commit_votes = 3;
     }
+
+.. _pbft-arch-message-types:
 
 Message Types
 -------------
