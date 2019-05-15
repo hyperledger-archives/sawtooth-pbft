@@ -4,10 +4,9 @@ Glossary
 .. glossary::
 
   Node
-    Machine running all the components necessary for a working blockchain
-    (including the Validator, the REST API, at least one transaction processor,
-    and the PBFT algorithm itself). In this RFC, unless otherwise specified,
-    it can be assumed that *Node* refers to the PBFT component of the machine.
+    Virtual or physical machine running all the components necessary for a
+    working Sawtooth blockchain: a validator, an optional REST API, at least
+    one transaction processor, and the PBFT consensus engine.
 
     The `original PBFT paper <http://pmg.csail.mit.edu/papers/osdi99.pdf>`__
     uses the terms `server` or `replica` instead of `node`.
@@ -18,37 +17,47 @@ Glossary
     consensus API.
 
   Block
-    A part of the
-    `blockchain <https://en.wikipedia.org/wiki/Block chain>`__,
-    containing some operations and a link to the previous block.
+    Part of the `blockchain <https://en.wikipedia.org/wiki/Block chain>`__
+    that contains one or more operations (called `transactions`) and a link to
+    the previous block.
 
-  Primary
-    Node in charge of making the final consensus decisions and committing to
-    the blockchain.  Additionally is responsible for publishing the blocks given
-    to it by the Consensus API, and starting the consensus process.
+  Primary node
+    Node that directs the consensus process for the network. (The other nodes
+    in the network participate as secondary nodes.) The primary node creates
+    each block and publishes it to the network, then starts the consensus
+    process for the block.
 
-  Secondaries
-    Auxiliary nodes used for consensus.
+  Secondary node
+    Auxiliary node used for consensus. A Sawtooth network using PBFT consensus
+    has one :term:`primary node`; all other nodes are secondary nodes.
+
+    The `original PBFT paper <http://pmg.csail.mit.edu/papers/osdi99.pdf>`__
+    uses the term `backup` instead of `secondary node`.
 
   Client
     Machine that sends requests to and receives replies from the network of
-    nodes. PBFT has no direct interaction with clients; the Validator bundles
-    all client requests into blocks and sends them through the Consensus API to
-    the consensus algorithm.
+    Sawtooth nodes. PBFT has no direct interaction with clients; the validator
+    bundles all client requests into blocks and sends them through the
+    consensus API to the consensus engine.
 
   Consensus seal
-    Proof that a block underwent consensus.
+    Proof that a block went through consensus.
+
+  Leader
+    See :term:`primary node`.
 
   Member node
     Sawtooth node that participates in PBFT consensus. Membership is controlled
-    by the on-chain setting ``sawtooth.consensus.pbft.members``.
+    by the on-chain setting ``sawtooth.consensus.pbft.members``. Each member
+    node is either a :term:`primary node` or a :term:`secondary node`.
 
   Message
-    Block, with additional information (see :ref:`pbft-arch-message-types`).
+    Block with additional consensus-related information (see
+    :ref:`pbft-arch-message-types`).
 
   Working block
-    The block that has been initialized but not finalized, and is currently
-    being committed to.
+    Sawtooth block that has been initialized (but not finalized) and is
+    currently being evaluated to determine if it can be committed.
 
   View
     The period of time when the current primary node is in charge. The
@@ -72,7 +81,8 @@ Glossary
     Sawtooth component that validates transactions and updates state based on
     rules defined by the associated `transaction family`. (These rules specify
     the business logic, also called a `smart contract`, for the transaction
-    processor.) For more information, see the `Hyperledger Sawtooth
+    processor.) For more information, see `"Transaction Family Specifications"
+    in the Hyperledger Sawtooth
     documentation <https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications.html>`__.
 
   Working block
