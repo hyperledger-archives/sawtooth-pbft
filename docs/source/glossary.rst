@@ -9,11 +9,8 @@ Glossary
     and the PBFT algorithm itself). In this RFC, unless otherwise specified,
     it can be assumed that *Node* refers to the PBFT component of the machine.
 
-  Server
-    Synonym for node.
-
-  Replica
-    Synonym for node.
+    The `original PBFT paper <http://pmg.csail.mit.edu/papers/osdi99.pdf>`__
+    uses the terms `server` or `replica` instead of `node`.
 
   Validator
     Component of a node responsible for interactions with the blockchain.
