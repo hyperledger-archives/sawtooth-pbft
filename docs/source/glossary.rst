@@ -57,6 +57,24 @@ Glossary
     changes when the primary is deemed faulty (see
     :ref:`view-changes-choosing-primary-label`).
 
+  Consensus API
+    Sawtooth component that abstracts consensus-related interactions between
+    the validator and a consensus engine. The consensus API allows `dynamic
+    consensus`, a feature that allows a choice of consensus for a Sawtooth
+    network.
+
+  Consensus engine
+    Component that provides consensus functionality for a Sawtooth
+    network. The consensus engine communicates with the validator through
+    the consensus API.
+
+  Transaction processor
+    Sawtooth component that validates transactions and updates state based on
+    rules defined by the associated `transaction family`. (These rules specify
+    the business logic, also called a `smart contract`, for the transaction
+    processor.) For more information, see the `Hyperledger Sawtooth
+    documentation <https://sawtooth.hyperledger.org/docs/core/releases/latest/transaction_family_specifications.html>`__.
+
 
 .. Licensed under Creative Commons Attribution 4.0 International License
 .. https://creativecommons.org/licenses/by/4.0/
