@@ -99,7 +99,7 @@ impl PbftConfig {
     /// + `sawtooth.consensus.pbft.forced_view_change_interval` (optional, default 100 blocks)
     ///
     /// # Panics
-    /// + If block duration is greater than the idle timeout
+    /// + If block publishing delay is greater than the idle timeout
     /// + If the `sawtooth.consensus.pbft.members` setting is not provided or is invalid
     pub fn load_settings(&mut self, block_id: BlockId, service: &mut Service) {
         debug!("Getting on-chain settings for config");
