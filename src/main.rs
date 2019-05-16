@@ -134,17 +134,17 @@ fn parse_args() -> PbftCliArgs {
          "connection endpoint for validator (default 'tcp://localhost:5050')")
         (@arg verbose: -v --verbose +multiple
          "increase output verbosity")
-        (@arg logconfig: -L --log_config +takes_value
+        (@arg logconfig: -L --("log-config") +takes_value
          "path to logging config file")
-        (@arg exponential_retry_base: -b --exponential_retry_base +takes_value
+        (@arg exponential_retry_base: -b --("exponential-retry-base") +takes_value
          "base timeout for exponential backoff (default 100 ms)")
-        (@arg exponential_retry_max: -m --exponential_retry_max +takes_value
+        (@arg exponential_retry_max: -m --("exponential-retry-max") +takes_value
          "max timeout for exponential backoff (default 60000 ms)")
-        (@arg update_recv_timeout: -u --update_recv_timeout +takes_value
+        (@arg update_recv_timeout: -u --("update-recv-timeout") +takes_value
          "timeout for receiving an update from the validator (default 10 ms)")
-        (@arg max_log_size: -l --max_log_size +takes_value
+        (@arg max_log_size: -l --("max-log-size") +takes_value
          "how large the PBFT log is allowed to get before being pruned (default 10000 messages)")
-        (@arg storage_location: -s --storage_location +takes_value
+        (@arg storage_location: -s --("storage-location") +takes_value
          "where to store PBFT's state ('memory' or 'disk+/path/to/file'; default 'memory')"))
     .get_matches();
 

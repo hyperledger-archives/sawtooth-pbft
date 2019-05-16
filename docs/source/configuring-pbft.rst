@@ -25,27 +25,27 @@ command-line options:
   | (Optional; default ``tcp://localhost:5050``)
   | Connection endpoint for validator
 
-- | ``-b, --exponential_retry_base BASE``
+- | ``-b, --exponential-retry-base BASE``
   | (Optional; default 100 ms)
   | Base timeout for exponential backoff used for validator requests
 
-- | ``-m, --exponential_retry_max MAX``
+- | ``-m, --exponential-retry-max MAX``
   | (Optional; default 60000 ms)
   | Max timeout for exponential backoff used for validator requests
 
-- | ``-L, --log_config LOG_CONFIG``
+- | ``-L, --log-config LOG_CONFIG``
   | (Optional)
   | Path to logging config file; if not present, console logging is used
 
-- | ``-l, --max_log_size MAX_LOG_SIZE``
+- | ``-l, --max-log-size MAX_LOG_SIZE``
   | (Optional; default 10000 messages)
   | How large the PBFT log is allowed to get before being pruned
 
-- | ``-s, --storage_location STORAGE_LOCATION``
+- | ``-s, --storage-location STORAGE_LOCATION``
   | (Optional; default ``memory``)
   | Where to store PBFT's state: ``memory`` or ``disk+/path/to/file``
 
-- | ``-u, --update_recv_timeout TIMEOUT``
+- | ``-u, --update-recv-timeout TIMEOUT``
   | (Optional; default 10 ms)
   | Timeout for receiving an update from the validator
 
