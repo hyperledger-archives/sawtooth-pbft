@@ -81,10 +81,6 @@ Glossary
     primary node is deemed faulty. For more information, see
     :ref:`view-changes-choosing-primary-label`).
 
-  Working block
-    Sawtooth block that has been initialized (but not finalized) and is
-    currently being evaluated to determine if it can be committed.
-
 
 .. Licensed under Creative Commons Attribution 4.0 International License
 .. https://creativecommons.org/licenses/by/4.0/
