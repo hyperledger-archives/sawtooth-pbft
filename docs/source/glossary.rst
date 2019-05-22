@@ -37,8 +37,8 @@ Glossary
     node is either a :term:`primary node` or a :term:`secondary node`.
 
   Message
-    Block with additional consensus-related information (see
-    :ref:`pbft-arch-message-types`).
+    Consensus-related information that nodes send to each other. For more
+    information, see :ref:`consensus-messages-label`.
 
   Node
     Virtual or physical machine running all the components necessary for a
