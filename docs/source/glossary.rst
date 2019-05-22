@@ -79,7 +79,7 @@ Glossary
     view changes at regular intervals (controlled by the on-chain setting
     ``sawtooth.consensus.pbft.forced_view_change_interval``), and when the
     primary node is deemed faulty. For more information, see
-    :ref:`view-changes-choosing-primary-label`).
+    :ref:`view-changes-choosing-primary-label`.
 
 
 .. Licensed under Creative Commons Attribution 4.0 International License
