@@ -80,7 +80,7 @@ be installed.
           sawset proposal create \
             ...
             sawtooth.consensus.algorithm.name=pbft \
-            sawtooth.consensus.algorithm.version=0.1 \
+            sawtooth.consensus.algorithm.version=1.0 \
             sawtooth.consensus.pbft.members=\\['\\\"'$$(cat /etc/sawtooth/keys/validator.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-1.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-2.pub)'\\\"','\\\"'$$(cat /etc/sawtooth/keys/validator-3.pub)'\\\"'\\] \
           ...
 

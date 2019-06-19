@@ -131,7 +131,7 @@ impl Engine for PbftEngine {
     }
 
     fn version(&self) -> String {
-        "0.1".into()
+        "1.0".into()
     }
 
     fn name(&self) -> String {

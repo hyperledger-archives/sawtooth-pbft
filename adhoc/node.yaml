@@ -51,7 +51,7 @@ services:
         sawset proposal create \
           -k /shared_data/keys/settings.priv \
           sawtooth.consensus.algorithm.name=pbft \
-          sawtooth.consensus.algorithm.version=0.1 \
+          sawtooth.consensus.algorithm.version=1.0 \
           sawtooth.consensus.pbft.members=\\['\\\"'$$(cd /shared_data/validators && paste $$(ls -1) -d , | sed s/,/\\\\\\\",\\\\\\\"/g)'\\\"'\\]
           -o config.batch && \
         sawadm genesis \
