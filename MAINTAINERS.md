@@ -1,9 +1,16 @@
-| Name           | GitHub         | RocketChat    |
-| -------------- | -------------- | ------------- |
-| Shawn Amundson | vaporos        | amundson      |
-| Andi Gunderson | agunde406      | agunde        |
+## Maintainers
+
+### Active Maintainers
+| Name | GitHub | RocketChat |
+| --- | --- | --- |
+| Andi Gunderson | agunde406 | agunde |
+| James Mitchell | jsmitchell | jsmitchell |
+| Logan Seeley   | ltseeley | ltseeley |
+| Shawn Amundson | vaporos | amundson |
+
+### Retired Maintainers
+| Name | GitHub | RocketChat |
+| --- | --- | --- |
+| Adam Ludvik | aludvik | adamludvik |
 | Bridger Herman | bridger-herman | bridgerherman |
-| Adam Ludvik    | aludvik        | adamludvik    |
-| James Mitchell | jsmitchell     | jsmitchell    |
-| Logan Seeley   | ltseeley       | ltseeley      |
-| Kenneth Koski  | knkski         | knkski        |
+| Kenneth Koski | knkski | knkski |
