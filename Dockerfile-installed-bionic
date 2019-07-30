@@ -48,8 +48,9 @@ COPY . /project/sawtooth-pbft
 
 WORKDIR /project/sawtooth-pbft
 
-RUN sed -i -e "0,/version.*$/ s/version.*$/version\ =\ \"$(./bin/get_version)\"/" Cargo.toml
-RUN /root/.cargo/bin/cargo deb
+RUN export VERSION=$(./bin/get_version) \
+ && sed -i -e "0,/version.*$/ s/version.*$/version\ =\ \"${VERSION}\"/" Cargo.toml \
+ && /root/.cargo/bin/cargo deb --deb-version $VERSION
 
 # -------------=== pbft docker build ===-------------
 FROM ubuntu:bionic
