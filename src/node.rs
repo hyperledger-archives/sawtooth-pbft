@@ -65,7 +65,7 @@ impl PbftNode {
         };
 
         // Add chain head to log and update state
-        n.msg_log.add_block(chain_head.clone());
+        n.msg_log.add_validated_block(chain_head.clone());
         state.chain_head = chain_head.block_id.clone();
 
         // If starting up from a non-genesis block, the node may need to perform some special
@@ -583,10 +583,8 @@ impl PbftNode {
 
     /// Handle a `BlockNew` update from the Validator
     ///
-    /// The validator has received a new block; verify the block's consensus seal and add the block
-    /// to the log. If this is the block the node is waiting for and this node is the primary,
-    /// broadcast a PrePrepare; if the node isn't the primary but it already has the PrePrepare for
-    /// this block, switch to `Preparing`. If this is a future block, use it to catch up.
+    /// The validator has received a new block; verify the block's consensus seal, add it to the
+    /// log as an unvalidated block, and instruct the validator to validate it.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         info!(
             "{}: Got BlockNew: {} / {}",
@@ -652,8 +650,49 @@ impl PbftNode {
                 ))
             })?;
 
-        // Add block to the log
-        self.msg_log.add_block(block.clone());
+        // This block is valid from PBFT's perspective; now have the validator check it, then add
+        // it to the log as an unvalidated block.
+        self.service
+            .check_blocks(vec![block.block_id.clone()])
+            .map_err(|err| {
+                PbftError::ServiceError(
+                    format!(
+                        "Failed to check block {:?} / {:?}",
+                        block.block_num,
+                        hex::encode(&seal.block_id),
+                    ),
+                    err,
+                )
+            })?;
+
+        self.msg_log.add_unvalidated_block(block, seal);
+
+        Ok(())
+    }
+
+    /// Handle a `BlockValid` update from the Validator
+    ///
+    /// The block has been verified by the validator, so mark it as validated in the log. If this
+    /// is the block the node is waiting for and this node is the primary, broadcast a PrePrepare;
+    /// if the node isn't the primary but it already has the PrePrepare for this block, switch to
+    /// `Preparing`. If this is a future block, use it to catch up.
+    pub fn on_block_valid(
+        &mut self,
+        block_id: BlockId,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        info!("Got BlockValid: {}", hex::encode(&block_id));
+
+        // Mark block as validated in the log and get the block, seal
+        let (block, seal) = self
+            .msg_log
+            .block_validated(block_id.clone())
+            .ok_or_else(|| {
+                PbftError::InvalidMessage(format!(
+                    "Received BlockValid message for an unknown block: {}",
+                    hex::encode(&block_id)
+                ))
+            })?;
 
         // This block's seal can be used to commit the block previous to it (i.e. catch-up) if it's
         // a future block and the node isn't waiting for a commit message for a previous block (if
@@ -683,6 +722,28 @@ impl PbftNode {
                 self.try_preparing(block.block_id, state)?;
             }
         }
+
+        Ok(())
+    }
+
+    /// Handle a `BlockInvalid` update from the Validator
+    ///
+    /// The block is invalid, so drop it from the log and fail it.
+    pub fn on_block_invalid(&mut self, block_id: BlockId) -> Result<(), PbftError> {
+        info!("Got BlockInvalid: {}", hex::encode(&block_id));
+
+        // Drop block from the log
+        if !self.msg_log.block_invalidated(block_id.clone()) {
+            return Err(PbftError::InvalidMessage(format!(
+                "Received BlockInvalid message for an unknown block: {}",
+                hex::encode(&block_id)
+            )));
+        }
+
+        // Fail the block
+        self.service
+            .fail_block(block_id)
+            .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
 
         Ok(())
     }
@@ -2479,7 +2540,7 @@ mod tests {
             .is_ok());
 
         // Add block 1 to the node's log so it can be used to verify the seal for block 2
-        node.msg_log.add_block(block1);
+        node.msg_log.add_validated_block(block1);
 
         // Test verification of a block with an empty payload
         let mut block2 = mock_block(2);
@@ -2770,6 +2831,10 @@ mod tests {
     ///    to the chain must contain a valid proof for the block before it (which is required to
     ///    uphold finality, provide external verification, and enable the catch-up procedure)
     ///
+    /// If a block is not valid based on these criteria, it should be failed; otherwise, it should
+    /// be added to the node's log as an unvalidated block and its validity should be checked using
+    /// the service.
+    ///
     /// This test ensures that these criteria are enforced when a block is received using the
     /// `PbftNode::on_block_new` method.
     #[test]
@@ -2778,7 +2843,7 @@ mod tests {
         // Create signing keys for a new network and instantiate a new node on the network with
         // block 3 as the chain head
         let key_pairs = mock_signer_network(4);
-        let (mut node, mut state, _) = mock_node(
+        let (mut node, mut state, service) = mock_node(
             &mock_config_from_signer_network(&key_pairs),
             key_pairs[0].pub_key.clone(),
             mock_block(3),
@@ -2798,7 +2863,8 @@ mod tests {
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
         node.on_block_new(old_block, &mut state);
-        assert!(node.msg_log.get_block_with_id(&vec![2]).is_none());
+        assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![2])));
+        assert!(node.msg_log.block_validated(vec![2]).is_none());
 
         // Verify blocks are rejected when node doesn't have previous block
         let mut no_previous_block = mock_block(5);
@@ -2814,7 +2880,8 @@ mod tests {
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
         node.on_block_new(no_previous_block, &mut state);
-        assert!(node.msg_log.get_block_with_id(&vec![5]).is_none());
+        assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![5])));
+        assert!(node.msg_log.block_validated(vec![5]).is_none());
 
         // Verify blocks are rejected when the previous block doesn't have the previous block num
         let mut previous_block_not_previous_num = mock_block(5);
@@ -2831,7 +2898,8 @@ mod tests {
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
         node.on_block_new(previous_block_not_previous_num, &mut state);
-        assert!(node.msg_log.get_block_with_id(&vec![5]).is_none());
+        assert!(!service.was_called_with_args_once(stringify_func_call!("fail_block", vec![5])));
+        assert!(node.msg_log.block_validated(vec![5]).is_none());
 
         // Verify blocks with invalid seals (e.g. not enough votes) are rejected
         let mut invalid_seal = mock_block(4);
@@ -2851,7 +2919,8 @@ mod tests {
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
         node.on_block_new(invalid_seal, &mut state);
-        assert!(node.msg_log.get_block_with_id(&vec![4]).is_none());
+        assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![4])));
+        assert!(node.msg_log.block_validated(vec![4]).is_none());
 
         // Verify valid blocks are accepted and added to the log
         let mut valid_block = mock_block(4);
@@ -2867,7 +2936,25 @@ mod tests {
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
         node.on_block_new(valid_block, &mut state);
-        assert!(node.msg_log.get_block_with_id(&vec![4]).is_some());
+        assert!(service.was_called_with_args(stringify_func_call!("check_blocks", vec![vec![4]])));
+        assert!(node.msg_log.block_validated(vec![4]).is_some());
+    }
+
+    /// After receiving a block and checking it using the service, the consensus engine may be
+    /// notified that the block is actually invalid. In this case, PBFT should drop the block from
+    /// its log and fail the block.
+    #[test]
+    fn test_invalid_block() {
+        let (mut node, mut state, service) = mock_node(&mock_config(4), vec![0], mock_block(0));
+
+        // Get a BlockNew and a BlockInvalid
+        assert!(node.on_block_new(mock_block(1), &mut state).is_ok());
+        assert!(node.on_block_invalid(vec![1]).is_ok());
+
+        // Verify that the blog is no longer in the log and it has been failed
+        assert!(node.msg_log.block_validated(vec![1]).is_none());
+        assert!(node.msg_log.get_block_with_id(vec![1].as_slice()).is_none());
+        assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![1])));
     }
 
     /// After a primary creates and publishes a block to the network, it needs to send out a
@@ -2889,7 +2976,8 @@ mod tests {
         // primary doesn't broadcast a PrePrepare for the block
         let mut different_signer = mock_block(1);
         different_signer.signer_id = vec![1];
-        node.on_block_new(different_signer, &mut state);
+        node.on_block_new(different_signer.clone(), &mut state);
+        node.on_block_valid(different_signer.block_id, &mut state);
         assert!(!service.was_called("broadcast"));
 
         // Update the node's view to 1 so it is no longer the primary, and pass a block to it that
@@ -2898,13 +2986,15 @@ mod tests {
         let mut own_block = mock_block(1);
         own_block.signer_id = vec![0];
         node.on_block_new(own_block.clone(), &mut state);
+        node.on_block_valid(own_block.block_id.clone(), &mut state);
         assert!(!service.was_called("broadcast"));
 
         // Reset the node's view to 0 so it is primary again and pass its own block to it again;
         // verify that the mock Service’s broadcast method was called with a PrePrepare message for
         // the block at the current view and sequence number
         state.view = 0;
-        node.on_block_new(own_block, &mut state);
+        node.on_block_new(own_block.clone(), &mut state);
+        node.on_block_valid(own_block.block_id.clone(), &mut state);
         assert!(service.was_called_with_args(stringify_func_call!(
             "broadcast",
             "PrePrepare",
@@ -3145,7 +3235,7 @@ mod tests {
         });
 
         // Add block 1 so the node can receive block 2
-        node.msg_log.add_block(blocks.next().unwrap());
+        node.msg_log.add_validated_block(blocks.next().unwrap());
 
         // Verify order Commit -> Block -> PrePrepare
         // Simulate block 1 commit
@@ -3153,10 +3243,11 @@ mod tests {
         assert!(node.on_block_commit(vec![1], &mut state).is_ok());
         assert_eq!(2, state.seq_num);
         assert_eq!(PbftPhase::PrePreparing, state.phase);
-        // Receive block 2
+        // Receive block 2 (BlockNew and BlockValid)
         assert!(node
             .on_block_new(blocks.next().unwrap(), &mut state)
             .is_ok());
+        assert!(node.on_block_valid(vec![2], &mut state).is_ok());
         assert_eq!(PbftPhase::PrePreparing, state.phase);
         // Receive PrePrepare for block 2
         assert!(node
@@ -3196,7 +3287,7 @@ mod tests {
         assert!(node.on_block_commit(vec![2], &mut state).is_ok());
         assert_eq!(3, state.seq_num);
         assert_eq!(PbftPhase::PrePreparing, state.phase);
-        // Receive block 3
+        // Receive PrePrepare for block 3
         assert!(node
             .on_peer_message(
                 mock_msg(
@@ -3211,10 +3302,11 @@ mod tests {
             )
             .is_ok());
         assert_eq!(PbftPhase::PrePreparing, state.phase);
-        // Receive PrePrepare for block 3
+        // Receive block 3 (BlockNew and BlockValid)
         assert!(node
             .on_block_new(blocks.next().unwrap(), &mut state)
             .is_ok());
+        assert!(node.on_block_valid(vec![3], &mut state).is_ok());
         // Check appropriate actions performed
         assert_eq!(PbftPhase::Preparing, state.phase);
         assert!(!state.idle_timeout.is_active());
@@ -3234,11 +3326,13 @@ mod tests {
         )));
 
         // Verify order Block -> Commit -> PrePrepare
-        // Receive block 4 (set phase to Finishing, otherwise catch-up occurs)
+        // Receive block 4 (BlockNew and BlockValid; set phase to Finishing, otherwise catch-up
+        // occurs)
         state.phase = PbftPhase::Finishing(false);
         assert!(node
             .on_block_new(blocks.next().unwrap(), &mut state)
             .is_ok());
+        assert!(node.on_block_valid(vec![4], &mut state).is_ok());
         assert_eq!(PbftPhase::Finishing(false), state.phase);
         // Simulate block 3 commit
         assert!(node.on_block_commit(vec![3], &mut state).is_ok());
@@ -3277,11 +3371,13 @@ mod tests {
         )));
 
         // Verify order Block -> PrePrepare -> Commit
-        // Receive block 5 (set phase to Finishing, otherwise catch-up occurs)
+        // Receive block 5 (BlockNew and BlockValid; set phase to Finishing, otherwise catch-up
+        // occurs)
         state.phase = PbftPhase::Finishing(false);
         assert!(node
             .on_block_new(blocks.next().unwrap(), &mut state)
             .is_ok());
+        assert!(node.on_block_valid(vec![5], &mut state).is_ok());
         assert_eq!(PbftPhase::Finishing(false), state.phase);
         // Receive PrePrepare for block 5 (still Finishing because block 4 has not been committed
         // yet)
@@ -3341,10 +3437,11 @@ mod tests {
         state.phase = PbftPhase::Finishing(false);
         assert!(node.on_block_commit(vec![5], &mut state).is_ok());
         assert_eq!(6, state.seq_num);
-        // Receive block 6
+        // Receive block 6 (BlockNew and BlockValid)
         assert!(node
             .on_block_new(blocks.next().unwrap(), &mut state)
             .is_ok());
+        assert!(node.on_block_valid(vec![6], &mut state).is_ok());
         // Check appropriate actions performed
         assert_eq!(PbftPhase::Preparing, state.phase);
         assert!(!state.idle_timeout.is_active());
@@ -3380,11 +3477,13 @@ mod tests {
             )
             .is_ok());
         assert_eq!(PbftPhase::Preparing, state.phase);
-        // Receive block 7 (set phase to Finishing, otherwise catch-up occurs)
+        // Receive block 7 (BlockNew and BlockValid; set phase to Finishing, otherwise catch-up
+        // occurs)
         state.phase = PbftPhase::Finishing(false);
         assert!(node
             .on_block_new(blocks.next().unwrap(), &mut state)
             .is_ok());
+        assert!(node.on_block_valid(vec![7], &mut state).is_ok());
         assert_eq!(PbftPhase::Finishing(false), state.phase);
         // Simulate block 6 commit
         assert!(node.on_block_commit(vec![6], &mut state).is_ok());
@@ -3408,13 +3507,15 @@ mod tests {
         )));
 
         // Verify that PrePrepare’s sequence number must match the block’s number
-        // Receive blocks 8 and 9
+        // Receive blocks 8 and 9 (BlockNew and BlockValid)
         assert!(node
             .on_block_new(blocks.next().unwrap(), &mut state)
             .is_ok());
+        assert!(node.on_block_valid(vec![8], &mut state).is_ok());
         assert!(node
             .on_block_new(blocks.next().unwrap(), &mut state)
             .is_ok());
+        assert!(node.on_block_valid(vec![9], &mut state).is_ok());
         // Set the node to PrePreparing at seq_num 8
         state.phase = PbftPhase::PrePreparing;
         state.seq_num = 8;
@@ -3881,8 +3982,8 @@ mod tests {
         node.msg_log.set_max_log_size(2);
 
         // Add Block and PrePrepare for sequence numbers 1 and 2
-        node.msg_log.add_block(mock_block(1));
-        node.msg_log.add_block(mock_block(2));
+        node.msg_log.add_validated_block(mock_block(1));
+        node.msg_log.add_validated_block(mock_block(2));
         node.msg_log.add_message(mock_msg(
             PbftMessageType::PrePrepare,
             0,
@@ -4463,13 +4564,14 @@ mod tests {
             mock_block(0),
         );
 
-        // Receive block 1 and verify that node is still PrePreparing (should not perform catch-up
-        // for current block)
+        // Receive block 1 (BlockNew and BlockValid) and verify that node is still PrePreparing
+        // (should not perform catch-up for current block)
         assert!(node.on_block_new(mock_block(1), &mut state).is_ok());
+        assert!(node.on_block_valid(vec![1], &mut state).is_ok());
         assert_eq!(PbftPhase::PrePreparing, state.phase);
 
-        // Receive block 2 and verify that catch up was performed for block 1 (phase is
-        // Finishing(true) and Service.commit_block(block1.block_id) was called)
+        // Receive block 2 (BlockNew and BlockValid) and verify that catch up was performed for
+        // block 1 (phase is Finishing(true) and Service.commit_block(block1.block_id) was called)
         let mut block2 = mock_block(2);
         block2.payload = mock_seal(
             0,
@@ -4483,12 +4585,14 @@ mod tests {
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
         assert!(node.on_block_new(block2.clone(), &mut state).is_ok());
+        assert!(node.on_block_valid(vec![2], &mut state).is_ok());
         assert_eq!(PbftPhase::Finishing(true), state.phase);
         assert!(service.was_called_with_args(stringify_func_call!("commit_block", vec![1])));
 
         // Receive block 2 again and verify that Service.commit_block was not called again (block
         // was already committed)
         assert!(node.on_block_new(block2, &mut state).is_ok());
+        assert!(node.on_block_valid(vec![2], &mut state).is_ok());
         assert!(service.was_called_with_args_once(stringify_func_call!("commit_block")));
     }
 
@@ -4524,7 +4628,7 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.msg_log.add_block(block2);
+        node.msg_log.add_validated_block(block2);
 
         let mut block3 = mock_block(3);
         block3.payload = mock_seal(
@@ -4538,7 +4642,7 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.msg_log.add_block(block3);
+        node.msg_log.add_validated_block(block3);
 
         // Simulate commit of block 1; verify that node is in the Finishing(true) phase at sequence
         // number 2 and commit_block was called with block 2's ID (committed block 2 using seal in
@@ -4766,8 +4870,8 @@ mod tests {
         assert_eq!(PbftPhase::PrePreparing, state.phase);
 
         // Add blocks 1 and 2 to the node's log
-        node.msg_log.add_block(mock_block(1));
-        node.msg_log.add_block(mock_block(2));
+        node.msg_log.add_validated_block(mock_block(1));
+        node.msg_log.add_validated_block(mock_block(2));
 
         // Receive a seal for block 2 and verify that the node doesn't use it for catch up (not for
         // current sequence number)
@@ -4863,7 +4967,7 @@ mod tests {
         assert!(!service.was_called("send_to"));
 
         // Simulate committing block 1
-        node.msg_log.add_block(mock_block(1));
+        node.msg_log.add_validated_block(mock_block(1));
         assert!(node.on_block_commit(vec![1], &mut state).is_ok());
         assert_eq!(2, state.seq_num);
         assert_eq!(vec![1], state.chain_head);
@@ -4895,7 +4999,7 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.msg_log.add_block(block2);
+        node.msg_log.add_validated_block(block2);
         assert!(node.on_block_commit(vec![2], &mut state).is_ok());
         assert_eq!(3, state.seq_num);
         assert_eq!(vec![2], state.chain_head);
