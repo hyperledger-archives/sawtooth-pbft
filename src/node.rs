@@ -42,7 +42,7 @@ use crate::timing::{retry_until_ok, Timeout};
 /// Contains the core logic of the PBFT node
 pub struct PbftNode {
     /// Used for interactions with the validator
-    pub service: Box<Service>,
+    pub service: Box<dyn Service>,
 
     /// Log of messages this node has received and accepted
     pub msg_log: PbftLog,
@@ -56,7 +56,7 @@ impl PbftNode {
         config: &PbftConfig,
         chain_head: Block,
         connected_peers: Vec<PeerInfo>,
-        service: Box<Service>,
+        service: Box<dyn Service>,
         state: &mut PbftState,
     ) -> Self {
         let mut n = PbftNode {

@@ -161,11 +161,11 @@ impl<T: fmt::Display + Serialize + DeserializeOwned> fmt::Display for DiskStorag
 impl<T: Serialize + DeserializeOwned> Storage for DiskStorage<T> {
     type S = T;
 
-    fn read<'a>(&'a self) -> Box<StorageReadGuard<'a, T, Target = T> + 'a> {
+    fn read<'a>(&'a self) -> Box<dyn StorageReadGuard<'a, T, Target = T> + 'a> {
         Box::new(DiskStorageReadGuard::new(self))
     }
 
-    fn write<'a>(&'a mut self) -> Box<StorageWriteGuard<'a, T, Target = T> + 'a> {
+    fn write<'a>(&'a mut self) -> Box<dyn StorageWriteGuard<'a, T, Target = T> + 'a> {
         Box::new(DiskStorageWriteGuard::new(self))
     }
 }

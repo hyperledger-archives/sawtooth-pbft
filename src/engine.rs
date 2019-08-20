@@ -43,7 +43,7 @@ impl Engine for PbftEngine {
     fn start(
         &mut self,
         updates: Receiver<Update>,
-        mut service: Box<Service>,
+        mut service: Box<dyn Service>,
         startup_state: StartupState,
     ) -> Result<(), Error> {
         info!("Startup state received from validator: {:?}", startup_state);
