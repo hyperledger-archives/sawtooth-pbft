@@ -597,11 +597,15 @@ impl PbftNode {
         trace!("Block details: {:?}", block);
 
         if block.block_num < state.seq_num {
-            debug!(
-                "Ignoring block ({}) that's older than current sequence number ({}).",
-                block.block_num, state.seq_num
-            );
-            return Ok(());
+            self.service
+                .fail_block(block.block_id.clone())
+                .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
+            return Err(PbftError::InternalError(format!(
+                "Received block {:?} / {:?} that is older than the current sequence number: {:?}",
+                block.block_num,
+                hex::encode(&block.block_id),
+                state.seq_num,
+            )));
         }
 
         // Make sure the node already has the previous block, since the consensus seal can't be
