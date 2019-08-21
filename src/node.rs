@@ -608,7 +608,13 @@ impl PbftNode {
 
         // Make sure the node already has the previous block, since the consensus seal can't be
         // verified without it
-        let previous_block = self.msg_log.get_block_with_id(block.previous_id.as_slice());
+        let previous_block = self
+            .msg_log
+            .get_block_with_id(block.previous_id.as_slice())
+            .or_else(|| {
+                self.msg_log
+                    .get_unvalidated_block_with_id(block.previous_id.as_slice())
+            });
         if previous_block.is_none() {
             self.service
                 .fail_block(block.block_id.clone())
@@ -1362,6 +1368,10 @@ impl PbftNode {
         let proven_block_previous_id = self
             .msg_log
             .get_block_with_id(seal.block_id.as_slice())
+            .or_else(|| {
+                self.msg_log
+                    .get_unvalidated_block_with_id(seal.block_id.as_slice())
+            })
             .map(|proven_block| proven_block.previous_id.clone())
             .ok_or_else(|| {
                 PbftError::InternalError(format!(

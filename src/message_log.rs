@@ -126,6 +126,13 @@ impl PbftLog {
             .find(|block| block.block_id.as_slice() == block_id)
     }
 
+    /// Get the `Block` with the specified block ID from `unvalidated_blocks`.
+    pub fn get_unvalidated_block_with_id(&self, block_id: &[u8]) -> Option<&Block> {
+        self.unvalidated_blocks
+            .get(block_id)
+            .map(|(block, _)| block)
+    }
+
     /// Add a parsed PBFT message to the log
     pub fn add_message(&mut self, msg: ParsedMessage) {
         trace!("Adding message to log: {:?}", msg);
@@ -251,6 +258,8 @@ mod tests {
     /// Blocks are retrieved using the following methods:
     /// - `get_block_with_id` will get the block that matches the specified block ID
     /// - `get_blocks_with_num` will get all blocks that have the specified block number
+    /// - `get_unvalidated_block_with_id` will get the unvalidated block that matches the specified
+    ///   block ID
     ///
     /// This test will verify that blocks can be added to a `PbftLog` using block adding methods,
     /// that blocks are properly marked as valid or dropped, and that the methods for retrieving
@@ -266,7 +275,9 @@ mod tests {
         log.add_unvalidated_block(block1.clone(), PbftSeal::new());
 
         // Verify the block is stored as unvalidated
-        assert!(log.unvalidated_blocks.get(&block1.block_id).is_some());
+        assert!(log
+            .get_unvalidated_block_with_id(&block1.block_id)
+            .is_some());
         assert!(log.blocks.is_empty());
 
         // Validate block, then verify that the block is returned and the block is marked as valid
