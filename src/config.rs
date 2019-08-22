@@ -101,7 +101,7 @@ impl PbftConfig {
     /// # Panics
     /// + If block publishing delay is greater than the idle timeout
     /// + If the `sawtooth.consensus.pbft.members` setting is not provided or is invalid
-    pub fn load_settings(&mut self, block_id: BlockId, service: &mut Service) {
+    pub fn load_settings(&mut self, block_id: BlockId, service: &mut dyn Service) {
         debug!("Getting on-chain settings for config");
         let settings: HashMap<String, String> = retry_until_ok(
             self.exponential_retry_base,

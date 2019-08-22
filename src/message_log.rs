@@ -19,19 +19,23 @@
 
 #![allow(unknown_lints)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use hex;
-use sawtooth_sdk::consensus::engine::Block;
+use sawtooth_sdk::consensus::engine::{Block, BlockId};
 
 use crate::config::PbftConfig;
 use crate::message_type::{ParsedMessage, PbftMessageType};
-use crate::protos::pbft_message::PbftMessageInfo;
+use crate::protos::pbft_message::{PbftMessageInfo, PbftSeal};
 
 /// Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
-    /// All blocks received from the validator that have not been garbage collected
+    /// All blocks received from the validator that have not been validated yet
+    unvalidated_blocks: HashMap<BlockId, (Block, PbftSeal)>,
+
+    /// All blocks received from the validator that have been validated and not yet garbage
+    /// collected
     blocks: HashSet<Block>,
 
     /// All messages accepted by the node that have not been garbage collected
@@ -69,16 +73,42 @@ impl PbftLog {
     /// Create a new, empty `PbftLog` with the `max_log_size` specified in the `config`
     pub fn new(config: &PbftConfig) -> Self {
         PbftLog {
+            unvalidated_blocks: HashMap::new(),
             blocks: HashSet::new(),
             messages: HashSet::new(),
             max_log_size: config.max_log_size,
         }
     }
 
-    /// Add a `Block` to the log
-    pub fn add_block(&mut self, block: Block) {
-        trace!("Adding block to log: {:?}", block);
+    /// Add an already validated `Block` to the log
+    pub fn add_validated_block(&mut self, block: Block) {
+        trace!("Adding validated block to log: {:?}", block);
         self.blocks.insert(block);
+    }
+
+    /// Add an unvalidated `Block` and its `PbftSeal` to the log
+    pub fn add_unvalidated_block(&mut self, block: Block, seal: PbftSeal) {
+        trace!("Adding unvalidated block to log: {:?}", block);
+        self.unvalidated_blocks
+            .insert(block.block_id.clone(), (block, seal));
+    }
+
+    /// Move the `Block` corresponding to `block_id` from `unvalidated_blocks` to `blocks`. Return
+    /// the block itself to be used by the calling code.
+    pub fn block_validated(&mut self, block_id: BlockId) -> Option<(Block, PbftSeal)> {
+        trace!("Marking block as validated: {:?}", block_id);
+        self.unvalidated_blocks
+            .remove(&block_id)
+            .map(|(block, seal)| {
+                self.blocks.insert(block.clone());
+                (block, seal)
+            })
+    }
+
+    /// Drop the `Block` corresponding to `block_id` from `unvalidated_blocks`.
+    pub fn block_invalidated(&mut self, block_id: BlockId) -> bool {
+        trace!("Dropping invalidated block: {:?}", block_id);
+        self.unvalidated_blocks.remove(&block_id).is_some()
     }
 
     /// Get all `Block`s in the message log with the specified block number
@@ -94,6 +124,13 @@ impl PbftLog {
         self.blocks
             .iter()
             .find(|block| block.block_id.as_slice() == block_id)
+    }
+
+    /// Get the `Block` with the specified block ID from `unvalidated_blocks`.
+    pub fn get_unvalidated_block_with_id(&self, block_id: &[u8]) -> Option<&Block> {
+        self.unvalidated_blocks
+            .get(block_id)
+            .map(|(block, _)| block)
     }
 
     /// Add a parsed PBFT message to the log
@@ -210,22 +247,47 @@ mod tests {
     /// The `PbftLog` must reliably store and retrieve blocks for the node to keep track of the
     /// blocks it receives from the validator, perform consensus on them, and commit or fail them.
     ///
-    /// All blocks are added to the `PbftLog` using the `add_block` method, and they are retrieved
-    /// using the following methods:
+    /// Blocks are usually added to the `PbftLog` using the `add_unvalidated_block` method, then
+    /// later marked as valid using the `block_validated` method or dropped using the
+    /// `block_invalidated` method. These blocks cannot be retrieved from the log until they are
+    /// marked as valid.
+    ///
+    /// Blocks may also be added to the log using the `add_validated_block` method; in this case,
+    /// the block can be retrived immediately without marking it as valid.
+    ///
+    /// Blocks are retrieved using the following methods:
     /// - `get_block_with_id` will get the block that matches the specified block ID
     /// - `get_blocks_with_num` will get all blocks that have the specified block number
+    /// - `get_unvalidated_block_with_id` will get the unvalidated block that matches the specified
+    ///   block ID
     ///
-    /// This test will verify that blocks can be added to a `PbftLog` using its `add_block` method
-    /// and that the methods for retrieving blocks work as intended.
+    /// This test will verify that blocks can be added to a `PbftLog` using block adding methods,
+    /// that blocks are properly marked as valid or dropped, and that the methods for retrieving
+    /// blocks work as intended.
     #[test]
     fn test_block_logging() {
         // Initialize an empty log
         let cfg = mock_config(4);
         let mut log = PbftLog::new(&cfg);
 
-        // Add block 1 to the log
+        // Add block 1 (unvalidated) to the log
         let block1 = mock_block(1);
-        log.add_block(block1.clone());
+        log.add_unvalidated_block(block1.clone(), PbftSeal::new());
+
+        // Verify the block is stored as unvalidated
+        assert!(log
+            .get_unvalidated_block_with_id(&block1.block_id)
+            .is_some());
+        assert!(log.blocks.is_empty());
+
+        // Validate block, then verify that the block is returned and the block is marked as valid
+        // in the log
+        let (block, _) = log
+            .block_validated(block1.block_id.clone())
+            .expect("Block was not in log");
+        assert_eq!(block, block1);
+        assert!(log.unvalidated_blocks.is_empty());
+        assert!(log.blocks.get(&block1).is_some());
 
         // Verify log correctly retrieves blocks by ID
         assert_eq!(
@@ -235,12 +297,18 @@ mod tests {
         );
         assert!(log.get_block_with_id(&vec![2]).is_none());
 
-        // Add more blocks
+        // Add an (already validated) block to the log
         let mut block2 = mock_block(2);
         block2.block_num = 1;
-        log.add_block(block2.clone());
+        log.add_validated_block(block2.clone());
+
+        // Verify adding an already validated block works
+        assert!(log.unvalidated_blocks.is_empty());
+        assert!(log.blocks.get(&block2).is_some());
+
+        // Add a 3rd block to the log
         let block3 = mock_block(3);
-        log.add_block(block3.clone());
+        log.add_validated_block(block3.clone());
 
         // Verify log correctly retrieves blocks by number
         let blocks_with_num_1 = log.get_blocks_with_num(1);

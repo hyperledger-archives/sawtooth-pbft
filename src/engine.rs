@@ -43,7 +43,7 @@ impl Engine for PbftEngine {
     fn start(
         &mut self,
         updates: Receiver<Update>,
-        mut service: Box<Service>,
+        mut service: Box<dyn Service>,
         startup_state: StartupState,
     ) -> Result<(), Error> {
         info!("Startup state received from validator: {:?}", startup_state);
@@ -146,9 +146,8 @@ fn handle_update(
 ) -> Result<bool, PbftError> {
     match incoming_message {
         Ok(Update::BlockNew(block)) => node.on_block_new(block, state)?,
-        Ok(Update::BlockValid(_)) | Ok(Update::BlockInvalid(_)) => {
-            info!("Received BlockValid or BlockInvalid message; ignoring");
-        }
+        Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id, state)?,
+        Ok(Update::BlockInvalid(block_id)) => node.on_block_invalid(block_id)?,
         Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state)?,
         Ok(Update::PeerMessage(message, _)) => {
             // Since the signer ID in the PeerMessageHeader is verified by the validator, it can be
