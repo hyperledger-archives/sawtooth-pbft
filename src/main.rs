@@ -97,6 +97,9 @@ fn main() {
     if let Some(timeout) = args.update_recv_timeout {
         pbft_config.update_recv_timeout = Duration::from_millis(timeout);
     }
+    if let Some(storage) = args.storage_location {
+        pbft_config.storage_location = storage;
+    }
 
     let pbft_engine = engine::PbftEngine::new(pbft_config);
 
