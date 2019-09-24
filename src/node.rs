@@ -583,8 +583,8 @@ impl PbftNode {
 
     /// Handle a `BlockNew` update from the Validator
     ///
-    /// The validator has received a new block; verify the block's consensus seal, add it to the
-    /// log as an unvalidated block, and instruct the validator to validate it.
+    /// The validator has received a new block; add it to the log as an unvalidated block, and
+    /// instruct the validator to validate it.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         info!(
             "{}: Got BlockNew: {} / {}",
@@ -644,34 +644,17 @@ impl PbftNode {
             )));
         }
 
-        let seal = self
-            .verify_consensus_seal_from_block(&block, state)
-            .map_err(|err| {
-                self.service
-                    .fail_block(block.block_id.clone())
-                    .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
-                PbftError::InvalidMessage(format!(
-                    "Consensus seal failed verification - Error was: {}",
-                    err
-                ))
-            })?;
-
-        // This block is valid from PBFT's perspective; now have the validator check it, then add
-        // it to the log as an unvalidated block.
+        // Have the validator check the block and add it to the log as an unvalidated block.
         self.service
             .check_blocks(vec![block.block_id.clone()])
             .map_err(|err| {
                 PbftError::ServiceError(
-                    format!(
-                        "Failed to check block {:?} / {:?}",
-                        block.block_num,
-                        hex::encode(&seal.block_id),
-                    ),
+                    format!("Failed to check block {:?}", block.block_num,),
                     err,
                 )
             })?;
 
-        self.msg_log.add_unvalidated_block(block, seal);
+        self.msg_log.add_unvalidated_block(block, PbftSeal::new());
 
         Ok(())
     }
@@ -688,6 +671,31 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         info!("Got BlockValid: {}", hex::encode(&block_id));
+
+        let block = self
+            .msg_log
+            .get_unvalidated_block_with_id(block_id.as_slice())
+            .ok_or_else(|| {
+                PbftError::InvalidMessage(format!(
+                    "Received BlockValid message for an unknown block: {}",
+                    hex::encode(&block_id)
+                ))
+            })?;
+
+        let blockid = block.block_id.clone();
+        let blocktwo = block.clone();
+
+        let seal = self
+            .verify_consensus_seal_from_block(&blocktwo, state)
+            .map_err(|err| {
+                self.service
+                    .fail_block(blockid)
+                    .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
+                PbftError::InvalidMessage(format!(
+                    "Consensus seal failed verification - Error was: {}",
+                    err
+                ))
+            })?;
 
         // Mark block as validated in the log and get the block, seal
         let (block, seal) = self
@@ -2929,6 +2937,7 @@ mod tests {
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
         node.on_block_new(invalid_seal, &mut state);
+        node.on_block_valid(invalid_seal.block_id, &mut state);
         assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![4])));
         assert!(node.msg_log.block_validated(vec![4]).is_none());
 
