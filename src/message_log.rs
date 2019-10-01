@@ -27,12 +27,12 @@ use sawtooth_sdk::consensus::engine::{Block, BlockId};
 
 use crate::config::PbftConfig;
 use crate::message_type::{ParsedMessage, PbftMessageType};
-use crate::protos::pbft_message::{PbftMessageInfo, PbftSeal};
+use crate::protos::pbft_message::PbftMessageInfo;
 
 /// Struct for storing messages that a PbftNode receives
 pub struct PbftLog {
     /// All blocks received from the validator that have not been validated yet
-    unvalidated_blocks: HashMap<BlockId, (Block, PbftSeal)>,
+    unvalidated_blocks: HashMap<BlockId, Block>,
 
     /// All blocks received from the validator that have been validated and not yet garbage
     /// collected
@@ -86,23 +86,21 @@ impl PbftLog {
         self.blocks.insert(block);
     }
 
-    /// Add an unvalidated `Block` and its `PbftSeal` to the log
-    pub fn add_unvalidated_block(&mut self, block: Block, seal: PbftSeal) {
+    /// Add an unvalidated `Block` to the log
+    pub fn add_unvalidated_block(&mut self, block: Block) {
         trace!("Adding unvalidated block to log: {:?}", block);
         self.unvalidated_blocks
-            .insert(block.block_id.clone(), (block, seal));
+            .insert(block.block_id.clone(), block);
     }
 
     /// Move the `Block` corresponding to `block_id` from `unvalidated_blocks` to `blocks`. Return
     /// the block itself to be used by the calling code.
-    pub fn block_validated(&mut self, block_id: BlockId) -> Option<(Block, PbftSeal)> {
+    pub fn block_validated(&mut self, block_id: BlockId) -> Option<Block> {
         trace!("Marking block as validated: {:?}", block_id);
-        self.unvalidated_blocks
-            .remove(&block_id)
-            .map(|(block, seal)| {
-                self.blocks.insert(block.clone());
-                (block, seal)
-            })
+        self.unvalidated_blocks.remove(&block_id).map(|block| {
+            self.blocks.insert(block.clone());
+            block
+        })
     }
 
     /// Drop the `Block` corresponding to `block_id` from `unvalidated_blocks`.
@@ -128,9 +126,7 @@ impl PbftLog {
 
     /// Get the `Block` with the specified block ID from `unvalidated_blocks`.
     pub fn get_unvalidated_block_with_id(&self, block_id: &[u8]) -> Option<&Block> {
-        self.unvalidated_blocks
-            .get(block_id)
-            .map(|(block, _)| block)
+        self.unvalidated_blocks.get(block_id)
     }
 
     /// Add a parsed PBFT message to the log
@@ -272,7 +268,7 @@ mod tests {
 
         // Add block 1 (unvalidated) to the log
         let block1 = mock_block(1);
-        log.add_unvalidated_block(block1.clone(), PbftSeal::new());
+        log.add_unvalidated_block(block1.clone());
 
         // Verify the block is stored as unvalidated
         assert!(log
@@ -282,7 +278,7 @@ mod tests {
 
         // Validate block, then verify that the block is returned and the block is marked as valid
         // in the log
-        let (block, _) = log
+        let block = log
             .block_validated(block1.block_id.clone())
             .expect("Block was not in log");
         assert_eq!(block, block1);

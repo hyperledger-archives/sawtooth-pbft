@@ -583,8 +583,8 @@ impl PbftNode {
 
     /// Handle a `BlockNew` update from the Validator
     ///
-    /// The validator has received a new block; verify the block's consensus seal, add it to the
-    /// log as an unvalidated block, and instruct the validator to validate it.
+    /// The validator has received a new block; check if it is a block that should be considered,
+    /// add it to the log as an unvalidated block, and instruct the validator to validate it.
     pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         info!(
             "{}: Got BlockNew: {} / {}",
@@ -594,6 +594,7 @@ impl PbftNode {
         );
         trace!("Block details: {:?}", block);
 
+        // Only future blocks should be considered since committed blocks are final
         if block.block_num < state.seq_num {
             self.service
                 .fail_block(block.block_id.clone())
@@ -644,6 +645,56 @@ impl PbftNode {
             )));
         }
 
+        // Add the currently unvalidated block to the log
+        self.msg_log.add_unvalidated_block(block.clone());
+
+        // Have the validator check the block
+        self.service
+            .check_blocks(vec![block.block_id.clone()])
+            .map_err(|err| {
+                PbftError::ServiceError(
+                    format!(
+                        "Failed to check block {:?} / {:?}",
+                        block.block_num,
+                        hex::encode(&block.block_id),
+                    ),
+                    err,
+                )
+            })?;
+
+        Ok(())
+    }
+
+    /// Handle a `BlockValid` update from the Validator
+    ///
+    /// The block has been verified by the validator, so mark it as validated in the log and
+    /// attempt to handle the block.
+    pub fn on_block_valid(
+        &mut self,
+        block_id: BlockId,
+        state: &mut PbftState,
+    ) -> Result<(), PbftError> {
+        info!("Got BlockValid: {}", hex::encode(&block_id));
+
+        // Mark block as validated in the log and get the block
+        let block = self
+            .msg_log
+            .block_validated(block_id.clone())
+            .ok_or_else(|| {
+                PbftError::InvalidMessage(format!(
+                    "Received BlockValid message for an unknown block: {}",
+                    hex::encode(&block_id)
+                ))
+            })?;
+
+        self.try_handling_block(block, state)
+    }
+
+    /// Validate the block's seal and handle the block. If this is the block the node is waiting
+    /// for and this node is the primary, broadcast a PrePrepare; if the node isn't the primary but
+    /// it already has the PrePrepare for this block, switch to `Preparing`. If this is a future
+    /// block, use it to catch up.
+    fn try_handling_block(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
         let seal = self
             .verify_consensus_seal_from_block(&block, state)
             .map_err(|err| {
@@ -653,50 +704,6 @@ impl PbftNode {
                 PbftError::InvalidMessage(format!(
                     "Consensus seal failed verification - Error was: {}",
                     err
-                ))
-            })?;
-
-        // This block is valid from PBFT's perspective; now have the validator check it, then add
-        // it to the log as an unvalidated block.
-        self.service
-            .check_blocks(vec![block.block_id.clone()])
-            .map_err(|err| {
-                PbftError::ServiceError(
-                    format!(
-                        "Failed to check block {:?} / {:?}",
-                        block.block_num,
-                        hex::encode(&seal.block_id),
-                    ),
-                    err,
-                )
-            })?;
-
-        self.msg_log.add_unvalidated_block(block, seal);
-
-        Ok(())
-    }
-
-    /// Handle a `BlockValid` update from the Validator
-    ///
-    /// The block has been verified by the validator, so mark it as validated in the log. If this
-    /// is the block the node is waiting for and this node is the primary, broadcast a PrePrepare;
-    /// if the node isn't the primary but it already has the PrePrepare for this block, switch to
-    /// `Preparing`. If this is a future block, use it to catch up.
-    pub fn on_block_valid(
-        &mut self,
-        block_id: BlockId,
-        state: &mut PbftState,
-    ) -> Result<(), PbftError> {
-        info!("Got BlockValid: {}", hex::encode(&block_id));
-
-        // Mark block as validated in the log and get the block, seal
-        let (block, seal) = self
-            .msg_log
-            .block_validated(block_id.clone())
-            .ok_or_else(|| {
-                PbftError::InvalidMessage(format!(
-                    "Received BlockValid message for an unknown block: {}",
-                    hex::encode(&block_id)
                 ))
             })?;
 
@@ -1368,10 +1375,6 @@ impl PbftNode {
         let proven_block_previous_id = self
             .msg_log
             .get_block_with_id(seal.block_id.as_slice())
-            .or_else(|| {
-                self.msg_log
-                    .get_unvalidated_block_with_id(seal.block_id.as_slice())
-            })
             .map(|proven_block| proven_block.previous_id.clone())
             .ok_or_else(|| {
                 PbftError::InternalError(format!(
@@ -2841,15 +2844,18 @@ mod tests {
     ///    to the chain must contain a valid proof for the block before it (which is required to
     ///    uphold finality, provide external verification, and enable the catch-up procedure)
     ///
-    /// If a block is not valid based on these criteria, it should be failed; otherwise, it should
-    /// be added to the node's log as an unvalidated block and its validity should be checked using
-    /// the service.
+    /// Criteria (1-3) are checked immediately when the block is received; if the block does not
+    /// meet any of these criteria, it should be failed. Otherwise, if it passes this step, it
+    /// should be added to the log as an unvalidated block and its validity should be checked using
+    /// the service. If a BlockValid update is received by the node, it should mark the block as
+    /// validated, then check criterion (4); if this criteria is not met, the block should be
+    /// failed.
     ///
     /// This test ensures that these criteria are enforced when a block is received using the
     /// `PbftNode::on_block_new` method.
     #[test]
     #[allow(unused_must_use)]
-    fn test_block_acceptance() {
+    fn test_block_acceptance_and_validation() {
         // Create signing keys for a new network and instantiate a new node on the network with
         // block 3 as the chain head
         let key_pairs = mock_signer_network(4);
@@ -2859,7 +2865,7 @@ mod tests {
             mock_block(3),
         );
 
-        // Verify old blocks are rejected
+        // Verify old blocks are rejected immediately when they are received
         let mut old_block = mock_block(2);
         old_block.payload = mock_seal(
             0,
@@ -2875,8 +2881,9 @@ mod tests {
         node.on_block_new(old_block, &mut state);
         assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![2])));
         assert!(node.msg_log.block_validated(vec![2]).is_none());
+        assert!(node.msg_log.get_block_with_id(&[2]).is_none());
 
-        // Verify blocks are rejected when node doesn't have previous block
+        // Verify blocks are rejected immediately when node doesn't have previous block
         let mut no_previous_block = mock_block(5);
         no_previous_block.payload = mock_seal(
             0,
@@ -2889,11 +2896,13 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(no_previous_block, &mut state);
+        node.on_block_new(no_previous_block.clone(), &mut state);
         assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![5])));
         assert!(node.msg_log.block_validated(vec![5]).is_none());
+        assert!(node.msg_log.get_block_with_id(&[5]).is_none());
 
-        // Verify blocks are rejected when the previous block doesn't have the previous block num
+        // Verify blocks are rejected immediately when the previous block doesn't have the previous
+        // block num
         let mut previous_block_not_previous_num = mock_block(5);
         previous_block_not_previous_num.previous_id = vec![3];
         previous_block_not_previous_num.payload = mock_seal(
@@ -2907,11 +2916,14 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(previous_block_not_previous_num, &mut state);
+        node.on_block_new(previous_block_not_previous_num.clone(), &mut state);
+        // called more than once now
         assert!(!service.was_called_with_args_once(stringify_func_call!("fail_block", vec![5])));
         assert!(node.msg_log.block_validated(vec![5]).is_none());
+        assert!(node.msg_log.get_block_with_id(&[5]).is_none());
 
-        // Verify blocks with invalid seals (e.g. not enough votes) are rejected
+        // Verify blocks with invalid seals (e.g. not enough votes) are rejected after the block is
+        // validated by the validator
         let mut invalid_seal = mock_block(4);
         invalid_seal.payload = mock_seal(
             0,
@@ -2928,9 +2940,12 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(invalid_seal, &mut state);
+        node.on_block_new(invalid_seal.clone(), &mut state);
+        assert!(service.was_called_with_args(stringify_func_call!("check_blocks", vec![vec![4]])));
+        node.on_block_valid(invalid_seal.block_id.clone(), &mut state);
         assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![4])));
         assert!(node.msg_log.block_validated(vec![4]).is_none());
+        assert!(node.msg_log.get_block_with_id(&[4]).is_some());
 
         // Verify valid blocks are accepted and added to the log
         let mut valid_block = mock_block(4);
@@ -2945,9 +2960,15 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(valid_block, &mut state);
-        assert!(service.was_called_with_args(stringify_func_call!("check_blocks", vec![vec![4]])));
-        assert!(node.msg_log.block_validated(vec![4]).is_some());
+        node.on_block_new(valid_block.clone(), &mut state);
+        // called more than once now
+        assert!(
+            !service.was_called_with_args_once(stringify_func_call!("check_blocks", vec![vec![4]]))
+        );
+        node.on_block_valid(valid_block.block_id.clone(), &mut state);
+        // shouldn't have called fail_block again
+        assert!(service.was_called_with_args_once(stringify_func_call!("fail_block", vec![4])));
+        assert!(node.msg_log.get_block_with_id(&[4]).is_some());
     }
 
     /// After receiving a block and checking it using the service, the consensus engine may be
