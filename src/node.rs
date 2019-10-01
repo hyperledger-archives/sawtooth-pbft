@@ -695,6 +695,16 @@ impl PbftNode {
     /// it already has the PrePrepare for this block, switch to `Preparing`. If this is a future
     /// block, use it to catch up.
     fn try_handling_block(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
+        // If the block's number is higher than the current sequence number + 1 (i.e., it is newer
+        // than the grandchild of the last committed block), the seal cannot be verified; this is
+        // because the settings in a block's grandparent are needed to verify the block's seal, and
+        // these settings are only guaranteed to be in the validator's state when the block is
+        // committed. If this is a newer block, wait until after the grandparent is committed
+        // before validating the seal and handling the block.
+        if block.block_num > state.seq_num + 1 {
+            return Ok(());
+        }
+
         let seal = self
             .verify_consensus_seal_from_block(&block, state)
             .map_err(|err| {
@@ -885,19 +895,19 @@ impl PbftNode {
         // Tell the log to garbage collect if it needs to
         self.msg_log.garbage_collect(state.seq_num);
 
-        // If the node already has a block with a seal that can be used to commit the next one,
-        // perform catch-up
-        let block_option = self
+        // If the node already has grandchild(ren) of the block that was just committed, one of
+        // them may be used to perform catch-up to commit the next block.
+        let grandchildren = self
             .msg_log
             .get_blocks_with_num(state.seq_num + 1)
-            .first()
+            .iter()
             .cloned()
-            .cloned();
-        if let Some(block) = block_option {
-            let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
-                PbftError::SerializationError("Error parsing seal for catch-up".into(), err)
-            })?;
-            return self.catchup(state, &seal, true);
+            .cloned()
+            .collect::<Vec<_>>();
+        for block in grandchildren {
+            if self.try_handling_block(block, state).is_ok() {
+                return Ok(());
+            }
         }
 
         // If the node is catching up but doesn't have a block with a seal to commit the next one,
@@ -2839,7 +2849,9 @@ mod tests {
     ///    consensus seal without it
     /// 3. The block’s previous block must have the previous block number (block number must be
     ///    strictly monotonically increasing by one)
-    /// 4. The block’s consensus seal must be valid as determined by the
+    /// 4. The block's grandparent (it's previous block's previous block) must already be committed
+    ///    before the block can be considered.
+    /// 5. The block’s consensus seal must be valid as determined by the
     ///    `PbftNode::verify_consensus_seal_from_block` method, since any block that gets committed
     ///    to the chain must contain a valid proof for the block before it (which is required to
     ///    uphold finality, provide external verification, and enable the catch-up procedure)
@@ -2848,8 +2860,11 @@ mod tests {
     /// meet any of these criteria, it should be failed. Otherwise, if it passes this step, it
     /// should be added to the log as an unvalidated block and its validity should be checked using
     /// the service. If a BlockValid update is received by the node, it should mark the block as
-    /// validated, then check criterion (4); if this criteria is not met, the block should be
-    /// failed.
+    /// validated, then check criterion (4). If criterion (4) is not met, the block is not failed;
+    /// instead, the node should simply skip further handling of the block until the block's
+    /// grandparent is committed, at which point the node will evaluate criterion (5) (this will
+    /// happen in the call to on_block_commit for the grandparent). Once criterion (4) is met, the
+    /// node will check criteria (5); if this criterion is not met, the block should be failed.
     ///
     /// This test ensures that these criteria are enforced when a block is received using the
     /// `PbftNode::on_block_new` method.
@@ -2921,6 +2936,33 @@ mod tests {
         assert!(!service.was_called_with_args_once(stringify_func_call!("fail_block", vec![5])));
         assert!(node.msg_log.block_validated(vec![5]).is_none());
         assert!(node.msg_log.get_block_with_id(&[5]).is_none());
+
+        // Verify blocks aren't handled before the grandparent block is committed (this block is
+        // actually invalid because of its seal, but it won't be failed because it can't properly
+        // be verified yet)
+        node.msg_log.add_validated_block(mock_block(5));
+        let mut invalid_block_but_not_ready = mock_block(6);
+        invalid_block_but_not_ready.payload = mock_seal(
+            0,
+            5,
+            vec![5],
+            &key_pairs[0],
+            vec![mock_vote(
+                PbftMessageType::Commit,
+                0,
+                5,
+                vec![5],
+                &key_pairs[1],
+            )],
+        )
+        .write_to_bytes()
+        .expect("Failed to write seal to bytes");
+        node.on_block_new(invalid_block_but_not_ready.clone(), &mut state);
+        assert!(service.was_called_with_args(stringify_func_call!("check_blocks", vec![vec![6]])));
+        node.on_block_valid(invalid_block_but_not_ready.block_id.clone(), &mut state);
+        assert!(!service.was_called_with_args(stringify_func_call!("fail_block", vec![6])));
+        assert!(node.msg_log.block_validated(vec![6]).is_none());
+        assert!(node.msg_log.get_block_with_id(&[6]).is_some());
 
         // Verify blocks with invalid seals (e.g. not enough votes) are rejected after the block is
         // validated by the validator
