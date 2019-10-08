@@ -68,7 +68,7 @@ pub fn get_storage<'a, T: Sized + Serialize + DeserializeOwned + 'a, F: Fn() -> 
         let split = location.splitn(2, '+').collect::<Vec<_>>();
 
         if split.len() != 2 {
-            Err(format!("Invalid location: {}", location))?
+            return Err(format!("Invalid location: {}", location));
         }
 
         Ok(Box::new(DiskStorage::from_path(split[1], default).unwrap()))
