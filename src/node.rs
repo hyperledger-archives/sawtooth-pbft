@@ -258,6 +258,8 @@ impl PbftNode {
             let has_matching_pre_prepare =
                 self.msg_log
                     .has_pre_prepare(info.get_seq_num(), info.get_view(), &block_id);
+            // The primary never sends a Prepare, the PrePrepare counts as its vote
+            // Threfere we only need 2f prepares, provided we have the PrePepare
             let has_required_prepares = self
                 .msg_log
                 // Only get Prepares with matching seq_num, view, and block_id
@@ -269,7 +271,7 @@ impl PbftNode {
                 )
                 // Check if there are at least 2f + 1 Prepares
                 .len() as u64
-                > 2 * state.f;
+                >= 2 * state.f;
             if has_matching_pre_prepare && has_required_prepares {
                 state.switch_phase(PbftPhase::Committing)?;
                 self.broadcast_pbft_message(
