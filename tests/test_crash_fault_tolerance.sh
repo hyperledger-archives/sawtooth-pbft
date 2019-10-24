@@ -52,7 +52,7 @@ function cleanup {
     docker-compose -p ${ISOLATION_ID} -f adhoc/admin.yaml down --remove-orphans --volumes
 }
 
-trap cleanup EXIT
+trap cleanup EXIT SIGTERM
 
 echo "Ensuring sawtooth services are built"
 docker-compose -p ${ISOLATION_ID} -f tests/sawtooth-services.yaml build
