@@ -97,6 +97,12 @@ fn main() {
     if let Some(timeout) = args.update_recv_timeout {
         pbft_config.update_recv_timeout = Duration::from_millis(timeout);
     }
+    if let Some(storage) = args.storage_location {
+        pbft_config.storage_location = storage;
+    }
+    if let Some(max_log_size) = args.max_log_size {
+        pbft_config.max_log_size = max_log_size;
+    }
 
     let pbft_engine = engine::PbftEngine::new(pbft_config);
 
