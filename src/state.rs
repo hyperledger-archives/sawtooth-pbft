@@ -133,6 +133,9 @@ pub struct PbftState {
 
     /// How many blocks to commit before forcing a view change for fairness
     pub forced_view_change_interval: u64,
+
+    /// Whether or not to use strict quorum threshold calculation
+    pub strict_quorum: bool,
 }
 
 impl PbftState {
@@ -156,6 +159,7 @@ impl PbftState {
             phase: PbftPhase::PrePreparing,
             mode: PbftMode::Normal,
             f,
+            strict_quorum: config.strict_quorum,
             member_ids: config.members.clone(),
             idle_timeout: Timeout::new(config.idle_timeout),
             commit_timeout: Timeout::new(config.commit_timeout),
@@ -164,6 +168,25 @@ impl PbftState {
             exponential_retry_base: config.exponential_retry_base,
             exponential_retry_max: config.exponential_retry_max,
             forced_view_change_interval: config.forced_view_change_interval,
+        }
+    }
+
+    // Return the minimum number of votes to establish a quorum
+    // not counting the leader.
+    // This is the equivalent of 2 * f if strict_quorum=false
+    // and (n - f - 1) if strict_quorum is true
+    pub fn minimum_quorum(&self) -> u64 {
+        if self.strict_quorum {
+            self.member_ids.len() as u64 - self.f - 1
+        } else {
+            let non_ideal_correction = {
+                if (self.member_ids.len() - 1) % 3 == 0 {
+                    0
+                } else {
+                    1
+                }
+            };
+            2 * self.f + non_ideal_correction
         }
     }
 
@@ -234,6 +257,7 @@ mod tests {
         // Verify normal initialization
         let cfg = mock_config(4);
         let state = PbftState::new(vec![0], 1, &cfg);
+        assert_eq!(false, state.strict_quorum);
         assert_eq!(vec![0], state.id);
         assert_eq!(2, state.seq_num);
         assert_eq!(0, state.view);
@@ -241,6 +265,7 @@ mod tests {
         assert_eq!(PbftMode::Normal, state.mode);
         assert_eq!(cfg.members, state.member_ids);
         assert_eq!(1, state.f);
+        assert_eq!(2, state.minimum_quorum());
         assert_eq!(cfg.idle_timeout, state.idle_timeout.duration());
         assert_eq!(cfg.commit_timeout, state.commit_timeout.duration());
         assert_eq!(
@@ -254,6 +279,33 @@ mod tests {
             cfg.forced_view_change_interval,
             state.forced_view_change_interval
         );
+
+        // Verify values for minimum_quorum and f
+        let cfg = mock_config(5);
+        let state = PbftState::new(vec![0], 1, &cfg);
+        assert_eq!(1, state.f);
+        assert_eq!(3, state.minimum_quorum());
+
+        let cfg = mock_config(6);
+        let state = PbftState::new(vec![0], 1, &cfg);
+        assert_eq!(1, state.f);
+        assert_eq!(3, state.minimum_quorum());
+
+        // Verify with strict quorum configuration
+        let cfg = mock_config_with_strict_quorum(4);
+        let state = PbftState::new(vec![0], 1, &cfg);
+        assert_eq!(1, state.f);
+        assert_eq!(2, state.minimum_quorum());
+
+        let cfg = mock_config_with_strict_quorum(5);
+        let state = PbftState::new(vec![0], 1, &cfg);
+        assert_eq!(1, state.f);
+        assert_eq!(3, state.minimum_quorum());
+
+        let cfg = mock_config_with_strict_quorum(6);
+        let state = PbftState::new(vec![0], 1, &cfg);
+        assert_eq!(1, state.f);
+        assert_eq!(4, state.minimum_quorum());
 
         // Verify panic if f == 0
         let cfg = mock_config(3);

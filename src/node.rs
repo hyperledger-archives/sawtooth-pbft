@@ -27,7 +27,7 @@ use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
 
-use crate::config::{get_members_from_settings, PbftConfig};
+use crate::config::{get_members_from_settings, get_strict_quorum_from_settings, PbftConfig};
 use crate::error::PbftError;
 use crate::hash::verify_sha512;
 use crate::message_log::PbftLog;
@@ -221,7 +221,7 @@ impl PbftNode {
     /// Handle a `Prepare` message
     ///
     /// Once a `Prepare` for the current sequence number is accepted and added to the log, the node
-    /// will check if it has the required 2f + 1 `Prepared` messages to move on to the Committing
+    /// will check if it has the required minimum_quorum + 1 `Prepared` messages to move on to the Committing
     /// phase
     fn handle_prepare(
         &mut self,
@@ -255,7 +255,7 @@ impl PbftNode {
         // phase, check if the node is ready to move on to the Committing phase
         if info.get_seq_num() == state.seq_num && state.phase == PbftPhase::Preparing {
             // The node is ready to move on to the Committing phase (i.e. the predicate `prepared`
-            // is true) when its log has 2f + 1 Prepare messages from different nodes that match
+            // is true) when its log has minimum_quorum Prepare messages from different nodes that match
             // the PrePrepare message received earlier (same view, sequence number, and block)
             let has_matching_pre_prepare =
                 self.msg_log
@@ -269,9 +269,10 @@ impl PbftNode {
                     info.get_view(),
                     &block_id,
                 )
-                // Check if there are at least 2f + 1 Prepares
+                // Check if there are at least mimumum_quorum Prepares
+                // PrePrepare counts as leader's vote
                 .len() as u64
-                > 2 * state.f;
+                >= state.minimum_quorum();
             if has_matching_pre_prepare && has_required_prepares {
                 state.switch_phase(PbftPhase::Committing)?;
                 self.broadcast_pbft_message(
@@ -290,7 +291,7 @@ impl PbftNode {
     /// Handle a `Commit` message
     ///
     /// Once a `Commit` for the current sequence number is accepted and added to the log, the node
-    /// will check if it has the required 2f + 1 `Commit` messages to actually commit the block
+    /// will check if it has the required minimum_quorum + 1 `Commit` messages to actually commit the block
     fn handle_commit(
         &mut self,
         msg: ParsedMessage,
@@ -314,7 +315,7 @@ impl PbftNode {
         // phase, check if the node is ready to commit the block
         if info.get_seq_num() == state.seq_num && state.phase == PbftPhase::Committing {
             // The node is ready to commit the block (i.e. the predicate `committable` is true)
-            // when its log has 2f + 1 Commit messages from different nodes that match the
+            // when its log has minimum_quorum + 1 Commit messages from different nodes that match the
             // PrePrepare message received earlier (same view, sequence number, and block)
             let has_matching_pre_prepare =
                 self.msg_log
@@ -328,9 +329,9 @@ impl PbftNode {
                     info.get_view(),
                     &block_id,
                 )
-                // Check if there are at least 2f + 1 Commits
+                // Check if there are at least minimum_quorum + 1 Commits
                 .len() as u64
-                > 2 * state.f;
+                > state.minimum_quorum();
             if has_matching_pre_prepare && has_required_commits {
                 self.service.commit_block(block_id.clone()).map_err(|err| {
                     PbftError::ServiceError(
@@ -351,8 +352,8 @@ impl PbftNode {
     ///
     /// When a `ViewChange` is received, check that it isn't outdated and add it to the log. If the
     /// node isn't already view changing but it now has f + 1 ViewChange messages, start view
-    /// changing early. If the node is the primary and has 2f view change messages now, broadcast
-    /// the NewView message to the rest of the nodes to move to the new view.
+    /// changing early. If the node is the primary and has at least minimum_quorum view change
+    /// messages now, broadcast the NewView message to the rest of the nodes to move to the new view.
     fn handle_view_change(
         &mut self,
         msg: &ParsedMessage,
@@ -401,9 +402,10 @@ impl PbftNode {
             .msg_log
             .get_messages_of_type_view(PbftMessageType::ViewChange, msg_view);
 
-        // If there are 2f + 1 ViewChange messages and the view change timeout is not already
+        // If there are minimum_quorum + 1 ViewChange messages and the view change timeout is not already
         // started, update the timeout and start it
-        if !state.view_change_timeout.is_active() && messages.len() as u64 > state.f * 2 {
+        if !state.view_change_timeout.is_active() && messages.len() as u64 > state.minimum_quorum()
+        {
             state.view_change_timeout = Timeout::new(
                 state
                     .view_change_duration
@@ -413,7 +415,7 @@ impl PbftNode {
             state.view_change_timeout.start();
         }
 
-        // If this node is the new primary and the required 2f ViewChange messages (not including
+        // If this node is the new primary and the required minimum_quorum ViewChange messages (not including
         // the primary's own) are present in the log, broadcast the NewView message
         let messages_from_other_nodes = messages
             .iter()
@@ -422,7 +424,7 @@ impl PbftNode {
             .collect::<Vec<_>>();
 
         if state.is_primary_at_view(msg_view)
-            && messages_from_other_nodes.len() as u64 >= 2 * state.f
+            && messages_from_other_nodes.len() as u64 >= state.minimum_quorum()
         {
             let mut new_view = PbftNewView::new();
 
@@ -974,10 +976,15 @@ impl PbftNode {
             || {
                 self.service.get_settings(
                     block_id.clone(),
-                    vec![String::from("sawtooth.consensus.pbft.members")],
+                    vec![
+                        String::from("sawtooth.consensus.pbft.members"),
+                        String::from("sawtooth.consensus.pbft.strict_quorum"),
+                    ],
                 )
             },
         );
+
+        let strict_quorum = get_strict_quorum_from_settings(&settings);
         let on_chain_members = get_members_from_settings(&settings);
 
         if on_chain_members != state.member_ids {
@@ -987,6 +994,7 @@ impl PbftNode {
             if f == 0 {
                 panic!("This network no longer contains enough nodes to be fault tolerant");
             }
+            state.strict_quorum = strict_quorum;
             state.f = f as u64;
         }
     }
@@ -1048,7 +1056,7 @@ impl PbftNode {
     /// have the `Commit` messages necessary to build the consensus seal for the last committed
     /// block (the chain head). To bootstrap the network in this scenario, all nodes will send a
     /// `Commit` message for their chain head whenever one of the PBFT members connects; when
-    /// > 2f + 1 nodes have connected and received these `Commit` messages, the nodes will be able
+    /// > minimum_quorum + 1 nodes have connected and received these `Commit` messages, the nodes will be able
     /// to build a seal using the messages.
     fn broadcast_bootstrap_commit(
         &mut self,
@@ -1133,7 +1141,7 @@ impl PbftNode {
         trace!("{}: Building seal for block {}", state, state.seq_num - 1);
 
         // The previous block may have been committed in a different view, so the node will need to
-        // find the view that contains the required 2f Commit messages for building the seal
+        // find the view that contains the required minimum_quorum Commit messages for building the seal
         let (block_id, view, messages) = self
             .msg_log
             .get_messages_of_type_seq(PbftMessageType::Commit, state.seq_num - 1)
@@ -1150,7 +1158,7 @@ impl PbftNode {
             // One and only one block/view should have the required number of messages, since only
             // one block at this sequence number should have been committed and in only one view
             .find_map(|((block_id, view), msgs)| {
-                if msgs.len() as u64 >= 2 * state.f {
+                if msgs.len() as u64 >= state.minimum_quorum() {
                     Some((block_id, view, msgs))
                 } else {
                     None
@@ -1158,7 +1166,7 @@ impl PbftNode {
             })
             .ok_or_else(|| {
                 PbftError::InternalError(String::from(
-                    "Couldn't find 2f commit messages in the message log for building a seal",
+                    "Couldn't find the minimum_quorum commit messages in the message log for building a seal",
                 ))
             })?;
 
@@ -1332,11 +1340,11 @@ impl PbftNode {
             )));
         }
 
-        // Check that the NewView contains 2f votes (primary vote is implicit, so total of 2f + 1)
-        if (voter_ids.len() as u64) < 2 * state.f {
+        // Check that the NewView contains minimumum_quorum votes (primary vote is implicit, so total of minimum_quorum + 1)
+        if (voter_ids.len() as u64) < state.minimum_quorum() {
             return Err(PbftError::InvalidMessage(format!(
                 "NewView needs {} votes, but only {} found",
-                2 * state.f,
+                state.minimum_quorum(),
                 voter_ids.len()
             )));
         }
@@ -1489,11 +1497,11 @@ impl PbftNode {
             )));
         }
 
-        // Check that the seal contains 2f votes (primary vote is implicit, so total of 2f + 1)
-        if (voter_ids.len() as u64) < 2 * state.f {
+        // Check that the seal contains minimum_quorum votes (primary vote is implicit, so total of minimum_quorum + 1)
+        if (voter_ids.len() as u64) < state.minimum_quorum() {
             return Err(PbftError::InvalidMessage(format!(
                 "Consensus seal needs {} votes, but only {} found",
-                2 * state.f,
+                state.minimum_quorum(),
                 voter_ids.len()
             )));
         }
@@ -1678,7 +1686,7 @@ impl PbftNode {
         state.idle_timeout.stop();
         state.commit_timeout.stop();
 
-        // Stop the view change timeout if it is already active (will be restarted when 2f + 1
+        // Stop the view change timeout if it is already active (will be restarted when minimum_quorum + 1
         // ViewChange messages for the new view are received)
         state.view_change_timeout.stop();
 
@@ -2217,7 +2225,7 @@ mod tests {
     /// 5. None of the votes are from the new primary that sent this `NewView` message (the
     ///    `NewView` message is an implicit vote from the new primary, so including its own vote
     ///    would be double-voting)
-    /// 6. There are `2f` votes (again, this is really `2f + 1` since the `NewView` message itself
+    /// 6. There are `minimum_quorum` votes (again, this is really `minimum_quorum + 1` since the `NewView` message itself
     ///    is an implicit vote)
     ///
     /// This test ensures that the `verify_new_view` method properly checks the validity of
@@ -2361,7 +2369,7 @@ mod tests {
     ///    `verify_consensus_seal` method)
     /// 3. None of the votes are from the seal’s signer (producing a seal is an implicit vote from
     ///    the node that constructed it, so including its own vote would be double-voting)
-    /// 4. There are `2f` votes (this is really `2f + 1` voters since the consensus seal itself is
+    /// 4. There are `minimum_quorum` votes (this is really `minimum_quorum + 1` voters since the consensus seal itself is
     ///    an implicit vote)
     ///
     /// This test ensures that the `verify_consensus_seal` method properly checks the validity of
@@ -2633,14 +2641,14 @@ mod tests {
     /// committed. To build the seal, the node will have to have in its log:
     ///
     /// 1. The previously committed block, which has `block_num = state.seq_num - 1`
-    /// `2f + 1` matching Commit messages for the previously committed block (same type, seq_num,
+    /// `minimum_quorum + 1` matching Commit messages for the previously committed block (same type, seq_num,
     /// view, and block_id) that are from different nodes (different signer_id’s)
     ///
-    /// While the `2f + 1` messages must all have a matching view, they could be from any past view
+    /// While the `minimum_quorum + 1` messages must all have a matching view, they could be from any past view
     /// since the block could have been committed in any past view.
     ///
     /// Consensus seals are built using the `PbftNode::build_seal` method, which checks its log for
-    /// `2f` matching Commit messages for the last committed block that are from other nodes
+    /// `minimum_quorum` matching Commit messages for the last committed block that are from other nodes
     /// (doesn’t include own vote, since the seal itself is an implicit vote) and also retrieves
     /// the view the block was committed in.
     ///
@@ -2716,11 +2724,11 @@ mod tests {
             .expect("Failed to parse vote"),
         );
 
-        // Verify that seal cannot be built yet (have 2f matching messages for a block at the last
+        // Verify that seal cannot be built yet (have minimum_quorum matching messages for a block at the last
         // seq_num from different signers, but one is the seal signer's own)
         assert!(node.build_seal(&mut state).is_err());
 
-        // Add another Commit message so there are 2f matching messages from other nodes
+        // Add another Commit message so there are minimum_quorum matching messages from other nodes
         node.msg_log.add_message(
             ParsedMessage::from_signed_vote(&mock_vote(
                 PbftMessageType::Commit,
@@ -3617,7 +3625,7 @@ mod tests {
     ///
     /// 1. The node is in the Preparing phase
     /// 2. The node has a valid `PrePrepare` for the current view and sequence number
-    /// 3. The node has `2f + 1` `Prepare` messages that match the `PrePrepare` (same view,
+    /// 3. The node has `minimum_quorum + 1` `Prepare` messages that match the `PrePrepare` (same view,
     ///     sequence number, and block ID) for the node’s current sequence number, all from
     ///     different nodes
     ///
@@ -3707,7 +3715,7 @@ mod tests {
             .is_ok());
         assert_eq!(PbftPhase::Preparing, state.phase);
 
-        // Verify that there must be a matching PrePrepare (even after 2f + 1 Prepares)
+        // Verify that there must be a matching PrePrepare (even after minimum_quorum + 1 Prepares)
         assert!(node
             .on_peer_message(
                 mock_msg(PbftMessageType::Prepare, 0, 1, vec![4], vec![1], false),
@@ -3758,7 +3766,7 @@ mod tests {
     ///
     /// 1. The node is in the Committing phase
     /// 2. The node has a valid `PrePrepare` for the current view and sequence number
-    /// 3. The node has `2f + 1` `Commit` messages that match the `PrePrepare` (same view, sequence
+    /// 3. The node has `minimum_quorum + 1` `Commit` messages that match the `PrePrepare` (same view, sequence
     ///    number, and block ID) for the node’s current sequence number, all from different nodes
     ///
     /// These conditions are checked when the node receives a `Commit` message; thus, receiving a
@@ -3844,7 +3852,7 @@ mod tests {
             .is_ok());
         assert_eq!(PbftPhase::Committing, state.phase);
 
-        // Verify that there must be a matching PrePrepare (even after 2f + 1 Commits)
+        // Verify that there must be a matching PrePrepare (even after minimum_quorum + 1 Commits)
         assert!(node
             .on_peer_message(
                 mock_msg(PbftMessageType::Commit, 0, 1, vec![3], vec![1], false),
@@ -4294,18 +4302,18 @@ mod tests {
     ///
     /// These conditions ensure that no old (stale) view change messages are added to the log.
     ///
-    /// When a node has `2f + 1` `ViewChange` messages for a view, it will start its view change
+    /// When a node has `minimum_quorum + 1` `ViewChange` messages for a view, it will start its view change
     /// timeout to ensure that the new primary produces a `NewView` in a reasonable amount of time.
     /// The appropriate duration of the view change timeout is calculated based on a base duration
     /// (defined by the state object’s `view_change_duration` field) using the formula: `(desired
     /// view number - node’s current view number) * view_change_duration`.
     ///
-    /// When the new primary for the view specified in the `ViewChange` message has `2f + 1`
+    /// When the new primary for the view specified in the `ViewChange` message has `minimum_quorum + 1`
     /// `ViewChange` messages for that view, it will broadcast a `NewView` message to the network.
     /// Only the new primary should broadcast the `NewView` message.
     ///
     /// This test ensures that only non-stale `ViewChange` messages are accepted, nodes start their
-    /// view change timeouts with the appropriate duration when `2f + 1` `ViewChange` messages are
+    /// view change timeouts with the appropriate duration when `minimum_quorum + 1` `ViewChange` messages are
     /// received, and that the new primary (and only the new primary) broadcasts a `NewView` when
     /// it has the required messages in its log.
     #[test]
@@ -4351,7 +4359,7 @@ mod tests {
                 .len()
         );
 
-        // Verify NewView is not broadcasted by new primary when there aren't 2f + 1 ViewChanges
+        // Verify NewView is not broadcasted by new primary when there aren't minimum_quorum + 1 ViewChanges
         state.mode = PbftMode::ViewChanging(4);
         assert!(node
             .on_peer_message(
@@ -4367,7 +4375,7 @@ mod tests {
             .is_ok());
         assert!(!service.was_called_with_args(stringify_func_call!("broadcast", "NewView")));
 
-        // Verify NewView is broadcasted by new primary when there are 2f + 1 ViewChanges
+        // Verify NewView is broadcasted by new primary when there are minimum_quorum + 1 ViewChanges
         node.on_peer_message(
             mock_msg(PbftMessageType::ViewChange, 4, 0, vec![2], vec![], false),
             &mut state,
@@ -4405,7 +4413,7 @@ mod tests {
         );
 
         // Verify view change timeout uses the appropriate duration, and that it is not started
-        // until 2f + 1 ViewChanges are received
+        // until minimum_quorum + 1 ViewChanges are received
         state.view_change_timeout.stop();
         state.mode = PbftMode::ViewChanging(6);
         assert!(node
@@ -4437,7 +4445,7 @@ mod tests {
         );
     }
 
-    /// When the node that will become primary as the result of a view change has accepted `2f + 1`
+    /// When the node that will become primary as the result of a view change has accepted `minimum_quorum + 1`
     /// matching `ViewChange` messages for the new view, it will construct a `NewView` message that
     /// contains the required `ViewChange` messages and broadcast it to the network. When a node
     /// receives this `NewView` message, it will check that the message is valid (as determined by
@@ -5025,7 +5033,7 @@ mod tests {
     /// have the `Commit` messages necessary to build the consensus seal for the last committed
     /// block (the chain head). To bootstrap the network in this scenario, all nodes will send a
     /// `Commit` message for their chain head whenever one of the PBFT members connects; when
-    /// > 2f + 1 nodes have connected and received these `Commit` messages, the nodes will be able
+    /// > minimum_quorum + 1 nodes have connected and received these `Commit` messages, the nodes will be able
     /// to build a seal using the messages.
     #[test]
     #[allow(unused_must_use)]

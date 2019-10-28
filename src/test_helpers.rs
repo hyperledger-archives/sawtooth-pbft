@@ -29,6 +29,15 @@ pub fn mock_config(num_nodes: u8) -> PbftConfig {
     config
 }
 
+/// Create a mock configuration given a number of nodes
+/// and with strict_quorum value as passed
+pub fn mock_config_with_strict_quorum(num_nodes: u8) -> PbftConfig {
+    let mut config = PbftConfig::default();
+    config.members = (0..num_nodes).map(|id| vec![id as u8]).collect();
+    config.strict_quorum = true;
+    config
+}
+
 /// Create a Block for the given block number
 pub fn mock_block(num: u8) -> Block {
     let previous_id = if num == 0 { vec![] } else { vec![num - 1] };

@@ -67,6 +67,9 @@ pub struct PbftConfig {
 
     /// Where to store PbftState ("memory" or "disk+/path/to/file")
     pub storage_location: String,
+
+    /// Whether or not to use strict quorum threshold calculation
+    pub strict_quorum: bool,
 }
 
 impl PbftConfig {
@@ -83,6 +86,7 @@ impl PbftConfig {
             forced_view_change_interval: 100,
             max_log_size: 10000,
             storage_location: "memory".into(),
+            strict_quorum: false,
         }
     }
 
@@ -95,6 +99,7 @@ impl PbftConfig {
     /// + `sawtooth.consensus.pbft.commit_timeout` (optional, default 10000 ms)
     /// + `sawtooth.consensus.pbft.view_change_duration` (optional, default 5000 ms)
     /// + `sawtooth.consensus.pbft.forced_view_change_interval` (optional, default 100 blocks)
+    /// + `sawtooth.consensus.pbft.strict_quorum` (optional, default false)
     ///
     /// # Panics
     /// + If block publishing delay is greater than the idle timeout
@@ -114,6 +119,7 @@ impl PbftConfig {
                         String::from("sawtooth.consensus.pbft.commit_timeout"),
                         String::from("sawtooth.consensus.pbft.view_change_duration"),
                         String::from("sawtooth.consensus.pbft.forced_view_change_interval"),
+                        String::from("sawtooth.consensus.pbft.strict_quorum"),
                     ],
                 )
             },
@@ -122,6 +128,9 @@ impl PbftConfig {
         // Get the on-chain list of PBFT members or panic if it is not provided; the network cannot
         // function without this setting, since there is no way of knowing which nodes are members.
         self.members = get_members_from_settings(&settings);
+
+        // get the on chain setting setting for the strict_quorum
+        self.strict_quorum = get_strict_quorum_from_settings(&settings);
 
         // Get durations
         merge_millis_setting_if_set(
@@ -197,6 +206,24 @@ fn merge_millis_setting_if_set(
         setting_key,
         Duration::from_millis,
     )
+}
+
+/// Get the strict_quorum setting from settings as a bool
+pub fn get_strict_quorum_from_settings<S: std::hash::BuildHasher>(
+    settings: &HashMap<String, String, S>,
+) -> bool {
+    match settings.get("sawtooth.consensus.pbft.strict_quorum") {
+        Some(strict_quorum_value) => {
+            if strict_quorum_value.is_empty() {
+                false
+            } else {
+                strict_quorum_value
+                    .parse()
+                    .expect("'sawtooth.consensus.pbft.strict_quorum' must be 'true' or 'false'")
+            }
+        }
+        None => false,
+    }
 }
 
 /// Get the list of PBFT members as a Vec<PeerId> from settings
