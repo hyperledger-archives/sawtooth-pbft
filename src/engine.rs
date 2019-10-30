@@ -137,6 +137,10 @@ impl Engine for PbftEngine {
     fn name(&self) -> String {
         "pbft".into()
     }
+
+    fn additional_protocols(&self) -> Vec<(String, String)> {
+        vec![]
+    }
 }
 
 fn handle_update(
