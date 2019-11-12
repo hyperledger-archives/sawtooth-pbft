@@ -105,9 +105,9 @@ services:
     volumes:
       - ${SAWTOOTH_PBFT:-..}:/project/sawtooth-pbft
     working_dir: /project/sawtooth-pbft/
-    command: ./target/debug/pbft-engine --connect tcp://validator:5050 -v
+    command: ./target/debug/pbft-engine --connect tcp://validator:5050 -vv
     environment:
-      - RUST_BACKTRACE=1
+      - RUST_BACKTRACE=full
 
   rest-api:
     image: sawtooth-rest-api:${ISOLATION_ID}

@@ -117,7 +117,7 @@ impl PbftNode {
         msg: ParsedMessage,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        trace!("{}: Got peer message: {}", state, msg.info());
+        debug!("{}: Got peer message: {}", state, msg.info());
 
         // Make sure this message is from a known member of the PBFT network
         if !state.member_ids.contains(&msg.info().signer_id) {
@@ -179,7 +179,7 @@ impl PbftNode {
         if PeerId::from(msg.info().get_signer_id()) != state.get_primary_id() {
             warn!(
                 "Got PrePrepare from a secondary node {:?}; ignoring message",
-                msg.info().get_signer_id()
+                hex::encode(msg.info().get_signer_id())
             );
             return Ok(());
         }
@@ -688,7 +688,7 @@ impl PbftNode {
         block_id: BlockId,
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
-        info!("Got BlockValid: {}", hex::encode(&block_id));
+        info!("{}: Got BlockValid: {}", state, hex::encode(&block_id));
 
         // Mark block as validated in the log and get the block
         let block = self
@@ -1184,6 +1184,7 @@ impl PbftNode {
             // One and only one block/view should have the required number of messages, since only
             // one block at this sequence number should have been committed and in only one view
             .find_map(|((block_id, view), msgs)| {
+                debug!("Found {} messages for block {:?} in view {}",msgs.len() as u64, hex::encode(&block_id),view);
                 if msgs.len() as u64 >= state.minimum_quorum() {
                     Some((block_id, view, msgs))
                 } else {
@@ -1191,6 +1192,10 @@ impl PbftNode {
                 }
             })
             .ok_or_else(|| {
+                debug!("Couldn't find the {} commits for seal on block state {}",
+                    state.minimum_quorum(),
+                    state
+                );
                 PbftError::InternalError(String::from(
                     "Couldn't find the minimum_quorum commit messages in the message log for building a seal",
                 ))
@@ -1546,7 +1551,7 @@ impl PbftNode {
             return Ok(());
         }
 
-        trace!("{}: Attempting to summarize block", state);
+        debug!("{}: Attempting to summarize block", state);
 
         match self.service.summarize_block() {
             Ok(_) => {}
@@ -1623,7 +1628,7 @@ impl PbftNode {
         ));
         msg.set_block_id(block_id);
 
-        trace!("{}: Created PBFT message: {:?}", state, msg);
+        debug!("{}: Created PBFT message: {:?}", state, msg);
 
         self.broadcast_message(ParsedMessage::from_pbft_message(msg)?, state)
     }
@@ -1659,6 +1664,12 @@ impl PbftNode {
         state: &PbftState,
         recipient: &PeerId,
     ) -> Result<(), PbftError> {
+        debug!(
+            "{}: Sending seal response to {:?}",
+            state,
+            hex::encode(recipient)
+        );
+
         let seal = self.build_seal(state).map_err(|err| {
             PbftError::InternalError(format!("Failed to build requested seal due to: {}", err))
         })?;
