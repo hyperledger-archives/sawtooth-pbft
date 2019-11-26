@@ -74,6 +74,18 @@ impl PbftNode {
             if let Ok(seal) = protobuf::parse_from_bytes::<PbftSeal>(&chain_head.payload) {
                 state.view = seal.get_info().get_view();
                 info!("Updated view to {} on startup", state.view);
+                if match state.phase {
+                    PbftPhase::Finishing(_) => true,
+                    _ => false,
+                } {
+                    state.phase = PbftPhase::PrePreparing;
+                }
+                if match state.mode {
+                    PbftMode::ViewChanging(_) => true,
+                    _ => false,
+                } {
+                    state.mode = PbftMode::Normal;
+                }
             }
             // If connected to any peers already, send bootstrap commit messages to them
             for peer in connected_peers {
