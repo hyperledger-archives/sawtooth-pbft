@@ -17,6 +17,7 @@
 
 //! The core PBFT algorithm
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::From;
 
@@ -1029,7 +1030,49 @@ impl PbftNode {
         );
 
         let strict_quorum = get_strict_quorum_from_settings(&settings);
-        let on_chain_members = get_members_from_settings(&settings);
+        let on_chain_members = get_members_from_settings(&settings).unwrap_or_else(|_err| {
+            let mut done = false;
+            let mut this_block_id = block_id.clone();
+            let mut found_peers: Vec<PeerId> = Vec::new();
+            while !done {
+                let blocks = retry_until_ok(
+                    state.exponential_retry_base,
+                    state.exponential_retry_max,
+                    || self.service.get_blocks(vec![this_block_id.clone()]),
+                );
+                debug!("Fetching settings from prior block");
+                let previous_block_id = if let Some(current_block) = blocks.get(&this_block_id) {
+                    current_block.previous_id.clone()
+                } else {
+                    panic!("Cannot fetch the current block!");
+                };
+                let previous_settings: HashMap<String, String> = retry_until_ok(
+                    state.exponential_retry_base,
+                    state.exponential_retry_max,
+                    || {
+                        self.service.get_settings(
+                            previous_block_id.clone(),
+                            vec![String::from("sawtooth.consensus.pbft.members")],
+                        )
+                    },
+                );
+                match get_members_from_settings(&previous_settings) {
+                    Ok(result) => {
+                        done = true;
+                        found_peers = result;
+                    }
+                    Err(msg) => {
+                        debug!(
+                            "Valid membership not found yet, searching backward {:?}",
+                            msg
+                        );
+                        done = false;
+                        this_block_id = previous_block_id.clone();
+                    }
+                };
+            }
+            found_peers
+        });
 
         if on_chain_members != state.member_ids {
             info!("Updating membership: {:?}", on_chain_members);
@@ -1517,7 +1560,49 @@ impl PbftNode {
                 )
             },
         );
-        let members = get_members_from_settings(&settings);
+        let members = get_members_from_settings(&settings).unwrap_or_else(|_err| {
+            let mut done = false;
+            let mut this_block_id = previous_id.clone();
+            let mut found_peers: Vec<PeerId> = Vec::new();
+            while !done {
+                let blocks = retry_until_ok(
+                    state.exponential_retry_base,
+                    state.exponential_retry_max,
+                    || self.service.get_blocks(vec![this_block_id.clone()]),
+                );
+                debug!("Fetching settings from prior block");
+                let previous_block_id = if let Some(current_block) = blocks.get(&this_block_id) {
+                    current_block.previous_id.clone()
+                } else {
+                    panic!("Cannot fetch the current block!");
+                };
+                let previous_settings: HashMap<String, String> = retry_until_ok(
+                    state.exponential_retry_base,
+                    state.exponential_retry_max,
+                    || {
+                        self.service.get_settings(
+                            previous_block_id.clone(),
+                            vec![String::from("sawtooth.consensus.pbft.members")],
+                        )
+                    },
+                );
+                match get_members_from_settings(&previous_settings) {
+                    Ok(result) => {
+                        done = true;
+                        found_peers = result;
+                    }
+                    Err(msg) => {
+                        debug!(
+                            "Valid membership not found yet, searching backward {:?}",
+                            msg
+                        );
+                        done = false;
+                        this_block_id = previous_block_id.clone();
+                    }
+                };
+            }
+            found_peers
+        });
 
         // Verify that the seal's signer is a PBFT member
         if !members.contains(&seal.get_info().get_signer_id().to_vec()) {
