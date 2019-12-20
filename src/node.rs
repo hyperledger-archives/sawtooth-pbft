@@ -309,7 +309,7 @@ impl PbftNode {
             )));
         }
 
-        self.msg_log.add_message(msg.clone());
+        self.msg_log.add_message(msg);
 
         // If this message is for the current sequence number and the node is in the Committing
         // phase, check if the node is ready to commit the block
