@@ -49,7 +49,7 @@ be installed.
 
      .. code-block:: console
 
-        % bin/run_docker_tests tests/test_liveness.yaml
+        % bin/run_docker_test tests/test_liveness.yaml
 
    This command builds several Docker images, starts up a network of four
    Sawtooth nodes with PBFT consensus, then goes through a liveness test of
@@ -63,7 +63,7 @@ be installed.
      ``--timeout``. For more information, execute ``run_docker_test --help``.
 
    * To run a different test, specify a different Compose file for
-     ` run_docker_test``. The ``sawtooth-pbft/tests/`` directory includes several
+     ``run_docker_test``. The ``sawtooth-pbft/tests/`` directory includes several
      Docker Compose files for testing, such as ``grafana.yaml``, ``client.yaml``,
      and ``pbft_unit_tests.yaml``.
 
