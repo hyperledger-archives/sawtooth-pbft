@@ -329,7 +329,7 @@ impl PbftNode {
         // We should add those to the log, if this is a commit for some other
         // block though, we ignore it like the rest
         if msg.get_block_id() == state.chain_head {
-            self.msg_log.add_message(msg.clone());
+            self.msg_log.add_message(msg);
             return Ok(());
         }
         // Check that the message is for the current view
@@ -1189,6 +1189,9 @@ impl PbftNode {
         let bytes = commit.write_to_bytes().map_err(|err| {
             PbftError::SerializationError("Error writing commit to bytes".into(), err)
         })?;
+
+        self.msg_log
+            .add_message(ParsedMessage::from_pbft_message(commit)?);
 
         self.service
             .send_to(
