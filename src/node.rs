@@ -1614,7 +1614,8 @@ impl PbftNode {
         if !members.contains(&seal.get_info().get_signer_id().to_vec()) {
             return Err(PbftError::InvalidMessage(format!(
                 "Consensus seal is signed by an unknown peer: {:?} members: {:?}",
-                seal.get_info().get_signer_id(), members
+                seal.get_info().get_signer_id(),
+                members
             )));
         }
 
