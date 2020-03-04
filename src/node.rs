@@ -1613,8 +1613,8 @@ impl PbftNode {
         // Verify that the seal's signer is a PBFT member
         if !members.contains(&seal.get_info().get_signer_id().to_vec()) {
             return Err(PbftError::InvalidMessage(format!(
-                "Consensus seal is signed by an unknown peer: {:?}",
-                seal.get_info().get_signer_id()
+                "Consensus seal is signed by an unknown peer: {:?} members: {:?}",
+                seal.get_info().get_signer_id(), members
             )));
         }
 
