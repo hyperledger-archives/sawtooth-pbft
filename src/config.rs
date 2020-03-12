@@ -279,6 +279,7 @@ pub fn get_members_from_settings<S: std::hash::BuildHasher>(
         .get("sawtooth.consensus.pbft.members")
         .expect("'sawtooth.consensus.pbft.members' is empty; this setting must exist to use PBFT");
 
+    debug!("Will parse value {:?}", members_setting_value);
     let members: Vec<String> =
         serde_json::from_str(members_setting_value).unwrap_or_else(|_err| Vec::new());
 

@@ -1625,12 +1625,14 @@ impl PbftNode {
             .filter(|pid| pid.as_slice() != seal.get_info().get_signer_id())
             .collect();
 
-        trace!(
+        debug!("Original member list is ({:?})", members);
+        debug!(
             "Comparing voter IDs ({:?}) with on-chain member IDs - primary ({:?})",
             voter_ids,
             peer_ids
         );
-
+        debug!("Seal was signed by: {:?}", seal.get_info().get_signer_id());
+        
         if !voter_ids.is_subset(&peer_ids) {
             return Err(PbftError::InvalidMessage(format!(
                 "Consensus seal contains vote(s) from invalid ID(s): {:?}",
