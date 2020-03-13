@@ -119,7 +119,7 @@ pub fn retry_until_ok<T, E, F: FnMut() -> Result<T, E>>(
                 if delay < max {
                     delay = delay
                         .checked_mul(2)
-                        .unwrap_or(Duration::from_millis(std::u64::MAX));
+                        .unwrap_or_else(|| Duration::from_millis(std::u64::MAX));
                     // Make sure the max isn't exceeded
                     if delay > max {
                         delay = max;
