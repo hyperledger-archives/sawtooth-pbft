@@ -47,22 +47,20 @@ pub enum PbftError {
 }
 
 impl Error for PbftError {
-    fn description(&self) -> &str {
-        use self::PbftError::*;
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            SerializationError(_, _) => "SerializationError",
-            ServiceError(_, _) => "ServiceError",
-            SigningError(_) => "SigningError",
-            FaultyPrimary(_) => "FaultyPrimary",
-            InvalidMessage(_) => "InvalidMessage",
-            InternalError(_) => "InternalError",
+            PbftError::SerializationError(_, err) => Some(err),
+            PbftError::ServiceError(_, err) => Some(err),
+            PbftError::SigningError(_) => None,
+            PbftError::FaultyPrimary(_) => None,
+            PbftError::InvalidMessage(_) => None,
+            PbftError::InternalError(_) => None,
         }
     }
 }
 
 impl fmt::Display for PbftError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}: ", self.description())?;
         match self {
             PbftError::SerializationError(desc, pb_err) => write!(f, "{} due to: {}", desc, pb_err),
             PbftError::ServiceError(desc, serv_err) => write!(f, "{} due to: {}", desc, serv_err),
