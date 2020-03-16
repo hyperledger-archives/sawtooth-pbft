@@ -160,7 +160,7 @@ fn parse_args() -> PbftCliArgs {
         0 => log::LevelFilter::Warn,
         1 => log::LevelFilter::Info,
         2 => log::LevelFilter::Debug,
-        3 | _ => log::LevelFilter::Trace,
+        _ => log::LevelFilter::Trace,
     };
 
     let endpoint = String::from(
