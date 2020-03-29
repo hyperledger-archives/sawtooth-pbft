@@ -1628,11 +1628,10 @@ impl PbftNode {
         debug!("Original member list is ({:?})", members);
         debug!(
             "Comparing voter IDs ({:?}) with on-chain member IDs - primary ({:?})",
-            voter_ids,
-            peer_ids
+            voter_ids, peer_ids
         );
         debug!("Seal was signed by: {:?}", seal.get_info().get_signer_id());
-        
+
         if !voter_ids.is_subset(&peer_ids) {
             return Err(PbftError::InvalidMessage(format!(
                 "Consensus seal contains vote(s) from invalid ID(s): {:?}",
@@ -1660,6 +1659,13 @@ impl PbftNode {
         // on every engine loop, even if it's not yet ready. This isn't an error,
         // so just return Ok(()).
         if !state.is_primary() || state.phase != PbftPhase::PrePreparing {
+            return Ok(());
+        }
+
+        if match state.mode {
+            PbftMode::ViewChanging(_) => true,
+            _ => false,
+        } {
             return Ok(());
         }
 
