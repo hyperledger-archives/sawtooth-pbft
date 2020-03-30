@@ -839,19 +839,6 @@ impl PbftNode {
             self.msg_log.add_message(message.clone());
         }
 
-        //On startup the validator may send BlockValid for the chain head
-        // We should skip asking for a commit of this one, since it will
-        // never happen.
-        if seal.block_id == state.chain_head {
-            info!(
-                "{}: Block {} is the chain head, skipping commit and incrementing seq_num",
-                state,
-                hex::encode(&seal.block_id)
-            );
-            state.seq_num += 1;
-            return Ok(());
-        }
-
         // Commit the block, stop the idle timeout, and skip straight to Finishing
         self.service
             .commit_block(seal.block_id.clone())
@@ -865,8 +852,20 @@ impl PbftNode {
                     err,
                 )
             })?;
-        state.idle_timeout.stop();
+
         state.phase = PbftPhase::Finishing(catchup_again);
+        // On startup the validator may send BlockValid for the chain head
+        // We need to skip waiting for a commit of this one, since it will
+        // never happen.
+        if seal.block_id == state.chain_head {
+            info!(
+                "{}: Block {} is the chain head, skipping commit and incrementing seq_num",
+                state,
+                hex::encode(&seal.block_id)
+            );
+            self.on_block_commit(seal.block_id.clone(), state);
+        }
+        state.idle_timeout.stop();
 
         Ok(())
     }
