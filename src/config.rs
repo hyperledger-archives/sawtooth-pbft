@@ -20,12 +20,10 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use hex;
 use sawtooth_sdk::consensus::{
     engine::{BlockId, PeerId},
     service::Service,
 };
-use serde_json;
 
 use crate::timing::retry_until_ok;
 

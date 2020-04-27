@@ -20,8 +20,6 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use serde_millis;
-
 /// Encapsulates calling a function every so often
 pub struct Ticker {
     last: Instant,

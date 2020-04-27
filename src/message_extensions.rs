@@ -24,7 +24,6 @@
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-use hex;
 use sawtooth_sdk::consensus::engine::PeerId;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 

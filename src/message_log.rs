@@ -22,7 +22,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use hex;
 use sawtooth_sdk::consensus::engine::{Block, BlockId};
 
 use crate::config::PbftConfig;
