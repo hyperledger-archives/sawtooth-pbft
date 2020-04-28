@@ -63,7 +63,7 @@ log4rs = { git = "https://github.com/ltseeley/log4rs", branch = "config-loading"
 rand = "0.5"
 
 [build-dependencies]
-protoc-rust = "2"
+protoc-rust = "2.14"
 
 [[bin]]
 name = "pbft-engine"

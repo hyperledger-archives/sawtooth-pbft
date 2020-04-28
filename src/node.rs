@@ -20,7 +20,6 @@
 use std::collections::HashSet;
 use std::convert::From;
 
-use hex;
 use itertools::Itertools;
 use protobuf::{Message, RepeatedField};
 use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId, PeerInfo};
