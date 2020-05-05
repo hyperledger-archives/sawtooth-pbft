@@ -26,6 +26,7 @@ use sawtooth_sdk::consensus::engine::{Block, BlockId, PeerId, PeerInfo};
 use sawtooth_sdk::consensus::service::Service;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 use sawtooth_sdk::signing::{create_context, secp256k1::Secp256k1PublicKey};
+use std::collections::HashMap;
 
 use crate::config::{get_members_from_settings, PbftConfig};
 use crate::error::PbftError;
@@ -583,8 +584,13 @@ impl PbftNode {
     /// Handle a `BlockNew` update from the Validator
     ///
     /// The validator has received a new block; check if it is a block that should be considered,
-    /// add it to the log as an unvalidated block, and instruct the validator to validate it.
-    pub fn on_block_new(&mut self, block: Block, state: &mut PbftState) -> Result<(), PbftError> {
+    /// add it to the log as an unvalidated block   , and instruct the validator to validate it.
+    pub fn on_block_new(
+        &mut self,
+        block: Block,
+        state: &mut PbftState,
+        block_buffer: &mut HashMap<u64, Block>,
+    ) -> Result<(), PbftError> {
         info!(
             "{}: Got BlockNew: {} / {}",
             state,
@@ -616,51 +622,93 @@ impl PbftNode {
                     .get_unvalidated_block_with_id(block.previous_id.as_slice())
             });
         if previous_block.is_none() {
-            self.service
-                .fail_block(block.block_id.clone())
-                .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
-            return Err(PbftError::InternalError(format!(
-                "Received block {:?} / {:?} but node does not have previous block {:?}",
+            //It means that the block has come out of sequence .  We should not fail the  block,
+            //rather we will push it into buffer so that we can use it when it's previous block arrives.
+
+            info!(
+                "{}: Got BlockNew out of sequence: {} / {}",
+                state,
                 block.block_num,
-                hex::encode(&block.block_id),
-                hex::encode(&block.previous_id),
-            )));
-        }
-
-        // Make sure that the previous block has the previous block number (enforces that blocks
-        // are strictly monotically increasing by 1)
-        let previous_block = previous_block.expect("Previous block's existence already checked");
-        if previous_block.block_num != block.block_num - 1 {
-            self.service
-                .fail_block(block.block_id.clone())
-                .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
-            return Err(PbftError::InternalError(format!(
-                "Received block {:?} / {:?} but its previous block ({:?} / {:?}) does not have \
-                 the previous block_num",
-                block.block_num,
-                hex::encode(&block.block_id),
-                block.block_num - 1,
-                hex::encode(&block.previous_id),
-            )));
-        }
-
-        // Add the currently unvalidated block to the log
-        self.msg_log.add_unvalidated_block(block.clone());
-
-        // Have the validator check the block
-        self.service
-            .check_blocks(vec![block.block_id.clone()])
-            .map_err(|err| {
-                PbftError::ServiceError(
-                    format!(
-                        "Failed to check block {:?} / {:?}",
-                        block.block_num,
-                        hex::encode(&block.block_id),
-                    ),
-                    err,
-                )
+                hex::encode(&block.block_id)
+            );
+            trace!("checking consensus seal by verifying that the block has a payload field");
+            // just doing a basic seal verification  by verifying that the block has a payload field
+            let _seal = self.verify_seal_existence(&block).map_err(|err| {
+                self.service
+                    .fail_block(block.block_id.clone())
+                    .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
+                PbftError::InvalidMessage(format!(
+                    "Consensus seal failed basic payload verification - Error was: {}",
+                    err
+                ))
             })?;
 
+            trace!("pushing to block buffer ");
+            block_buffer.insert(block.block_num.clone(), block);
+            trace!(
+                "pushed to block buffer, now size of block_buffer= {} ",
+                block_buffer.len()
+            );
+        } else {
+            // Make sure that the previous block has the previous block number (enforces that blocks
+            // are strictly monotically increasing by 1)
+            let previous_block =
+                previous_block.expect("Previous block's existence already checked");
+            if previous_block.block_num != block.block_num - 1 {
+                self.service
+                    .fail_block(block.block_id.clone())
+                    .unwrap_or_else(|err| error!("Couldn't fail block due to error: {:?}", err));
+                return Err(PbftError::InternalError(format!(
+                    "Received block {:?} / {:?} but its previous block ({:?} / {:?}) does not have \
+                    the previous block_num",
+                    block.block_num,
+                    hex::encode(&block.block_id),
+                    block.block_num - 1,
+                    hex::encode(&block.previous_id),
+                )));
+            }
+
+            // Add the currently unvalidated block to the log
+            self.msg_log.add_unvalidated_block(block.clone());
+
+            // Have the validator check the block
+            self.service
+                .check_blocks(vec![block.block_id.clone()])
+                .map_err(|err| {
+                    PbftError::ServiceError(
+                        format!(
+                            "Failed to check block {:?} / {:?}",
+                            block.block_num,
+                            hex::encode(&block.block_id),
+                        ),
+                        err,
+                    )
+                })?;
+
+            //  Check if there is something in the block buffer
+            if !block_buffer.is_empty() {
+                // only if the buffer has next block
+                let next_block_num = block.block_num + 1;
+                if block_buffer.contains_key(&next_block_num) {
+                    trace!(
+                        "pulling out block_num  {} from block_buffer ",
+                        next_block_num
+                    );
+                    let next_block = Block::clone(block_buffer.get(&next_block_num).unwrap());
+                    trace!(
+                        "successfully pulled  out block_num  {} from block_buffer ",
+                        next_block.block_num
+                    );
+                    block_buffer.remove(&next_block_num);
+                    trace!(
+                        "removed the front block from the block_buffer, size of block_buffer={}",
+                        block_buffer.len()
+                    );
+                    // call the block_new() function for next block
+                    return self.on_block_new(next_block, state, block_buffer);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1342,6 +1390,23 @@ impl PbftNode {
         }
 
         Ok(())
+    }
+    // funciton to do a basic seal check , it verifies that the payload field is not empty
+    // funciton to be used  in case of an out of sequenc block in block_new
+    fn verify_seal_existence(&mut self, block: &Block) -> Result<PbftSeal, PbftError> {
+        // Since block 0 is genesis, block 1 is the first that can be verified with a seal; this
+        // means that the node won't see a seal until block 2
+        if block.block_num < 2 {
+            return Ok(PbftSeal::new());
+        }
+
+        // Parse the seal
+        if block.payload.is_empty() {
+            return Err(PbftError::InvalidMessage(
+                "Block published without a seal".into(),
+            ));
+        }
+        Ok(PbftSeal::new())
     }
 
     /// Verify the consensus seal from the current block that proves the previous block and return
@@ -2872,6 +2937,9 @@ mod tests {
     fn test_block_acceptance_and_validation() {
         // Create signing keys for a new network and instantiate a new node on the network with
         // block 3 as the chain head
+        // block buffer for storing out of sequence blocks sent by validator
+        let mut block_buffer: HashMap<u64, Block> = HashMap::new();
+
         let key_pairs = mock_signer_network(4);
         let (mut node, mut state, service) = mock_node(
             &mock_config_from_signer_network(&key_pairs),
@@ -2892,7 +2960,7 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(old_block, &mut state);
+        node.on_block_new(old_block, &mut state, &mut block_buffer);
         assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![2])));
         assert!(node.msg_log.block_validated(vec![2]).is_none());
         assert!(node.msg_log.get_block_with_id(&[2]).is_none());
@@ -2910,7 +2978,7 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(no_previous_block.clone(), &mut state);
+        node.on_block_new(no_previous_block.clone(), &mut state, &mut block_buffer);
         assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![5])));
         assert!(node.msg_log.block_validated(vec![5]).is_none());
         assert!(node.msg_log.get_block_with_id(&[5]).is_none());
@@ -2930,7 +2998,11 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(previous_block_not_previous_num.clone(), &mut state);
+        node.on_block_new(
+            previous_block_not_previous_num.clone(),
+            &mut state,
+            &mut block_buffer,
+        );
         // called more than once now
         assert!(!service.was_called_with_args_once(stringify_func_call!("fail_block", vec![5])));
         assert!(node.msg_log.block_validated(vec![5]).is_none());
@@ -2956,7 +3028,11 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(invalid_block_but_not_ready.clone(), &mut state);
+        node.on_block_new(
+            invalid_block_but_not_ready.clone(),
+            &mut state,
+            &mut block_buffer,
+        );
         assert!(service.was_called_with_args(stringify_func_call!("check_blocks", vec![vec![6]])));
         node.on_block_valid(invalid_block_but_not_ready.block_id.clone(), &mut state);
         assert!(!service.was_called_with_args(stringify_func_call!("fail_block", vec![6])));
@@ -2981,7 +3057,8 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(invalid_seal.clone(), &mut state);
+
+        node.on_block_new(invalid_seal.clone(), &mut state, &mut block_buffer);
         assert!(service.was_called_with_args(stringify_func_call!("check_blocks", vec![vec![4]])));
         node.on_block_valid(invalid_seal.block_id.clone(), &mut state);
         assert!(service.was_called_with_args(stringify_func_call!("fail_block", vec![4])));
@@ -3001,7 +3078,8 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        node.on_block_new(valid_block.clone(), &mut state);
+
+        node.on_block_new(valid_block.clone(), &mut state, &mut block_buffer);
         // called more than once now
         assert!(
             !service.was_called_with_args_once(stringify_func_call!("check_blocks", vec![vec![4]]))
@@ -3020,7 +3098,11 @@ mod tests {
         let (mut node, mut state, service) = mock_node(&mock_config(4), vec![0], mock_block(0));
 
         // Get a BlockNew and a BlockInvalid
-        assert!(node.on_block_new(mock_block(1), &mut state).is_ok());
+        // block buffer for storing out of sequence blocks sent by validator
+        let mut block_buffer: HashMap<u64, Block> = HashMap::new();
+        assert!(node
+            .on_block_new(mock_block(1), &mut state, &mut block_buffer)
+            .is_ok());
         assert!(node.on_block_invalid(vec![1]).is_ok());
 
         // Verify that the blog is no longer in the log and it has been failed
@@ -3048,7 +3130,9 @@ mod tests {
         // primary doesn't broadcast a PrePrepare for the block
         let mut different_signer = mock_block(1);
         different_signer.signer_id = vec![1];
-        node.on_block_new(different_signer.clone(), &mut state);
+        // block buffer for storing out of sequence blocks sent by validator
+        let mut block_buffer: HashMap<u64, Block> = HashMap::new();
+        node.on_block_new(different_signer.clone(), &mut state, &mut block_buffer);
         node.on_block_valid(different_signer.block_id, &mut state);
         assert!(!service.was_called("broadcast"));
 
@@ -3057,7 +3141,7 @@ mod tests {
         state.view = 1;
         let mut own_block = mock_block(1);
         own_block.signer_id = vec![0];
-        node.on_block_new(own_block.clone(), &mut state);
+        node.on_block_new(own_block.clone(), &mut state, &mut block_buffer);
         node.on_block_valid(own_block.block_id.clone(), &mut state);
         assert!(!service.was_called("broadcast"));
 
@@ -3065,7 +3149,7 @@ mod tests {
         // verify that the mock Service’s broadcast method was called with a PrePrepare message for
         // the block at the current view and sequence number
         state.view = 0;
-        node.on_block_new(own_block.clone(), &mut state);
+        node.on_block_new(own_block.clone(), &mut state, &mut block_buffer);
         node.on_block_valid(own_block.block_id.clone(), &mut state);
         assert!(service.was_called_with_args(stringify_func_call!(
             "broadcast",
@@ -3091,6 +3175,7 @@ mod tests {
     #[test]
     fn test_message_signing() {
         let (mut node, mut state, _) = mock_node(&mock_config(4), vec![0], mock_block(0));
+        // block buffer for storing out of sequence blocks sent by validator
 
         // Call handle_update() with a PeerMessage that has a different signer_id than the PBFT
         // message it contains and verify that the result is Err
@@ -3132,7 +3217,6 @@ mod tests {
     fn test_message_signer_membership() {
         // Create a new node
         let (mut node, mut state, _) = mock_node(&mock_config(4), vec![0], mock_block(0));
-
         // Call the node’s on_peer_message() method with a message from a peer that’s not a member
         // of the network; verify that the result is an Err
         assert!(node
@@ -3272,6 +3356,8 @@ mod tests {
     fn test_pre_preparing_phase() {
         // Create signing keys for a new network and instantiate a new secondary node on the
         // network; verify that it is PrePreparing
+        // block buffer for storing out of sequence blocks sent by validator
+        let mut block_buffer: HashMap<u64, Block> = HashMap::new();
         let key_pairs = mock_signer_network(4);
         let (mut node, mut state, service) = mock_node(
             &mock_config_from_signer_network(&key_pairs),
@@ -3316,8 +3402,9 @@ mod tests {
         assert_eq!(2, state.seq_num);
         assert_eq!(PbftPhase::PrePreparing, state.phase);
         // Receive block 2 (BlockNew and BlockValid)
+
         assert!(node
-            .on_block_new(blocks.next().unwrap(), &mut state)
+            .on_block_new(blocks.next().unwrap(), &mut state, &mut block_buffer)
             .is_ok());
         assert!(node.on_block_valid(vec![2], &mut state).is_ok());
         assert_eq!(PbftPhase::PrePreparing, state.phase);
@@ -3376,7 +3463,7 @@ mod tests {
         assert_eq!(PbftPhase::PrePreparing, state.phase);
         // Receive block 3 (BlockNew and BlockValid)
         assert!(node
-            .on_block_new(blocks.next().unwrap(), &mut state)
+            .on_block_new(blocks.next().unwrap(), &mut state, &mut block_buffer)
             .is_ok());
         assert!(node.on_block_valid(vec![3], &mut state).is_ok());
         // Check appropriate actions performed
@@ -3402,7 +3489,7 @@ mod tests {
         // occurs)
         state.phase = PbftPhase::Finishing(false);
         assert!(node
-            .on_block_new(blocks.next().unwrap(), &mut state)
+            .on_block_new(blocks.next().unwrap(), &mut state, &mut block_buffer)
             .is_ok());
         assert!(node.on_block_valid(vec![4], &mut state).is_ok());
         assert_eq!(PbftPhase::Finishing(false), state.phase);
@@ -3447,7 +3534,7 @@ mod tests {
         // occurs)
         state.phase = PbftPhase::Finishing(false);
         assert!(node
-            .on_block_new(blocks.next().unwrap(), &mut state)
+            .on_block_new(blocks.next().unwrap(), &mut state, &mut block_buffer)
             .is_ok());
         assert!(node.on_block_valid(vec![5], &mut state).is_ok());
         assert_eq!(PbftPhase::Finishing(false), state.phase);
@@ -3511,7 +3598,7 @@ mod tests {
         assert_eq!(6, state.seq_num);
         // Receive block 6 (BlockNew and BlockValid)
         assert!(node
-            .on_block_new(blocks.next().unwrap(), &mut state)
+            .on_block_new(blocks.next().unwrap(), &mut state, &mut block_buffer)
             .is_ok());
         assert!(node.on_block_valid(vec![6], &mut state).is_ok());
         // Check appropriate actions performed
@@ -3553,7 +3640,7 @@ mod tests {
         // occurs)
         state.phase = PbftPhase::Finishing(false);
         assert!(node
-            .on_block_new(blocks.next().unwrap(), &mut state)
+            .on_block_new(blocks.next().unwrap(), &mut state, &mut block_buffer)
             .is_ok());
         assert!(node.on_block_valid(vec![7], &mut state).is_ok());
         assert_eq!(PbftPhase::Finishing(false), state.phase);
@@ -3581,11 +3668,11 @@ mod tests {
         // Verify that PrePrepare’s sequence number must match the block’s number
         // Receive blocks 8 and 9 (BlockNew and BlockValid)
         assert!(node
-            .on_block_new(blocks.next().unwrap(), &mut state)
+            .on_block_new(blocks.next().unwrap(), &mut state, &mut block_buffer)
             .is_ok());
         assert!(node.on_block_valid(vec![8], &mut state).is_ok());
         assert!(node
-            .on_block_new(blocks.next().unwrap(), &mut state)
+            .on_block_new(blocks.next().unwrap(), &mut state, &mut block_buffer)
             .is_ok());
         assert!(node.on_block_valid(vec![9], &mut state).is_ok());
         // Set the node to PrePreparing at seq_num 8
@@ -4635,10 +4722,14 @@ mod tests {
             key_pairs[1].pub_key.clone(),
             mock_block(0),
         );
+        // block buffer for storing out of sequence blocks sent by validator
+        let mut block_buffer: HashMap<u64, Block> = HashMap::new();
 
         // Receive block 1 (BlockNew and BlockValid) and verify that node is still PrePreparing
         // (should not perform catch-up for current block)
-        assert!(node.on_block_new(mock_block(1), &mut state).is_ok());
+        assert!(node
+            .on_block_new(mock_block(1), &mut state, &mut block_buffer)
+            .is_ok());
         assert!(node.on_block_valid(vec![1], &mut state).is_ok());
         assert_eq!(PbftPhase::PrePreparing, state.phase);
 
@@ -4656,14 +4747,18 @@ mod tests {
         )
         .write_to_bytes()
         .expect("Failed to write seal to bytes");
-        assert!(node.on_block_new(block2.clone(), &mut state).is_ok());
+        assert!(node
+            .on_block_new(block2.clone(), &mut state, &mut block_buffer)
+            .is_ok());
         assert!(node.on_block_valid(vec![2], &mut state).is_ok());
         assert_eq!(PbftPhase::Finishing(true), state.phase);
         assert!(service.was_called_with_args(stringify_func_call!("commit_block", vec![1])));
 
         // Receive block 2 again and verify that Service.commit_block was not called again (block
         // was already committed)
-        assert!(node.on_block_new(block2, &mut state).is_ok());
+        assert!(node
+            .on_block_new(block2, &mut state, &mut block_buffer)
+            .is_ok());
         assert!(node.on_block_valid(vec![2], &mut state).is_ok());
         assert!(service.was_called_with_args_once(stringify_func_call!("commit_block")));
     }

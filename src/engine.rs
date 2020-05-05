@@ -28,6 +28,7 @@ use crate::node::PbftNode;
 use crate::state::{PbftMode, PbftState};
 use crate::storage::get_storage;
 use crate::timing;
+use std::collections::HashMap;
 
 pub struct PbftEngine {
     config: PbftConfig,
@@ -80,7 +81,8 @@ impl Engine for PbftEngine {
             service,
             &mut pbft_state.write(),
         );
-
+        // block buffer for storing out of sequence blocks sent by validator
+        let mut block_buffer: HashMap<u64, Block> = HashMap::new();
         node.start_idle_timeout(&mut pbft_state.write());
 
         // Main event loop; keep going until PBFT receives a Shutdown message or is disconnected
@@ -90,7 +92,7 @@ impl Engine for PbftEngine {
 
             trace!("{} received message {:?}", state, incoming_message);
 
-            match handle_update(&mut node, incoming_message, state) {
+            match handle_update(&mut node, incoming_message, state, &mut block_buffer) {
                 Ok(again) => {
                     if !again {
                         break;
@@ -147,9 +149,10 @@ fn handle_update(
     node: &mut PbftNode,
     incoming_message: Result<Update, RecvTimeoutError>,
     state: &mut PbftState,
+    block_buffer: &mut HashMap<u64, Block>,
 ) -> Result<bool, PbftError> {
     match incoming_message {
-        Ok(Update::BlockNew(block)) => node.on_block_new(block, state)?,
+        Ok(Update::BlockNew(block)) => node.on_block_new(block, state, block_buffer)?,
         Ok(Update::BlockValid(block_id)) => node.on_block_valid(block_id, state)?,
         Ok(Update::BlockInvalid(block_id)) => node.on_block_invalid(block_id)?,
         Ok(Update::BlockCommit(block_id)) => node.on_block_commit(block_id, state)?,
@@ -198,7 +201,9 @@ pub fn test_handle_update(
     incoming_message: Result<Update, RecvTimeoutError>,
     state: &mut PbftState,
 ) -> Result<bool, PbftError> {
-    handle_update(node, incoming_message, state)
+    // block buffer for storing out of sequence blocks sent by validator
+    let mut block_buffer: HashMap<u64, Block> = HashMap::new();
+    handle_update(node, incoming_message, state, &mut block_buffer)
 }
 
 fn log_any_error(res: Result<(), PbftError>) {
