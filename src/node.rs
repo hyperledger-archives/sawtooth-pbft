@@ -1305,7 +1305,7 @@ impl PbftNode {
                         }
                         Ok(())
                     })
-                    .and_then(|id| Ok(ids.insert(id)))?;
+                    .map(|id| ids.insert(id))?;
                     Ok(ids)
                 })?;
 
@@ -1440,7 +1440,7 @@ impl PbftNode {
                         }
                         Ok(())
                     })
-                    .and_then(|id| Ok(ids.insert(id)))?;
+                    .map(|id| ids.insert(id))?;
                     Ok(ids)
                 })?;
 
