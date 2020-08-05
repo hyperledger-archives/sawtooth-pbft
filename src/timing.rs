@@ -132,6 +132,8 @@ pub fn retry_until_ok<T, E, F: FnMut() -> Result<T, E>>(
 mod tests {
     use super::*;
 
+    const TOLERANCE_MILLIS: u64 = 10;
+
     macro_rules! assert_tolerance {
         ($val1:expr, $val2:expr, $tol:expr) => {
             if $val2 > $val1 && $val2 - $val1 > $tol {
@@ -163,7 +165,11 @@ mod tests {
                 triggered = true;
             })
         }
-        assert_tolerance!(end_time - start_time, time, Duration::from_millis(5));
+        assert_tolerance!(
+            end_time - start_time,
+            time,
+            Duration::from_millis(TOLERANCE_MILLIS)
+        );
     }
 
     /// Create a Timeout that lasts for 100ms and check that it expires anytime after 100ms have
@@ -173,7 +179,7 @@ mod tests {
         let start_time = Instant::now();
         let mut t = Timeout::new(Duration::from_millis(100));
         assert_eq!(t.state, TimeoutState::Inactive);
-        assert_tolerance!(t.start, start_time, Duration::from_millis(1));
+        assert_tolerance!(t.start, start_time, Duration::from_millis(TOLERANCE_MILLIS));
 
         t.start();
         assert_eq!(t.state, TimeoutState::Active);
@@ -200,7 +206,7 @@ mod tests {
         assert_tolerance!(
             end_time - start_time,
             Duration::from_millis(50),
-            Duration::from_millis(5)
+            Duration::from_millis(TOLERANCE_MILLIS)
         );
     }
 }
