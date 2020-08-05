@@ -30,7 +30,7 @@ restricted membership. It has the following requirements:
     `sawtooth-pbft <https://github.com/hyperledger/sawtooth-pbft/>`_ repository)
     as ``version = "{major}.{minor}.{patch}"``. Use only the first two digits
     (major and minor release numbers); omit the patch number.  For example, if
-    the version is 1.0.3, use ``1.0`` for the version setting.
+    the version is 1.0.4, use ``1.0`` for the version setting.
 
 * The on-chain configuration setting ``sawtooth.consensus.pbft.members`` must
   list all PBFT member nodes in the network. For more information, see
