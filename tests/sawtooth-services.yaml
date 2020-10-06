@@ -34,18 +34,6 @@ services:
       context: .
       dockerfile: sawtooth-pbft-test.dockerfile
 
-  intkey-tp-python:
-    image: sawtooth-intkey-tp-python:${ISOLATION_ID}
-    build:
-      context: .
-      dockerfile: sawtooth-pbft-test.dockerfile
-
-  settings-tp:
-    image: sawtooth-settings-tp:${ISOLATION_ID}
-    build:
-      context: .
-      dockerfile: sawtooth-pbft-test.dockerfile
-
   workload:
     image: sawtooth-intkey-workload:${ISOLATION_ID}
     build:

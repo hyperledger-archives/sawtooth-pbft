@@ -33,9 +33,7 @@ RUN echo "deb [arch=amd64] http://repo.sawtooth.me/ubuntu/nightly bionic univers
     pkg-config \
     python3 \
     python3-sawtooth-cli \
-    python3-sawtooth-intkey \
     python3-sawtooth-rest-api \
-    python3-sawtooth-settings \
     python3-sawtooth-validator \
     python3-requests \
     python3-nose2 \
