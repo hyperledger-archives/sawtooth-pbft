@@ -19,7 +19,7 @@ FROM ubuntu:bionic
 RUN apt-get update \
   && apt-get install gnupg -y
 
-RUN echo "deb [arch=amd64] http://repo.sawtooth.me/ubuntu/nightly bionic universe" >> /etc/apt/sources.list \
+RUN echo "deb [arch=amd64] http://repo.sawtooth.me/ubuntu/droptarget/nightly bionic universe" >> /etc/apt/sources.list \
  && (apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 44FC67F19B2466EA \
  || apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 44FC67F19B2466EA) \
  && apt-get update \
@@ -35,10 +35,10 @@ RUN echo "deb [arch=amd64] http://repo.sawtooth.me/ubuntu/nightly bionic univers
     python3-sawtooth-cli \
     python3-sawtooth-intkey \
     python3-sawtooth-rest-api \
-    python3-sawtooth-settings \
     python3-sawtooth-validator \
     python3-requests \
     python3-nose2 \
+    sawtooth-settings-tp \
     sawtooth-smallbank-workload \
     sawtooth-intkey-workload \
     sawtooth-smallbank-tp-go \
