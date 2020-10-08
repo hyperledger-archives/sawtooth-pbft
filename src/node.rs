@@ -119,10 +119,8 @@ impl PbftNode {
 
         // If this node is in the process of a view change, ignore all messages except ViewChanges
         // and NewViews
-        if match state.mode {
-            PbftMode::ViewChanging(_) => true,
-            _ => false,
-        } && msg_type != PbftMessageType::ViewChange
+        if matches!(state.mode, PbftMode::ViewChanging(_))
+            && msg_type != PbftMessageType::ViewChange
             && msg_type != PbftMessageType::NewView
         {
             debug!(
@@ -482,10 +480,7 @@ impl PbftNode {
         // Reset state to Normal mode, reset the phase (unless waiting for a BlockCommit) and
         // restart the idle timeout
         state.mode = PbftMode::Normal;
-        if match state.phase {
-            PbftPhase::Finishing(_) => false,
-            _ => true,
-        } {
+        if !matches!(state.phase, PbftPhase::Finishing(_)) {
             state.phase = PbftPhase::PrePreparing;
         }
         state.idle_timeout.start();
@@ -720,10 +715,7 @@ impl PbftNode {
         // a future block and the node isn't waiting for a commit message for a previous block (if
         // it is waiting for a commit message, catch-up will have to be done after the message is
         // received)
-        let is_waiting = match state.phase {
-            PbftPhase::Finishing(_) => true,
-            _ => false,
-        };
+        let is_waiting = matches!(state.phase, PbftPhase::Finishing(_));
         if block.block_num > state.seq_num && !is_waiting {
             self.catchup(state, &seal, true)?;
         } else if block.block_num == state.seq_num {
@@ -833,10 +825,7 @@ impl PbftNode {
     ) -> Result<(), PbftError> {
         info!("{}: Got BlockCommit for {}", state, hex::encode(&block_id));
 
-        let is_catching_up = match state.phase {
-            PbftPhase::Finishing(true) => true,
-            _ => false,
-        };
+        let is_catching_up = matches!(state.phase, PbftPhase::Finishing(true));
 
         // If there are any blocks in the log at this sequence number other than the one that was
         // just committed, reject them
