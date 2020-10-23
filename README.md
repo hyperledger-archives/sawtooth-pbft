@@ -16,7 +16,7 @@ Tolerance](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro
 and is adapted for use in Hyperledger Sawtooth.
 
 For more information, see the [Sawtooth PBFT
-documentation](https://sawtooth.hyperledger.org/docs/#sawtooth-pbft).
+documentation](https://sawtooth.hyperledger.org/docs/1.2/pbft/introduction-to-sawtooth-pbft.html).
 
 ## Using Sawtooth PBFT Consensus
 
@@ -24,10 +24,10 @@ To configure a Sawtooth network with PBFT consensus, see the Sawtooth
 documentation:
 
 - Application developers: [Creating a Sawtooth Test
-  Network](https://sawtooth.hyperledger.org/docs/core/releases/latest/app_developers_guide/creating_sawtooth_network.html)
+  Network](https://sawtooth.hyperledger.org/docs/1.2/app_developers_guide/creating_sawtooth_network.html)
 
 - System administrators: [Setting Up a Sawtooth
-  Network](https://sawtooth.hyperledger.org/docs/core/releases/latest/sysadmin_guide/setting_up_sawtooth_poet-sim.html)
+  Network](https://sawtooth.hyperledger.org/docs/1.2/sysadmin_guide/setting_up_sawtooth_network.html)
 
 ## Motivation
 
@@ -43,9 +43,7 @@ Sawtooth PBFT uses the Sawtooth consensus API that is described by [Sawtooth RFC
 
 ## Documentation
 
-- [Current Sawtooth PBFT documentation](https://sawtooth.hyperledger.org/docs/#sawtooth-pbft)
-
-- [Rustdocs for Sawtooth PBFT](https://sawtooth.hyperledger.org/docs/pbft/nightly/master/pbft_doc/pbft_engine/index.html)
+- [Current Sawtooth PBFT documentation](https://sawtooth.hyperledger.org/docs/1.2/pbft/introduction-to-sawtooth-pbft.html)
 
 ## License
 
