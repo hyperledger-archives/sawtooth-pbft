@@ -1360,7 +1360,7 @@ impl PbftNode {
         trace!("Parsed seal: {}", seal);
 
         // Make sure this is the correct seal for the previous block
-        if seal.block_id != &block.previous_id[..] {
+        if seal.block_id != block.previous_id[..] {
             return Err(PbftError::InvalidMessage(format!(
                 "Seal's ID ({}) doesn't match block's previous ID ({})",
                 hex::encode(&seal.block_id),
