@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y -q \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install \
+    docutils==0.16 \
     sphinx \
     sphinxcontrib-httpdomain \
     sphinx_rtd_theme
