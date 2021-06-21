@@ -161,7 +161,7 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         // Check that the message is from the current primary
-        if PeerId::from(msg.info().get_signer_id()) != state.get_primary_id() {
+        if *msg.info().get_signer_id() != state.get_primary_id() {
             warn!(
                 "Got PrePrepare from a secondary node {:?}; ignoring message",
                 msg.info().get_signer_id()
@@ -239,7 +239,7 @@ impl PbftNode {
         }
 
         // The primary is not allowed to send a Prepare; its PrePrepare counts as its "vote"
-        if PeerId::from(info.get_signer_id()) == state.get_primary_id() {
+        if *info.get_signer_id() == state.get_primary_id() {
             self.start_view_change(state, state.view + 1)?;
             return Err(PbftError::FaultyPrimary(format!(
                 "Received Prepare from primary at view {}, seq_num {}",
@@ -1267,7 +1267,7 @@ impl PbftNode {
         }
 
         // Make sure this is from the new primary
-        if PeerId::from(new_view.get_info().get_signer_id())
+        if *new_view.get_info().get_signer_id()
             != state.get_primary_id_at_view(new_view.get_info().get_view())
         {
             return Err(PbftError::InvalidMessage(format!(
