@@ -24,6 +24,7 @@
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use protobuf::Message;
 use sawtooth_sdk::consensus::engine::PeerId;
 use sawtooth_sdk::messages::consensus::ConsensusPeerMessageHeader;
 
@@ -112,10 +113,9 @@ impl fmt::Display for PbftSignedVote {
             f,
             "PbftSignedVote(header: {:?}, message: {:?}, header_bytes: {}, header_signature: {}, \
              message_bytes: {})",
-            protobuf::parse_from_bytes::<ConsensusPeerMessageHeader>(self.get_header_bytes())
+            ConsensusPeerMessageHeader::parse_from_bytes(self.get_header_bytes())
                 .map_err(|_| fmt::Error)?,
-            protobuf::parse_from_bytes::<PbftMessage>(self.get_message_bytes())
-                .map_err(|_| fmt::Error)?,
+            PbftMessage::parse_from_bytes(self.get_message_bytes()).map_err(|_| fmt::Error)?,
             hex::encode(self.get_header_bytes()),
             hex::encode(self.get_header_signature()),
             hex::encode(self.get_message_bytes()),

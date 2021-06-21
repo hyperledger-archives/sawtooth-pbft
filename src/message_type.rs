@@ -79,18 +79,18 @@ impl ParsedMessage {
     /// `PbftSeal` and wraps that in an internal enum.
     pub fn from_peer_message(message: PeerMessage, own_id: &[u8]) -> Result<Self, PbftError> {
         let deserialized_message = match message.header.message_type.as_str() {
-            "Seal" => PbftMessageWrapper::Seal(
-                protobuf::parse_from_bytes::<PbftSeal>(&message.content).map_err(|err| {
-                    PbftError::SerializationError("Error parsing PbftSeal".into(), err)
-                })?,
-            ),
+            "Seal" => {
+                PbftMessageWrapper::Seal(PbftSeal::parse_from_bytes(&message.content).map_err(
+                    |err| PbftError::SerializationError("Error parsing PbftSeal".into(), err),
+                )?)
+            }
             "NewView" => PbftMessageWrapper::NewView(
-                protobuf::parse_from_bytes::<PbftNewView>(&message.content).map_err(|err| {
+                PbftNewView::parse_from_bytes(&message.content).map_err(|err| {
                     PbftError::SerializationError("Error parsing PbftNewView".into(), err)
                 })?,
             ),
             _ => PbftMessageWrapper::Message(
-                protobuf::parse_from_bytes::<PbftMessage>(&message.content).map_err(|err| {
+                PbftMessage::parse_from_bytes(&message.content).map_err(|err| {
                     PbftError::SerializationError("Error parsing PbftMessage".into(), err)
                 })?,
             ),
@@ -160,7 +160,7 @@ impl ParsedMessage {
     ///
     /// Adds metadata necessary for re-creating a signed vote later on.
     pub fn from_signed_vote(vote: &PbftSignedVote) -> Result<Self, PbftError> {
-        let message = protobuf::parse_from_bytes(vote.get_message_bytes())
+        let message = Message::parse_from_bytes(vote.get_message_bytes())
             .map_err(|err| PbftError::SerializationError("Error parsing vote".into(), err))?;
 
         Ok(Self {

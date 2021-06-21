@@ -71,7 +71,7 @@ impl PbftNode {
         // actions
         if chain_head.block_num > 1 {
             // If starting up with a block that has a consensus seal, update the view to match
-            if let Ok(seal) = protobuf::parse_from_bytes::<PbftSeal>(&chain_head.payload) {
+            if let Ok(seal) = PbftSeal::parse_from_bytes(&chain_head.payload) {
                 state.view = seal.get_info().get_view();
                 info!("Updated view to {} on startup", state.view);
             }
@@ -161,7 +161,7 @@ impl PbftNode {
         state: &mut PbftState,
     ) -> Result<(), PbftError> {
         // Check that the message is from the current primary
-        if PeerId::from(msg.info().get_signer_id()) != state.get_primary_id() {
+        if *msg.info().get_signer_id() != state.get_primary_id() {
             warn!(
                 "Got PrePrepare from a secondary node {:?}; ignoring message",
                 msg.info().get_signer_id()
@@ -239,7 +239,7 @@ impl PbftNode {
         }
 
         // The primary is not allowed to send a Prepare; its PrePrepare counts as its "vote"
-        if PeerId::from(info.get_signer_id()) == state.get_primary_id() {
+        if *info.get_signer_id() == state.get_primary_id() {
             self.start_view_change(state, state.view + 1)?;
             return Err(PbftError::FaultyPrimary(format!(
                 "Received Prepare from primary at view {}, seq_num {}",
@@ -1059,7 +1059,7 @@ impl PbftNode {
                     ))
                 })
                 .and_then(|block| {
-                    protobuf::parse_from_bytes::<PbftSeal>(&block.payload).map_err(|err| {
+                    PbftSeal::parse_from_bytes(&block.payload).map_err(|err| {
                         PbftError::SerializationError(
                             "Error parsing seal from chain head".into(),
                             err,
@@ -1178,12 +1178,12 @@ impl PbftNode {
         F: Fn(&PbftMessage) -> Result<(), PbftError>,
     {
         // Parse the message
-        let pbft_message: PbftMessage = protobuf::parse_from_bytes(&vote.get_message_bytes())
+        let pbft_message: PbftMessage = Message::parse_from_bytes(&vote.get_message_bytes())
             .map_err(|err| {
                 PbftError::SerializationError("Error parsing PbftMessage from vote".into(), err)
             })?;
         let header: ConsensusPeerMessageHeader =
-            protobuf::parse_from_bytes(&vote.get_header_bytes()).map_err(|err| {
+            Message::parse_from_bytes(&vote.get_header_bytes()).map_err(|err| {
                 PbftError::SerializationError("Error parsing header from vote".into(), err)
             })?;
 
@@ -1267,7 +1267,7 @@ impl PbftNode {
         }
 
         // Make sure this is from the new primary
-        if PeerId::from(new_view.get_info().get_signer_id())
+        if *new_view.get_info().get_signer_id()
             != state.get_primary_id_at_view(new_view.get_info().get_view())
         {
             return Err(PbftError::InvalidMessage(format!(
@@ -1353,7 +1353,7 @@ impl PbftNode {
             ));
         }
 
-        let seal: PbftSeal = protobuf::parse_from_bytes(&block.payload).map_err(|err| {
+        let seal: PbftSeal = Message::parse_from_bytes(&block.payload).map_err(|err| {
             PbftError::SerializationError("Error parsing seal for verification".into(), err)
         })?;
 
