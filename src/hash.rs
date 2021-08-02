@@ -31,7 +31,7 @@ pub fn hash_sha512(bytes: &[u8]) -> Vec<u8> {
 
 /// Verifies that the SHA-512 hash of the given content matches the given hash
 pub fn verify_sha512(content: &[u8], content_hash: &[u8]) -> Result<(), PbftError> {
-    let computed_sha512 = hash_sha512(&content);
+    let computed_sha512 = hash_sha512(content);
 
     if computed_sha512 != content_hash {
         Err(PbftError::SigningError(format!(

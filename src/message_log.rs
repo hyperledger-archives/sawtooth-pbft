@@ -46,11 +46,8 @@ pub struct PbftLog {
 
 impl fmt::Display for PbftLog {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let msg_infos: Vec<PbftMessageInfo> = self
-            .messages
-            .iter()
-            .map(|ref msg| msg.info().clone())
-            .collect();
+        let msg_infos: Vec<PbftMessageInfo> =
+            self.messages.iter().map(|msg| msg.info().clone()).collect();
         let string_infos: Vec<String> = msg_infos
             .iter()
             .map(|info: &PbftMessageInfo| -> String {
