@@ -174,9 +174,9 @@ impl ParsedMessage {
 
     pub fn info(&self) -> &PbftMessageInfo {
         match &self.message {
-            PbftMessageWrapper::Message(m) => &m.get_info(),
-            PbftMessageWrapper::NewView(m) => &m.get_info(),
-            PbftMessageWrapper::Seal(m) => &m.get_info(),
+            PbftMessageWrapper::Message(m) => m.get_info(),
+            PbftMessageWrapper::NewView(m) => m.get_info(),
+            PbftMessageWrapper::Seal(m) => m.get_info(),
         }
     }
 

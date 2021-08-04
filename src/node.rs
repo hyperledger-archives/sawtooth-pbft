@@ -572,7 +572,7 @@ impl PbftNode {
         }
 
         // Catch up
-        self.catchup(state, &seal, false)
+        self.catchup(state, seal, false)
     }
 
     /// Handle a `BlockNew` update from the Validator
@@ -1178,12 +1178,12 @@ impl PbftNode {
         F: Fn(&PbftMessage) -> Result<(), PbftError>,
     {
         // Parse the message
-        let pbft_message: PbftMessage = Message::parse_from_bytes(&vote.get_message_bytes())
+        let pbft_message: PbftMessage = Message::parse_from_bytes(vote.get_message_bytes())
             .map_err(|err| {
                 PbftError::SerializationError("Error parsing PbftMessage from vote".into(), err)
             })?;
-        let header: ConsensusPeerMessageHeader =
-            Message::parse_from_bytes(&vote.get_header_bytes()).map_err(|err| {
+        let header: ConsensusPeerMessageHeader = Message::parse_from_bytes(vote.get_header_bytes())
+            .map_err(|err| {
                 PbftError::SerializationError("Error parsing header from vote".into(), err)
             })?;
 
