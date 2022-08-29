@@ -27,7 +27,7 @@ use crate::error::PbftError;
 use crate::timing::Timeout;
 
 /// Phases of the PBFT algorithm, in `Normal` mode
-#[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Serialize, Deserialize)]
 pub enum PbftPhase {
     PrePreparing,
     Preparing,
@@ -52,7 +52,7 @@ impl fmt::Display for PbftPhase {
 }
 
 /// Modes that the PBFT algorithm can possibly be in
-#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub enum PbftMode {
     Normal,
     /// Contains the view number of the view this node is attempting to change to

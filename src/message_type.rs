@@ -230,7 +230,7 @@ impl ParsedMessage {
 }
 
 // Messages related to PBFT consensus
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd)]
 pub enum PbftMessageType {
     /// Basic message types for the multicast protocol
     PrePrepare,
