@@ -1,20 +1,20 @@
 ## Maintainers
 
 ### Active Maintainers
-| Name | GitHub | RocketChat |
-| --- | --- | --- |
-| Andi Gunderson | agunde406 | agunde |
-| Anne Chenette | chenette | achenette |
-| James Mitchell | jsmitchell | jsmitchell |
-| Logan Seeley   | ltseeley | ltseeley |
-| Peter Schwarz | peterschwarz | pschwarz |
-| Richard Berg | rberg2 | rberg2 |
-| Ryan Beck-Buysse | rbuysse | rbuysse |
-| Shawn Amundson | vaporos | amundson |
+| Name | GitHub |
+| --- | --- |
+| Andi Gunderson | agunde406 |
+| Anne Chenette | chenette |
+| James Mitchell | jsmitchell |
+| Logan Seeley   | ltseeley |
+| Peter Schwarz | peterschwarz |
+| Richard Berg | rberg2 |
+| Ryan Beck-Buysse | rbuysse |
+| Shawn Amundson | vaporos |
 
 ### Retired Maintainers
-| Name | GitHub | RocketChat |
-| --- | --- | --- |
-| Adam Ludvik | aludvik | adamludvik |
-| Bridger Herman | bridger-herman | bridgerherman |
-| Kenneth Koski | knkski | knkski |
+| Name | GitHub |
+| --- | --- |
+| Adam Ludvik | aludvik |
+| Bridger Herman | bridger-herman |
+| Kenneth Koski | knkski |
