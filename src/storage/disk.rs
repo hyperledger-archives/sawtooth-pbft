@@ -154,7 +154,7 @@ impl<T: Serialize + DeserializeOwned> DiskStorage<T> {
 
 impl<T: fmt::Display + Serialize + DeserializeOwned> fmt::Display for DiskStorage<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (*self).data.fmt(f)
+        self.data.fmt(f)
     }
 }
 
