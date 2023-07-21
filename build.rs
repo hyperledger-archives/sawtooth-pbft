@@ -33,9 +33,9 @@ fn main() {
 
     // Run protoc
     protoc_rust::Codegen::new()
-        .out_dir(&dest_path.to_str().unwrap())
-        .inputs(&[proto_path.join("pbft_message.proto").to_str().unwrap()])
-        .includes(&[proto_path.to_str().unwrap()])
+        .out_dir(dest_path.to_str().unwrap())
+        .inputs([proto_path.join("pbft_message.proto").to_str().unwrap()])
+        .includes([proto_path.to_str().unwrap()])
         .customize(Customize {
             serde_derive: Some(true),
             ..Default::default()
