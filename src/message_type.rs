@@ -17,7 +17,7 @@
 
 //! Message types for PeerMessages
 
-#![allow(unknown_lints, clippy::derive_hash_xor_eq)]
+#![allow(unknown_lints, clippy::derived_hash_with_manual_eq)]
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
