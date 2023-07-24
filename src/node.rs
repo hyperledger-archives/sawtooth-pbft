@@ -203,7 +203,7 @@ impl PbftNode {
             return Err(PbftError::FaultyPrimary(format!(
                 "When checking PrePrepare with block {:?}, found PrePrepare(s) with same view and \
                  seq num but mismatched block(s): {:?}",
-                hex::encode(&msg.get_block_id()),
+                hex::encode(msg.get_block_id()),
                 mismatched_blocks,
             )));
         }
@@ -1523,7 +1523,7 @@ impl PbftNode {
 
         match self.service.finalize_block(data) {
             Ok(block_id) => {
-                info!("{}: Publishing block {}", state, hex::encode(&block_id));
+                info!("{}: Publishing block {}", state, hex::encode(block_id));
                 Ok(())
             }
             Err(err) => Err(PbftError::ServiceError(

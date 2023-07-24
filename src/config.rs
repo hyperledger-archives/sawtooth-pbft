@@ -70,22 +70,6 @@ pub struct PbftConfig {
 }
 
 impl PbftConfig {
-    pub fn default() -> Self {
-        PbftConfig {
-            members: Vec::new(),
-            block_publishing_delay: Duration::from_millis(1000),
-            update_recv_timeout: Duration::from_millis(10),
-            exponential_retry_base: Duration::from_millis(100),
-            exponential_retry_max: Duration::from_millis(60000),
-            idle_timeout: Duration::from_millis(30000),
-            commit_timeout: Duration::from_millis(10000),
-            view_change_duration: Duration::from_millis(5000),
-            forced_view_change_interval: 100,
-            max_log_size: 10000,
-            storage_location: "memory".into(),
-        }
-    }
-
     /// Load configuration from on-chain Sawtooth settings.
     ///
     /// Configuration loads the following settings:
@@ -159,6 +143,24 @@ impl PbftConfig {
             &mut self.forced_view_change_interval,
             "sawtooth.consensus.pbft.forced_view_change_interval",
         );
+    }
+}
+
+impl Default for PbftConfig {
+    fn default() -> Self {
+        PbftConfig {
+            members: Vec::new(),
+            block_publishing_delay: Duration::from_millis(1000),
+            update_recv_timeout: Duration::from_millis(10),
+            exponential_retry_base: Duration::from_millis(100),
+            exponential_retry_max: Duration::from_millis(60000),
+            idle_timeout: Duration::from_millis(30000),
+            commit_timeout: Duration::from_millis(10000),
+            view_change_duration: Duration::from_millis(5000),
+            forced_view_change_interval: 100,
+            max_log_size: 10000,
+            storage_location: "memory".into(),
+        }
     }
 }
 

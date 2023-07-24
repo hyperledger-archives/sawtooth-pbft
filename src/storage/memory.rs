@@ -116,7 +116,7 @@ impl<T: Serialize + DeserializeOwned> MemStorage<T> {
 
 impl<T: Serialize + DeserializeOwned + fmt::Display> fmt::Display for MemStorage<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (*self).data.fmt(f)
+        self.data.fmt(f)
     }
 }
 
