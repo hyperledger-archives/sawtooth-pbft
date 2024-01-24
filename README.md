@@ -1,51 +1,18 @@
-# Sawtooth PBFT
+# Hyperledger Sawtooth
 
-This repository contains an implementation of the Practical Byzantine Fault
-Tolerant (PBFT) consensus algorithm for [Hyperledger
-Sawtooth](https://github.com/hyperledger/sawtooth-core).
+This project has moved (see below).
 
-## About PBFT
+Hyperledger Sawtooth was a project to provide an enterprise solution for
+building, deploying, and running distributed ledgers (also called blockchains).
 
-PBFT is designed to tolerate the failure of nodes in a distributed network,
-as well as nodes sending incorrect messages to other nodes, as long as fewer
-than one-third of the nodes are considered faulty. PBFT networks need a minimum
-of four nodes to be Byzantine fault tolerant.
+# Project Status
 
-Sawtooth PBFT is based on the algorithm described in [Practical Byzantine Fault
-Tolerance](https://www.usenix.org/legacy/events/osdi99/full_papers/castro/castro_html/castro.html),
-and is adapted for use in Hyperledger Sawtooth.
+This Hyperledger project, Hyperledger Sawtooth, has been archived and is no
+longer active within Hyperledger.
 
-For more information, see the [Sawtooth PBFT
-documentation](https://sawtooth.hyperledger.org/docs/1.2/pbft/introduction-to-sawtooth-pbft.html).
+Sawtooth is now maintained by the Splinter community. For more information,
+visit: https://github.com/splintercommunity/sawtooth-core/
 
-## Using Sawtooth PBFT Consensus
+# License
 
-To configure a Sawtooth network with PBFT consensus, see the Sawtooth
-documentation:
-
-- Application developers: [Creating a Sawtooth Test
-  Network](https://sawtooth.hyperledger.org/docs/1.2/app_developers_guide/creating_sawtooth_network.html)
-
-- System administrators: [Setting Up a Sawtooth
-  Network](https://sawtooth.hyperledger.org/docs/1.2/sysadmin_guide/setting_up_sawtooth_network.html)
-
-## Motivation
-
-PBFT was chosen as a Sawtooth consensus algorithm in order to provide
-Byzantine fault tolerant consensus for a system without a Trusted Execution
-Environment (TEE). (PoET-SGX consensus requires a TEE.)
-
-The proposal to include PBFT in Sawtooth is located in [Sawtooth RFC
-0019-pbft-consensus.md](https://github.com/hyperledger/sawtooth-rfcs/blob/master/text/0019-pbft-consensus.md).
-
-Sawtooth PBFT uses the Sawtooth consensus API that is described by [Sawtooth RFC
-0004-consensus-api.md](https://github.com/hyperledger/sawtooth-rfcs/blob/master/text/0004-consensus-api.md).
-
-## Documentation
-
-- [Current Sawtooth PBFT documentation](https://sawtooth.hyperledger.org/docs/1.2/pbft/introduction-to-sawtooth-pbft.html)
-
-## License
-
-Hyperledger Sawtooth software is licensed under the Apache License Version 2.0
-software license.
+Hyperledger Sawtooth software is licensed under the [Apache License Version 2.0](LICENSE) software license.
