@@ -18,6 +18,7 @@ repository:
   description:  Sawtooth PBFT consensus engine
   homepage: https://wiki.hyperledger.org/display/sawtooth
   private: false
+  archived: true
   has_issues: true
   has_projects: false
   has_wiki: false
